@@ -12,10 +12,12 @@ import {
   createOrder,
   getOrder,
   updateOrderExtraValues,
+  getCustomers,
 } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
   Product,
+  Customer,
   TemplateWithDetails,
   OrderTemplatePayload,
   CreateOrderData,
@@ -50,6 +52,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Package,
+  Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import OrderTemplateValues, {
@@ -71,6 +74,7 @@ const orderFormSchema = z.object({
     message: 'Please select an order type',
   }),
   description: z.string().optional(),
+  customerId: z.string().min(1, 'Please select a customer'),
 });
 
 type OrderFormData = z.infer<typeof orderFormSchema>;
@@ -94,6 +98,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [productError, setProductError] = useState<string | null>(null);
+
+  // Customers
+   const [customers, setCustomers] = useState<Customer[]>([]);
+   const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
+   const [customerError, setCustomerError] = useState<string | null>(null);
 
   // Templates (loaded when product is selected)
   const [templates, setTemplates] = useState<TemplateWithDetails[]>([]);
@@ -137,11 +146,37 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       productId: '',
       orderType: undefined,
       description: '',
+      customerId: '',
     },
   });
 
   const selectedProductId = watch('productId');
   const selectedOrderType = watch('orderType');
+  const selectedCustomerId = watch('customerId');
+
+  // ──────────────────────────────────────────────────────────────────────
+  // FETCH CUSTOMERS
+  // ──────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      setIsLoadingCustomers(true);
+      setCustomerError(null);
+      try {
+        const res = await getCustomers(companyId, {
+          page: 1,
+          limit: 1000,
+          sortBy: 'createdAt',
+          sortOrder: 'DESC',
+        });
+        setCustomers(res.rows);
+      } catch (err) {
+        setCustomerError(getError(err));
+      } finally {
+        setIsLoadingCustomers(false);
+      }
+    };
+    if (companyId) fetchCustomers();
+  }, [companyId]);
 
   // ──────────────────────────────────────────────────────────────────────
   // FETCH PRODUCTS
@@ -392,6 +427,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         productId: data.productId,
         orderType: data.orderType,
         description: data.description || undefined,
+        customerId: data.customerId,
         templates: templatesPayload,
       };
 
@@ -603,6 +639,55 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 </p>
               )}
             </div>
+
+            {/* Customer Select */}
+           <div className="space-y-2">
+             <Label>
+               Customer <span className="text-destructive">*</span>
+             </Label>
+             {isLoadingCustomers ? (
+               <Skeleton className="h-10 w-full" />
+             ) : (
+               <Select
+                 value={selectedCustomerId}
+                 onValueChange={(v) => setValue('customerId', v)}
+                 disabled={isSubmitting}
+               >
+                 <SelectTrigger
+                   className={errors.customerId ? 'border-destructive' : ''}
+                 >
+                   <SelectValue placeholder="Select a customer" />
+                 </SelectTrigger>
+                 <SelectContent>
+                   {customers.length === 0 ? (
+                     <div className="px-2 py-3 text-sm text-muted-foreground text-center">
+                       No customers available. Create a customer first.
+                     </div>
+                   ) : (
+                     customers.map((customer) => (
+                       <SelectItem key={customer.id} value={customer.id}>
+                         <span className="flex items-center gap-2">
+                           <Users className="h-3 w-3" />
+                           {customer.name}
+                           <span className="text-muted-foreground text-xs">
+                             ({customer.referenceCode})
+                           </span>
+                         </span>
+                       </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            )}
+            {customerError && (
+              <p className="text-sm text-destructive">{customerError}</p>
+            )}
+            {errors.customerId && (
+               <p className="text-sm text-destructive">
+                 {errors.customerId.message}
+               </p>
+             )}
+           </div>
 
             <div className="space-y-2">
               <Label htmlFor="description">Description</Label>

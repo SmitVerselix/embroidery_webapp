@@ -19,7 +19,7 @@ import {
   deleteRow,
   createExtra,
   updateExtra,
-  deleteExtra,
+  deleteExtra
 } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
@@ -31,7 +31,7 @@ import type {
   RowType,
   ExtraSectionType,
   ExtraValueType,
-  ExtraVisibilityScope,
+  ExtraVisibilityScope
 } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -41,7 +41,7 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+  CardTitle
 } from '@/components/ui/card';
 import {
   Table,
@@ -49,7 +49,7 @@ import {
   TableCell,
   TableHead,
   TableHeader,
-  TableRow,
+  TableRow
 } from '@/components/ui/table';
 import {
   AlertDialog,
@@ -59,13 +59,13 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialogTitle
 } from '@/components/ui/alert-dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -80,7 +80,7 @@ import {
   AlertCircle,
   Loader2,
   Settings,
-  LayoutTemplate,
+  LayoutTemplate
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -88,6 +88,7 @@ import ColumnFormDialog from './column-form-dialog';
 import RowFormDialog from './row-form-dialog';
 import ExtraFormDialog from './extra-form-dialog';
 import TemplatePreview from './template-preview';
+import { parseFormula, stringifyFormula } from './formula-builder';
 
 // =============================================================================
 // PROPS
@@ -105,15 +106,15 @@ interface TemplateBuilderProps {
 
 function BuilderSkeleton() {
   return (
-    <div className="space-y-6">
-      <Skeleton className="h-5 w-32" />
+    <div className='space-y-6'>
+      <Skeleton className='h-5 w-32' />
       <Card>
         <CardHeader>
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-4 w-72" />
+          <Skeleton className='h-8 w-48' />
+          <Skeleton className='h-4 w-72' />
         </CardHeader>
         <CardContent>
-          <Skeleton className="h-64 w-full" />
+          <Skeleton className='h-64 w-full' />
         </CardContent>
       </Card>
     </div>
@@ -127,7 +128,7 @@ function BuilderSkeleton() {
 export default function TemplateBuilder({
   companyId,
   productId,
-  templateId,
+  templateId
 }: TemplateBuilderProps) {
   const router = useRouter();
 
@@ -146,7 +147,9 @@ export default function TemplateBuilder({
 
   // Column dialog
   const [columnDialogOpen, setColumnDialogOpen] = useState(false);
-  const [editingColumn, setEditingColumn] = useState<TemplateColumn | null>(null);
+  const [editingColumn, setEditingColumn] = useState<TemplateColumn | null>(
+    null
+  );
   const [columnError, setColumnError] = useState<string | null>(null);
 
   // Row dialog
@@ -161,8 +164,12 @@ export default function TemplateBuilder({
 
   // Delete dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deleteType, setDeleteType] = useState<'column' | 'row' | 'extra' | null>(null);
-  const [itemToDelete, setItemToDelete] = useState<TemplateColumn | TemplateRow | TemplateExtra | null>(null);
+  const [deleteType, setDeleteType] = useState<
+    'column' | 'row' | 'extra' | null
+  >(null);
+  const [itemToDelete, setItemToDelete] = useState<
+    TemplateColumn | TemplateRow | TemplateExtra | null
+  >(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // ──────────────────────────────────────────────────────────────────────
@@ -174,7 +181,9 @@ export default function TemplateBuilder({
     try {
       const data = await getTemplate(companyId, productId, templateId);
       setTemplate(data);
-      setColumns([...(data.columns || [])].sort((a, b) => a.orderNo - b.orderNo));
+      setColumns(
+        [...(data.columns || [])].sort((a, b) => a.orderNo - b.orderNo)
+      );
       setRows([...(data.rows || [])].sort((a, b) => a.orderNo - b.orderNo));
       // API returns "extra" (singular)
       setExtras([...(data.extra || [])].sort((a, b) => a.orderNo - b.orderNo));
@@ -225,22 +234,82 @@ export default function TemplateBuilder({
     setColumnError(null);
     try {
       if (editingColumn) {
+        const generatedKey =
+          data.label.toLowerCase().replace(/\s+/g, '_') + '_0';
+        const oldKey = editingColumn.key;
+        const keyChanged = oldKey !== generatedKey;
+
+        // 1. Update the edited column itself
         await updateColumn(companyId, productId, templateId, editingColumn.id, {
-          key: data.key,
-          blockIndex: data.blockIndex,
-          isFinalCalculation: data.isFinalCalculation,
+          key: generatedKey,
           label: data.label,
           dataType: data.dataType,
+          blockIndex: data.blockIndex,
           isRequired: data.isRequired,
-          formula: data.formula,
+          isFinalCalculation: data.isFinalCalculation,
+          formula: data.formula
         });
-        setColumns((prev) =>
-          prev.map((col) =>
-            col.id === editingColumn.id ? { ...col, ...data } : col
-          )
+
+        // Update local state for the edited column
+        let updatedColumns = columns.map((col) =>
+          col.id === editingColumn.id
+            ? { ...col, ...data, key: generatedKey }
+            : col
         );
+
+        // 2. If key changed, find and update all FORMULA columns referencing the old key
+        if (keyChanged) {
+          const escapedOldKey = oldKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const keyRegex = new RegExp(`\\b${escapedOldKey}\\b`, 'g');
+
+          const affectedFormulaColumns = updatedColumns.filter(
+            (col) =>
+              col.id !== editingColumn.id &&
+              col.dataType === 'FORMULA' &&
+              col.formula &&
+              keyRegex.test(col.formula)
+          );
+
+          for (const formulaCol of affectedFormulaColumns) {
+            const updatedFormula = formulaCol.formula!.replace(
+              new RegExp(`\\b${escapedOldKey}\\b`, 'g'),
+              generatedKey
+            );
+
+            // Individual API call for each affected formula column
+            await updateColumn(
+              companyId,
+              productId,
+              templateId,
+              formulaCol.id,
+              {
+                key: formulaCol.key,
+                label: formulaCol.label,
+                dataType: formulaCol.dataType,
+                blockIndex: formulaCol.blockIndex,
+                isRequired: formulaCol.isRequired,
+                isFinalCalculation: formulaCol.isFinalCalculation,
+                formula: updatedFormula
+              }
+            );
+
+            // Update local state for this formula column
+            updatedColumns = updatedColumns.map((col) =>
+              col.id === formulaCol.id
+                ? { ...col, formula: updatedFormula }
+                : col
+            );
+          }
+        }
+
+        setColumns(updatedColumns);
       } else {
-        const newColumn = await createColumn(companyId, productId, templateId, data);
+        const newColumn = await createColumn(
+          companyId,
+          productId,
+          templateId,
+          data
+        );
         setColumns((prev) => [...prev, newColumn]);
       }
       setColumnDialogOpen(false);
@@ -327,15 +396,18 @@ export default function TemplateBuilder({
           valueType: data.valueType,
           visibilityScope: data.visibilityScope,
           isRequired: data.isRequired,
-          allowMultiple: data.allowMultiple,
+          allowMultiple: data.allowMultiple
         });
         setExtras((prev) =>
-          prev.map((e) =>
-            e.id === editingExtra.id ? { ...e, ...data } : e
-          )
+          prev.map((e) => (e.id === editingExtra.id ? { ...e, ...data } : e))
         );
       } else {
-        const newExtra = await createExtra(companyId, productId, templateId, data);
+        const newExtra = await createExtra(
+          companyId,
+          productId,
+          templateId,
+          data
+        );
         setExtras((prev) =>
           [...prev, newExtra].sort((a, b) => a.orderNo - b.orderNo)
         );
@@ -366,8 +438,61 @@ export default function TemplateBuilder({
     setIsDeleting(true);
     try {
       if (deleteType === 'column') {
-        await deleteColumn(companyId, productId, templateId, itemToDelete.id);
-        setColumns((prev) => prev.filter((c) => c.id !== itemToDelete.id));
+        const deletedColumn = itemToDelete as TemplateColumn;
+        await deleteColumn(companyId, productId, templateId, deletedColumn.id);
+
+        // Remove the column from local state
+        let updatedColumns = columns.filter((c) => c.id !== deletedColumn.id);
+
+        // Update any FORMULA columns that reference the deleted column's key
+        const deletedKey = deletedColumn.key;
+        const escapedKey = deletedKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const keyRegex = new RegExp(`\\b${escapedKey}\\b`);
+
+        const affectedFormulaColumns = updatedColumns.filter(
+          (col) =>
+            col.dataType === 'FORMULA' &&
+            col.formula &&
+            keyRegex.test(col.formula)
+        );
+
+        for (const formulaCol of affectedFormulaColumns) {
+          const parsed = parseFormula(formulaCol.formula!);
+          if (!parsed) continue;
+
+          // Remove ALL steps referencing the deleted column key
+          let stepIndex: number;
+          while (
+            (stepIndex = parsed.steps.findIndex(
+              (s) => s.columnKey === deletedKey
+            )) !== -1
+          ) {
+            parsed.steps.splice(stepIndex, 1);
+            if (stepIndex > 0) {
+              parsed.operators.splice(stepIndex - 1, 1);
+            } else if (parsed.operators.length > 0) {
+              parsed.operators.splice(0, 1);
+            }
+          }
+
+          const updatedFormula =
+            parsed.steps.length > 0 ? stringifyFormula(parsed) : '';
+
+          await updateColumn(companyId, productId, templateId, formulaCol.id, {
+            key: formulaCol.key,
+            label: formulaCol.label,
+            dataType: formulaCol.dataType,
+            blockIndex: formulaCol.blockIndex,
+            isRequired: formulaCol.isRequired,
+            isFinalCalculation: formulaCol.isFinalCalculation,
+            formula: updatedFormula
+          });
+
+          updatedColumns = updatedColumns.map((col) =>
+            col.id === formulaCol.id ? { ...col, formula: updatedFormula } : col
+          );
+        }
+        setColumns(updatedColumns);
       } else if (deleteType === 'row') {
         await deleteRow(companyId, productId, templateId, itemToDelete.id);
         setRows((prev) => prev.filter((r) => r.id !== itemToDelete.id));
@@ -392,15 +517,15 @@ export default function TemplateBuilder({
 
   if (error && !template) {
     return (
-      <div className="flex flex-col items-center justify-center py-10 space-y-4">
-        <div className="rounded-full bg-destructive/15 p-3">
-          <AlertCircle className="h-6 w-6 text-destructive" />
+      <div className='flex flex-col items-center justify-center space-y-4 py-10'>
+        <div className='bg-destructive/15 rounded-full p-3'>
+          <AlertCircle className='text-destructive h-6 w-6' />
         </div>
-        <div className="text-center space-y-2">
-          <h3 className="font-semibold">Failed to load template</h3>
-          <p className="text-sm text-muted-foreground">{error}</p>
+        <div className='space-y-2 text-center'>
+          <h3 className='font-semibold'>Failed to load template</h3>
+          <p className='text-muted-foreground text-sm'>{error}</p>
         </div>
-        <Button asChild variant="outline">
+        <Button asChild variant='outline'>
           <Link href={`/dashboard/${companyId}/product/${productId}`}>
             Back to Product
           </Link>
@@ -421,18 +546,18 @@ export default function TemplateBuilder({
     description: string,
     items: TemplateExtra[]
   ) => (
-    <div className="space-y-3">
+    <div className='space-y-3'>
       <div>
-        <h4 className="text-sm font-medium">{title}</h4>
-        <p className="text-xs text-muted-foreground">{description}</p>
+        <h4 className='text-sm font-medium'>{title}</h4>
+        <p className='text-muted-foreground text-xs'>{description}</p>
       </div>
 
       {items.length === 0 ? (
-        <div className="text-center py-4 text-sm text-muted-foreground border border-dashed rounded-md">
+        <div className='text-muted-foreground rounded-md border border-dashed py-4 text-center text-sm'>
           No {title.toLowerCase()} added yet
         </div>
       ) : (
-        <div className="rounded-md border">
+        <div className='rounded-md border'>
           <Table>
             <TableHeader>
               <TableRow>
@@ -441,52 +566,58 @@ export default function TemplateBuilder({
                 <TableHead>Visibility</TableHead>
                 <TableHead>Required</TableHead>
                 <TableHead>Multiple</TableHead>
-                <TableHead className="w-[70px]">Actions</TableHead>
+                <TableHead className='w-[70px]'>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((extra) => (
                 <TableRow key={extra.id}>
-                  <TableCell className="font-medium">{extra.label}</TableCell>
+                  <TableCell className='font-medium'>{extra.label}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{extra.valueType}</Badge>
+                    <Badge variant='outline'>{extra.valueType}</Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="secondary" className="text-xs">
+                    <Badge variant='secondary' className='text-xs'>
                       {extra.visibilityScope}
                     </Badge>
                   </TableCell>
                   <TableCell>
                     {extra.isRequired ? (
-                      <Badge variant="destructive" className="text-xs">Yes</Badge>
+                      <Badge variant='destructive' className='text-xs'>
+                        Yes
+                      </Badge>
                     ) : (
-                      <span className="text-muted-foreground text-sm">No</span>
+                      <span className='text-muted-foreground text-sm'>No</span>
                     )}
                   </TableCell>
                   <TableCell>
                     {extra.allowMultiple ? (
-                      <Badge variant="outline" className="text-xs">Yes</Badge>
+                      <Badge variant='outline' className='text-xs'>
+                        Yes
+                      </Badge>
                     ) : (
-                      <span className="text-muted-foreground text-sm">No</span>
+                      <span className='text-muted-foreground text-sm'>No</span>
                     )}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="h-4 w-4" />
+                        <Button variant='ghost' size='icon' className='h-8 w-8'>
+                          <MoreHorizontal className='h-4 w-4' />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEditExtra(extra)}>
-                          <Pencil className="mr-2 h-4 w-4" />
+                      <DropdownMenuContent align='end'>
+                        <DropdownMenuItem
+                          onClick={() => handleEditExtra(extra)}
+                        >
+                          <Pencil className='mr-2 h-4 w-4' />
                           Edit
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handleDeleteClick('extra', extra)}
-                          className="text-destructive focus:text-destructive"
+                          className='text-destructive focus:text-destructive'
                         >
-                          <Trash2 className="mr-2 h-4 w-4" />
+                          <Trash2 className='mr-2 h-4 w-4' />
                           Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -505,24 +636,28 @@ export default function TemplateBuilder({
   // MAIN RENDER
   // ──────────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
+    <div className='space-y-6'>
       {/* Back */}
       <Link
         href={backUrl}
-        className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+        className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
       >
-        <ArrowLeft className="mr-2 h-4 w-4" />
+        <ArrowLeft className='mr-2 h-4 w-4' />
         Back to Product
       </Link>
 
       {/* Template Header */}
       <Card>
         <CardHeader>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-2xl">{template.name}</CardTitle>
-                <Badge variant={template.type === 'COSTING' ? 'default' : 'secondary'}>
+          <div className='flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between'>
+            <div className='space-y-1'>
+              <div className='flex items-center gap-2'>
+                <CardTitle className='text-2xl'>{template.name}</CardTitle>
+                <Badge
+                  variant={
+                    template.type === 'COSTING' ? 'default' : 'secondary'
+                  }
+                >
                   {template.type}
                 </Badge>
               </div>
@@ -531,14 +666,14 @@ export default function TemplateBuilder({
               </CardDescription>
             </div>
             <Button
-              variant="outline"
+              variant='outline'
               onClick={() =>
                 router.push(
                   `/dashboard/${companyId}/product/${productId}/template/${templateId}/edit`
                 )
               }
             >
-              <Settings className="mr-2 h-4 w-4" />
+              <Settings className='mr-2 h-4 w-4' />
               Edit Template
             </Button>
           </div>
@@ -547,34 +682,34 @@ export default function TemplateBuilder({
 
       {/* Error */}
       {error && (
-        <div className="rounded-md bg-destructive/15 p-4 text-destructive">
+        <div className='bg-destructive/15 text-destructive rounded-md p-4'>
           {error}
         </div>
       )}
 
       {/* ══════════════ TABS ══════════════ */}
-      <Tabs defaultValue="preview" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="preview" className="flex items-center gap-2">
-            <Eye className="h-4 w-4" />
+      <Tabs defaultValue='preview' className='space-y-4'>
+        <TabsList className='grid w-full grid-cols-4'>
+          <TabsTrigger value='preview' className='flex items-center gap-2'>
+            <Eye className='h-4 w-4' />
             Preview
           </TabsTrigger>
-          <TabsTrigger value="columns" className="flex items-center gap-2">
-            <Columns className="h-4 w-4" />
+          <TabsTrigger value='columns' className='flex items-center gap-2'>
+            <Columns className='h-4 w-4' />
             Columns ({columns.length})
           </TabsTrigger>
-          <TabsTrigger value="rows" className="flex items-center gap-2">
-            <Rows className="h-4 w-4" />
+          <TabsTrigger value='rows' className='flex items-center gap-2'>
+            <Rows className='h-4 w-4' />
             Rows ({rows.length})
           </TabsTrigger>
-          <TabsTrigger value="extras" className="flex items-center gap-2">
-            <LayoutTemplate className="h-4 w-4" />
+          <TabsTrigger value='extras' className='flex items-center gap-2'>
+            <LayoutTemplate className='h-4 w-4' />
             Extra ({extras.length})
           </TabsTrigger>
         </TabsList>
 
         {/* ── Preview Tab ─────────────────────────────────────────── */}
-        <TabsContent value="preview">
+        <TabsContent value='preview'>
           <TemplatePreview
             template={template}
             columns={columns}
@@ -584,37 +719,37 @@ export default function TemplateBuilder({
         </TabsContent>
 
         {/* ── Columns Tab ─────────────────────────────────────────── */}
-        <TabsContent value="columns">
+        <TabsContent value='columns'>
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className='flex items-center justify-between'>
                 <div>
-                  <CardTitle className="text-lg">Columns</CardTitle>
+                  <CardTitle className='text-lg'>Columns</CardTitle>
                   <CardDescription>
                     Define the columns (fields) for your template
                   </CardDescription>
                 </div>
                 <Button onClick={handleAddColumn}>
-                  <Plus className="mr-2 h-4 w-4" />
+                  <Plus className='mr-2 h-4 w-4' />
                   Add Column
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               {columns.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/30">
-                  <Columns className="h-10 w-10 text-muted-foreground mb-3" />
-                  <h3 className="font-medium text-lg">No Columns Yet</h3>
-                  <p className="text-sm text-muted-foreground max-w-sm mt-1">
+                <div className='bg-muted/30 flex flex-col items-center justify-center rounded-lg border py-12 text-center'>
+                  <Columns className='text-muted-foreground mb-3 h-10 w-10' />
+                  <h3 className='text-lg font-medium'>No Columns Yet</h3>
+                  <p className='text-muted-foreground mt-1 max-w-sm text-sm'>
                     Add columns to define the structure of your template.
                   </p>
-                  <Button className="mt-4" onClick={handleAddColumn}>
-                    <Plus className="mr-2 h-4 w-4" />
+                  <Button className='mt-4' onClick={handleAddColumn}>
+                    <Plus className='mr-2 h-4 w-4' />
                     Add First Column
                   </Button>
                 </div>
               ) : (
-                <div className="rounded-md border">
+                <div className='rounded-md border'>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -623,7 +758,7 @@ export default function TemplateBuilder({
                         <TableHead>Data Type</TableHead>
                         <TableHead>Required</TableHead>
                         <TableHead>Formula</TableHead>
-                        <TableHead className="w-[70px]">Actions</TableHead>
+                        <TableHead className='w-[70px]'>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -631,11 +766,11 @@ export default function TemplateBuilder({
                         .sort((a, b) => a.orderNo - b.orderNo)
                         .map((column) => (
                           <TableRow key={column.id}>
-                            <TableCell className="font-medium">
+                            <TableCell className='font-medium'>
                               {column.label}
                             </TableCell>
                             <TableCell>
-                              <code className="text-xs bg-muted px-2 py-1 rounded">
+                              <code className='bg-muted rounded px-2 py-1 text-xs'>
                                 {column.key}
                               </code>
                             </TableCell>
@@ -645,8 +780,8 @@ export default function TemplateBuilder({
                                   column.dataType === 'NUMBER'
                                     ? 'default'
                                     : column.dataType === 'FORMULA'
-                                    ? 'outline'
-                                    : 'secondary'
+                                      ? 'outline'
+                                      : 'secondary'
                                 }
                               >
                                 {column.dataType}
@@ -654,31 +789,41 @@ export default function TemplateBuilder({
                             </TableCell>
                             <TableCell>
                               {column.isRequired ? (
-                                <Badge variant="destructive">Yes</Badge>
+                                <Badge variant='destructive'>Yes</Badge>
                               ) : (
-                                <span className="text-muted-foreground">No</span>
+                                <span className='text-muted-foreground'>
+                                  No
+                                </span>
                               )}
                             </TableCell>
-                            <TableCell className="max-w-[150px] truncate">
+                            <TableCell className='max-w-[150px] truncate'>
                               {column.formula || '—'}
                             </TableCell>
                             <TableCell>
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreHorizontal className="h-4 w-4" />
+                                  <Button
+                                    variant='ghost'
+                                    size='icon'
+                                    className='h-8 w-8'
+                                  >
+                                    <MoreHorizontal className='h-4 w-4' />
                                   </Button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => handleEditColumn(column)}>
-                                    <Pencil className="mr-2 h-4 w-4" />
+                                <DropdownMenuContent align='end'>
+                                  <DropdownMenuItem
+                                    onClick={() => handleEditColumn(column)}
+                                  >
+                                    <Pencil className='mr-2 h-4 w-4' />
                                     Edit
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={() => handleDeleteClick('column', column)}
-                                    className="text-destructive focus:text-destructive"
+                                    onClick={() =>
+                                      handleDeleteClick('column', column)
+                                    }
+                                    className='text-destructive focus:text-destructive'
                                   >
-                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    <Trash2 className='mr-2 h-4 w-4' />
                                     Delete
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
@@ -695,37 +840,37 @@ export default function TemplateBuilder({
         </TabsContent>
 
         {/* ── Rows Tab ────────────────────────────────────────────── */}
-        <TabsContent value="rows">
+        <TabsContent value='rows'>
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className='flex items-center justify-between'>
                 <div>
-                  <CardTitle className="text-lg">Rows</CardTitle>
+                  <CardTitle className='text-lg'>Rows</CardTitle>
                   <CardDescription>
                     Define the rows (data entries) for your template
                   </CardDescription>
                 </div>
                 <Button onClick={handleAddRow}>
-                  <Plus className="mr-2 h-4 w-4" />
+                  <Plus className='mr-2 h-4 w-4' />
                   Add Row
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               {rows.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/30">
-                  <Rows className="h-10 w-10 text-muted-foreground mb-3" />
-                  <h3 className="font-medium text-lg">No Rows Yet</h3>
-                  <p className="text-sm text-muted-foreground max-w-sm mt-1">
+                <div className='bg-muted/30 flex flex-col items-center justify-center rounded-lg border py-12 text-center'>
+                  <Rows className='text-muted-foreground mb-3 h-10 w-10' />
+                  <h3 className='text-lg font-medium'>No Rows Yet</h3>
+                  <p className='text-muted-foreground mt-1 max-w-sm text-sm'>
                     Add rows to define the data entries of your template.
                   </p>
-                  <Button className="mt-4" onClick={handleAddRow}>
-                    <Plus className="mr-2 h-4 w-4" />
+                  <Button className='mt-4' onClick={handleAddRow}>
+                    <Plus className='mr-2 h-4 w-4' />
                     Add First Row
                   </Button>
                 </div>
               ) : (
-                <div className="rounded-md border">
+                <div className='rounded-md border'>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -733,7 +878,7 @@ export default function TemplateBuilder({
                         <TableHead>Row Type</TableHead>
                         <TableHead>Is Calculated</TableHead>
                         <TableHead>Order</TableHead>
-                        <TableHead className="w-[70px]">Actions</TableHead>
+                        <TableHead className='w-[70px]'>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -741,41 +886,55 @@ export default function TemplateBuilder({
                         .sort((a, b) => a.orderNo - b.orderNo)
                         .map((row) => (
                           <TableRow key={row.id}>
-                            <TableCell className="font-medium">
+                            <TableCell className='font-medium'>
                               {row.label}
                             </TableCell>
                             <TableCell>
                               <Badge
-                                variant={row.rowType === 'TOTAL' ? 'default' : 'secondary'}
+                                variant={
+                                  row.rowType === 'TOTAL'
+                                    ? 'default'
+                                    : 'secondary'
+                                }
                               >
                                 {row.rowType}
                               </Badge>
                             </TableCell>
                             <TableCell>
                               {row.isCalculated ? (
-                                <Badge variant="outline">Yes</Badge>
+                                <Badge variant='outline'>Yes</Badge>
                               ) : (
-                                <span className="text-muted-foreground">No</span>
+                                <span className='text-muted-foreground'>
+                                  No
+                                </span>
                               )}
                             </TableCell>
                             <TableCell>{row.orderNo}</TableCell>
                             <TableCell>
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreHorizontal className="h-4 w-4" />
+                                  <Button
+                                    variant='ghost'
+                                    size='icon'
+                                    className='h-8 w-8'
+                                  >
+                                    <MoreHorizontal className='h-4 w-4' />
                                   </Button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => handleEditRow(row)}>
-                                    <Pencil className="mr-2 h-4 w-4" />
+                                <DropdownMenuContent align='end'>
+                                  <DropdownMenuItem
+                                    onClick={() => handleEditRow(row)}
+                                  >
+                                    <Pencil className='mr-2 h-4 w-4' />
                                     Edit
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={() => handleDeleteClick('row', row)}
-                                    className="text-destructive focus:text-destructive"
+                                    onClick={() =>
+                                      handleDeleteClick('row', row)
+                                    }
+                                    className='text-destructive focus:text-destructive'
                                   >
-                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    <Trash2 className='mr-2 h-4 w-4' />
                                     Delete
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
@@ -792,37 +951,38 @@ export default function TemplateBuilder({
         </TabsContent>
 
         {/* ── Extra Tab ───────────────────────────────────────────── */}
-        <TabsContent value="extras">
+        <TabsContent value='extras'>
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className='flex items-center justify-between'>
                 <div>
-                  <CardTitle className="text-lg">Extra Fields</CardTitle>
+                  <CardTitle className='text-lg'>Extra Fields</CardTitle>
                   <CardDescription>
                     Add headers, footers, and media fields to your template
                   </CardDescription>
                 </div>
                 <Button onClick={handleAddExtra}>
-                  <Plus className="mr-2 h-4 w-4" />
+                  <Plus className='mr-2 h-4 w-4' />
                   Add Field
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               {extras.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/30">
-                  <LayoutTemplate className="h-10 w-10 text-muted-foreground mb-3" />
-                  <h3 className="font-medium text-lg">No Extra Fields Yet</h3>
-                  <p className="text-sm text-muted-foreground max-w-sm mt-1">
-                    Add header, footer, or media fields to enhance your template layout.
+                <div className='bg-muted/30 flex flex-col items-center justify-center rounded-lg border py-12 text-center'>
+                  <LayoutTemplate className='text-muted-foreground mb-3 h-10 w-10' />
+                  <h3 className='text-lg font-medium'>No Extra Fields Yet</h3>
+                  <p className='text-muted-foreground mt-1 max-w-sm text-sm'>
+                    Add header, footer, or media fields to enhance your template
+                    layout.
                   </p>
-                  <Button className="mt-4" onClick={handleAddExtra}>
-                    <Plus className="mr-2 h-4 w-4" />
+                  <Button className='mt-4' onClick={handleAddExtra}>
+                    <Plus className='mr-2 h-4 w-4' />
                     Add First Field
                   </Button>
                 </div>
               ) : (
-                <div className="space-y-6">
+                <div className='space-y-6'>
                   {renderExtraSection(
                     'Header Fields',
                     'Fields displayed at the top of the template',
@@ -882,8 +1042,8 @@ export default function TemplateBuilder({
               {deleteType === 'column'
                 ? 'Column'
                 : deleteType === 'row'
-                ? 'Row'
-                : 'Extra Field'}
+                  ? 'Row'
+                  : 'Extra Field'}
             </AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete &quot;
@@ -898,11 +1058,11 @@ export default function TemplateBuilder({
             <AlertDialogAction
               onClick={handleDeleteConfirm}
               disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
             >
               {isDeleting ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                   Deleting...
                 </>
               ) : (

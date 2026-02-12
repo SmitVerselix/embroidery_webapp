@@ -11,7 +11,7 @@ export function ThemeModeToggle() {
 
   const handleThemeToggle = React.useCallback(
     (e?: React.MouseEvent) => {
-      const newMode = resolvedTheme === 'dark' ? 'light' : 'dark';
+      const newMode = resolvedTheme === 'light' ? 'dark' : 'light';
       const root = document.documentElement;
 
       if (!document.startViewTransition) {

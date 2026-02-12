@@ -1,14 +1,3 @@
-/**
- * Component: OrderDetail
- * Description: View order details with template values and extra values in read-only mode.
- *              Includes an Edit button to navigate to the edit page.
- *
- * KEY FIX: The order/get API returns `id` as the orderTemplateId on each
- *          template entry. The same templateId can appear multiple times
- *          (repeatable templates), so we use orderTemplateId as the unique key
- *          for values/extraValues maps instead of templateId.
- */
-
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -284,6 +273,18 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
             </Button>
           </div>
         </CardHeader>
+        <CardContent>
+          <div className='grid grid-cols-2 gap-4 text-sm md:grid-cols-4'>
+            <div>
+              <span className='text-muted-foreground'>Product Name</span>
+              <p className='font-medium'>{order.product?.name ?? '-'}</p>
+            </div>
+            <div>
+              <span className='text-muted-foreground'>Customer Name</span>
+              <p className='font-medium'>{order.customer?.name ?? '-'}</p>
+            </div>
+          </div>
+        </CardContent>
         <CardContent>
           <div className='grid grid-cols-2 gap-4 text-sm md:grid-cols-4'>
             <div>

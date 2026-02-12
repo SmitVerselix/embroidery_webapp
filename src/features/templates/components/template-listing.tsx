@@ -110,6 +110,7 @@ import ColumnFormDialog from './template-builder/column-form-dialog';
 import RowFormDialog from './template-builder/row-form-dialog';
 import ExtraFormDialog from './template-builder/extra-form-dialog';
 import TemplatePreview from './template-builder/template-preview';
+import { parseFormula, stringifyFormula } from './template-builder/formula-builder';
 
 // =============================================================================
 // SORTABLE TEMPLATE ROW
@@ -427,16 +428,85 @@ export default function TemplateListing({ companyId, productId }: TemplateListin
   const handleAddColumn = (tid: string) => { setEditingColumn(null); setColumnTemplateId(tid); setColumnError(null); setColumnDialogOpen(true); };
   const handleEditColumn = (tid: string, col: TemplateColumn) => { setEditingColumn(col); setColumnTemplateId(tid); setColumnError(null); setColumnDialogOpen(true); };
 
-  const handleColumnSubmit = async (data: { key: string; label: string; dataType: ColumnDataType; blockIndex: number; isRequired: boolean; isFinalCalculation: boolean; formula?: string }) => {
+const handleColumnSubmit = async (data: {
+    key: string; label: string; dataType: ColumnDataType;
+    blockIndex: number; isRequired: boolean; isFinalCalculation: boolean; formula?: string;
+  }) => {
     if (!columnTemplateId) return;
     setIsColumnLoading(true); setColumnError(null);
     try {
       if (editingColumn) {
-        await updateColumn(companyId, productId, columnTemplateId, editingColumn.id, { key: data.key, blockIndex: data.blockIndex, isFinalCalculation: data.isFinalCalculation, label: data.label, dataType: data.dataType, isRequired: data.isRequired, formula: data.formula });
-        setExpandedData((prev) => ({ ...prev, [columnTemplateId]: { ...prev[columnTemplateId], columns: prev[columnTemplateId].columns.map((c) => c.id === editingColumn.id ? { ...c, ...data } : c) } }));
+        const generatedKey = data.label.toLowerCase().replace(/\s+/g, '_') + '_0';
+        const oldKey = editingColumn.key;
+        const keyChanged = oldKey !== generatedKey;
+        const tid = columnTemplateId;
+
+        // 1. Update the edited column itself
+        await updateColumn(companyId, productId, tid, editingColumn.id, {
+          key: generatedKey,
+          label: data.label,
+          dataType: data.dataType,
+          blockIndex: data.blockIndex,
+          isRequired: data.isRequired,
+          isFinalCalculation: data.isFinalCalculation,
+          formula: data.formula,
+        });
+
+        // Update local state for the edited column
+        let updatedColumns = (expandedData[tid]?.columns || []).map((c) =>
+          c.id === editingColumn.id ? { ...c, ...data, key: generatedKey } : c
+        );
+
+        // 2. If key changed, find and update all FORMULA columns referencing the old key
+        if (keyChanged) {
+          const escapedOldKey = oldKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const keyRegex = new RegExp(`\\b${escapedOldKey}\\b`, 'g');
+
+          const affectedFormulaColumns = updatedColumns.filter(
+            (col) =>
+              col.id !== editingColumn.id &&
+              col.dataType === 'FORMULA' &&
+              col.formula &&
+              keyRegex.test(col.formula)
+          );
+
+          for (const formulaCol of affectedFormulaColumns) {
+            const updatedFormula = formulaCol.formula!.replace(
+              new RegExp(`\\b${escapedOldKey}\\b`, 'g'),
+              generatedKey
+            );
+
+            // Individual API call for each affected formula column
+            await updateColumn(companyId, productId, tid, formulaCol.id, {
+              key: formulaCol.key,
+              label: formulaCol.label,
+              dataType: formulaCol.dataType,
+              blockIndex: formulaCol.blockIndex,
+              isRequired: formulaCol.isRequired,
+              isFinalCalculation: formulaCol.isFinalCalculation,
+              formula: updatedFormula,
+            });
+
+            // Update local state for this formula column
+            updatedColumns = updatedColumns.map((col) =>
+              col.id === formulaCol.id ? { ...col, formula: updatedFormula } : col
+            );
+          }
+        }
+
+        setExpandedData((prev) => ({
+          ...prev,
+          [tid]: { ...prev[tid], columns: updatedColumns },
+        }));
       } else {
         const newCol = await createColumn(companyId, productId, columnTemplateId, data);
-        setExpandedData((prev) => ({ ...prev, [columnTemplateId]: { ...prev[columnTemplateId], columns: [...prev[columnTemplateId].columns, newCol].sort((a, b) => a.orderNo - b.orderNo) } }));
+        setExpandedData((prev) => ({
+          ...prev,
+          [columnTemplateId]: {
+            ...prev[columnTemplateId],
+            columns: [...prev[columnTemplateId].columns, newCol].sort((a, b) => a.orderNo - b.orderNo),
+          },
+        }));
       }
       setColumnDialogOpen(false);
     } catch (err) { setColumnError(getError(err)); throw err; }
@@ -557,8 +627,62 @@ export default function TemplateListing({ companyId, productId }: TemplateListin
     try {
       const tid = deleteItemTemplateId;
       if (deleteItemType === 'column') {
-        await deleteColumn(companyId, productId, tid, itemToDelete.id);
-        setExpandedData((p) => ({ ...p, [tid]: { ...p[tid], columns: p[tid].columns.filter((c) => c.id !== itemToDelete.id) } }));
+        const deletedColumn = itemToDelete as TemplateColumn;
+        await deleteColumn(companyId, productId, tid, deletedColumn.id);
+
+        // Remove the column from local state
+        let updatedColumns = (expandedData[tid]?.columns || []).filter(
+          (c) => c.id !== deletedColumn.id
+        );
+
+        // Update any FORMULA columns that reference the deleted column's key
+        const deletedKey = deletedColumn.key;
+        const escapedKey = deletedKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const keyRegex = new RegExp(`\\b${escapedKey}\\b`);
+
+        const affectedFormulaColumns = updatedColumns.filter(
+          (col) =>
+            col.dataType === 'FORMULA' &&
+            col.formula &&
+            keyRegex.test(col.formula)
+        );
+
+        for (const formulaCol of affectedFormulaColumns) {
+          const parsed = parseFormula(formulaCol.formula!);
+          if (!parsed) continue;
+
+          // Remove ALL steps referencing the deleted column key
+          let stepIndex: number;
+          while ((stepIndex = parsed.steps.findIndex((s) => s.columnKey === deletedKey)) !== -1) {
+            parsed.steps.splice(stepIndex, 1);
+            if (stepIndex > 0) {
+              parsed.operators.splice(stepIndex - 1, 1);
+            } else if (parsed.operators.length > 0) {
+              parsed.operators.splice(0, 1);
+            }
+          }
+
+          const updatedFormula = parsed.steps.length > 0 ? stringifyFormula(parsed) : '';
+
+          await updateColumn(companyId, productId, tid, formulaCol.id, {
+            key: formulaCol.key,
+            label: formulaCol.label,
+            dataType: formulaCol.dataType,
+            blockIndex: formulaCol.blockIndex,
+            isRequired: formulaCol.isRequired,
+            isFinalCalculation: formulaCol.isFinalCalculation,
+            formula: updatedFormula,
+          });
+
+          updatedColumns = updatedColumns.map((col) =>
+            col.id === formulaCol.id ? { ...col, formula: updatedFormula } : col
+          );
+        }
+
+        setExpandedData((p) => ({
+          ...p,
+          [tid]: { ...p[tid], columns: updatedColumns },
+        }));
       } else if (deleteItemType === 'row') {
         await deleteRow(companyId, productId, tid, itemToDelete.id);
         setExpandedData((p) => ({ ...p, [tid]: { ...p[tid], rows: p[tid].rows.filter((r) => r.id !== itemToDelete.id) } }));

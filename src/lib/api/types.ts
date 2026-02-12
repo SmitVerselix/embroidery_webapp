@@ -606,10 +606,13 @@ export type Order = {
   createdAt: string;
   updatedAt: string;
   product?: Product;
+  customer?: Customer;
 };
 
 export type OrderWithDetails = Order & {
   templates?: OrderTemplateData[];
+  product: Product; 
+  customer?: Customer;
 };
 
 export type OrderListResponse = {
@@ -634,6 +637,7 @@ export type CreateOrderData = {
   productId: string;
   orderType: OrderType;
   description?: string;
+  customerId?: string;
   templates: OrderTemplatePayload[];
 };
 

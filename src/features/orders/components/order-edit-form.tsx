@@ -1,12 +1,3 @@
-/**
- * Component: OrderEditForm
- * Description: Edit an existing order's template values and extra values.
- *
- * KEY FIX: Uses orderTemplateId (the `id` field from the order/get API response)
- *          as the unique key for all value maps, since the same templateId can
- *          appear multiple times for repeatable templates.
- */
-
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
