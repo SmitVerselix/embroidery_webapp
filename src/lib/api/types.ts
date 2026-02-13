@@ -45,7 +45,7 @@ export type CompanyListParams = {
   page?: number;
   limit?: number;
   sortBy?: string;
-  sortOrder?: "ASC" | "DESC";
+  sortOrder?: 'ASC' | 'DESC';
   search?: string;
 };
 
@@ -109,7 +109,7 @@ export type ListParams = {
   limit?: number;
   search?: string;
   sortBy?: string;
-  sortOrder?: "ASC" | "DESC" | "asc" | "desc";
+  sortOrder?: 'ASC' | 'DESC' | 'asc' | 'desc';
 };
 
 // =============================================================================
@@ -160,7 +160,7 @@ export type Product = {
   name: string;
   createdAt: string;
   updatedAt: string;
-  templates?: unknown[];
+  templates?: TemplateWithDetails[];
 };
 
 export type ProductListResponse = {
@@ -172,7 +172,7 @@ export type ProductListParams = {
   page?: number;
   limit?: number;
   sortBy?: string;
-  sortOrder?: "ASC" | "DESC";
+  sortOrder?: 'ASC' | 'DESC';
   search?: string;
 };
 
@@ -188,11 +188,11 @@ export type UpdateProductData = {
 // TEMPLATE TYPES
 // =============================================================================
 
-export type TemplateType = "COSTING" | "DETAIL";
+export type TemplateType = 'COSTING' | 'DETAIL';
 
 export const TEMPLATE_TYPES: { label: string; value: TemplateType }[] = [
-  { label: "Costing", value: "COSTING" },
-  { label: "Detail", value: "DETAIL" },
+  { label: 'Costing', value: 'COSTING' },
+  { label: 'Detail', value: 'DETAIL' }
 ];
 
 export type Template = {
@@ -223,7 +223,7 @@ export type TemplateListParams = {
   page?: number;
   limit?: number;
   sortBy?: string;
-  sortOrder?: "ASC" | "DESC";
+  sortOrder?: 'ASC' | 'DESC';
   search?: string;
 };
 
@@ -243,12 +243,12 @@ export type UpdateTemplateData = {
 // TEMPLATE COLUMN TYPES
 // =============================================================================
 
-export type ColumnDataType = "NUMBER" | "TEXT" | "FORMULA";
+export type ColumnDataType = 'NUMBER' | 'TEXT' | 'FORMULA';
 
 export const COLUMN_DATA_TYPES: { label: string; value: ColumnDataType }[] = [
-  { label: "Number", value: "NUMBER" },
-  { label: "Text", value: "TEXT" },
-  { label: "Formula", value: "FORMULA" },
+  { label: 'Number', value: 'NUMBER' },
+  { label: 'Text', value: 'TEXT' },
+  { label: 'Formula', value: 'FORMULA' }
 ];
 
 export type TemplateColumn = {
@@ -298,11 +298,11 @@ export type ReorderColumnData = {
 // TEMPLATE ROW TYPES
 // =============================================================================
 
-export type RowType = "NORMAL" | "TOTAL";
+export type RowType = 'NORMAL' | 'TOTAL';
 
 export const ROW_TYPES: { label: string; value: RowType }[] = [
-  { label: "Normal", value: "NORMAL" },
-  { label: "Total", value: "TOTAL" },
+  { label: 'Normal', value: 'NORMAL' },
+  { label: 'Total', value: 'TOTAL' }
 ];
 
 export type TemplateRow = {
@@ -341,7 +341,7 @@ export type ReorderRowData = {
 // TEMPLATE EXTRA TYPES
 // =============================================================================
 
-export type ExtraSectionType = "HEADER" | "FOOTER" | "MEDIA";
+export type ExtraSectionType = 'HEADER' | 'FOOTER' | 'MEDIA';
 
 export const EXTRA_SECTION_TYPES: {
   label: string;
@@ -349,37 +349,37 @@ export const EXTRA_SECTION_TYPES: {
   description: string;
 }[] = [
   {
-    label: "Header",
-    value: "HEADER",
-    description: "Displayed at the top of the template",
+    label: 'Header',
+    value: 'HEADER',
+    description: 'Displayed at the top of the template'
   },
   {
-    label: "Footer",
-    value: "FOOTER",
-    description: "Displayed at the bottom of the template",
+    label: 'Footer',
+    value: 'FOOTER',
+    description: 'Displayed at the bottom of the template'
   },
   {
-    label: "Media",
-    value: "MEDIA",
-    description: "Image/file shown on the right side",
-  },
+    label: 'Media',
+    value: 'MEDIA',
+    description: 'Image/file shown on the right side'
+  }
 ];
 
-export type ExtraValueType = "TEXT" | "NUMBER" | "DATE" | "IMAGE" | "FILE";
+export type ExtraValueType = 'TEXT' | 'NUMBER' | 'DATE' | 'IMAGE' | 'FILE';
 
 export const EXTRA_VALUE_TYPES: {
   label: string;
   value: ExtraValueType;
   description: string;
 }[] = [
-  { label: "Text", value: "TEXT", description: "Plain text value" },
-  { label: "Number", value: "NUMBER", description: "Numeric value" },
-  { label: "Date", value: "DATE", description: "Date value" },
-  { label: "Image", value: "IMAGE", description: "Image upload" },
-  { label: "File", value: "FILE", description: "File attachment" },
+  { label: 'Text', value: 'TEXT', description: 'Plain text value' },
+  { label: 'Number', value: 'NUMBER', description: 'Numeric value' },
+  { label: 'Date', value: 'DATE', description: 'Date value' },
+  { label: 'Image', value: 'IMAGE', description: 'Image upload' },
+  { label: 'File', value: 'FILE', description: 'File attachment' }
 ];
 
-export type ExtraVisibilityScope = "ALWAYS" | "ONLY_CHILD" | "ONLY_ROOT";
+export type ExtraVisibilityScope = 'ALWAYS' | 'ONLY_CHILD' | 'ONLY_ROOT';
 
 export const EXTRA_VISIBILITY_SCOPES: {
   label: string;
@@ -387,20 +387,20 @@ export const EXTRA_VISIBILITY_SCOPES: {
   description: string;
 }[] = [
   {
-    label: "Always",
-    value: "ALWAYS",
-    description: "Visible in all contexts",
+    label: 'Always',
+    value: 'ALWAYS',
+    description: 'Visible in all contexts'
   },
   {
-    label: "Only Child",
-    value: "ONLY_CHILD",
-    description: "Visible only in child templates",
+    label: 'Only Child',
+    value: 'ONLY_CHILD',
+    description: 'Visible only in child templates'
   },
   {
-    label: "Only Root",
-    value: "ONLY_ROOT",
-    description: "Visible only in root templates",
-  },
+    label: 'Only Root',
+    value: 'ONLY_ROOT',
+    description: 'Visible only in root templates'
+  }
 ];
 
 export type TemplateExtra = {
@@ -470,33 +470,33 @@ export type TemplateWithDetails = Template & {
 // ORDER TYPES
 // =============================================================================
 
-export type OrderType = "SAMPLE" | "PRODUCTION" | "CUSTOM";
+export type OrderType = 'SAMPLE' | 'PRODUCTION' | 'CUSTOM';
 
 export const ORDER_TYPES: { label: string; value: OrderType }[] = [
-  { label: "Sample", value: "SAMPLE" },
-  { label: "Production", value: "PRODUCTION" },
-  { label: "Custom", value: "CUSTOM" },
+  { label: 'Sample', value: 'SAMPLE' },
+  { label: 'Production', value: 'PRODUCTION' },
+  { label: 'Custom', value: 'CUSTOM' }
 ];
 
 export type OrderStatus =
-  | "DRAFT"
-  | "PENDING"
-  | "APPROVED"
-  | "REJECTED"
-  | "COMPLETED"
-  | "CANCELLED";
+  | 'DRAFT'
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'COMPLETED'
+  | 'CANCELLED';
 
 export const ORDER_STATUSES: {
   label: string;
   value: OrderStatus;
   color: string;
 }[] = [
-  { label: "Draft", value: "DRAFT", color: "secondary" },
-  { label: "Pending", value: "PENDING", color: "default" },
-  { label: "Approved", value: "APPROVED", color: "default" },
-  { label: "Rejected", value: "REJECTED", color: "destructive" },
-  { label: "Completed", value: "COMPLETED", color: "default" },
-  { label: "Cancelled", value: "CANCELLED", color: "secondary" },
+  { label: 'Draft', value: 'DRAFT', color: 'secondary' },
+  { label: 'Pending', value: 'PENDING', color: 'default' },
+  { label: 'Approved', value: 'APPROVED', color: 'default' },
+  { label: 'Rejected', value: 'REJECTED', color: 'destructive' },
+  { label: 'Completed', value: 'COMPLETED', color: 'default' },
+  { label: 'Cancelled', value: 'CANCELLED', color: 'secondary' }
 ];
 
 // =============================================================================
@@ -611,7 +611,7 @@ export type Order = {
 
 export type OrderWithDetails = Order & {
   templates?: OrderTemplateData[];
-  product: Product; 
+  product: Product;
   customer?: Customer;
 };
 
@@ -624,7 +624,7 @@ export type OrderListParams = {
   page?: number;
   limit?: number;
   sortBy?: string;
-  sortOrder?: "ASC" | "DESC";
+  sortOrder?: 'ASC' | 'DESC';
   search?: string;
 };
 
@@ -654,10 +654,10 @@ export type UpdateOrderValueItem = {
 
 export type UpdateOrderValuesTemplatePayload = {
   templateId: string;
-  orderTemplateId: string;
+  orderTemplateId?: string;
   parentOrderTemplateId?: string | null;
-  deleteOrderValueIds?: string[]; // IDs of values to delete
-  values: UpdateOrderValueItem[];
+  deleteOrderValueIds?: string[];
+  values?: UpdateOrderValueItem[];
 };
 
 export type UpdateOrderValuesData = {
@@ -728,7 +728,7 @@ export type CustomerListParams = {
   page?: number;
   limit?: number;
   sortBy?: string;
-  sortOrder?: "ASC" | "DESC";
+  sortOrder?: 'ASC' | 'DESC';
   search?: string;
 };
 

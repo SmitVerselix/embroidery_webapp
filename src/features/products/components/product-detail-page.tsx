@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getProduct } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
-import type { Product } from '@/lib/api/types';
+import type { Product, TemplateWithDetails } from '@/lib/api/types';
 import TemplateListing from '@/features/templates/components/template-listing';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,10 +14,16 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+  CardTitle
 } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Pencil, AlertCircle, Package, FileText } from 'lucide-react';
+import {
+  ArrowLeft,
+  Pencil,
+  AlertCircle,
+  Package,
+  FileText
+} from 'lucide-react';
 import Link from 'next/link';
 import { format } from 'date-fns';
 
@@ -36,27 +42,27 @@ interface ProductDetailPageProps {
 
 function ProductDetailSkeleton() {
   return (
-    <div className="space-y-6">
-      <Skeleton className="h-5 w-32" />
+    <div className='space-y-6'>
+      <Skeleton className='h-5 w-32' />
       <Card>
         <CardHeader>
-          <div className="flex items-start justify-between">
-            <div className="space-y-2">
-              <Skeleton className="h-8 w-48" />
-              <Skeleton className="h-4 w-32" />
+          <div className='flex items-start justify-between'>
+            <div className='space-y-2'>
+              <Skeleton className='h-8 w-48' />
+              <Skeleton className='h-4 w-32' />
             </div>
-            <Skeleton className="h-10 w-20" />
+            <Skeleton className='h-10 w-20' />
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <Skeleton className="h-4 w-16" />
-              <Skeleton className="h-5 w-24" />
+          <div className='grid grid-cols-2 gap-4'>
+            <div className='space-y-1'>
+              <Skeleton className='h-4 w-16' />
+              <Skeleton className='h-5 w-24' />
             </div>
-            <div className="space-y-1">
-              <Skeleton className="h-4 w-16" />
-              <Skeleton className="h-5 w-32" />
+            <div className='space-y-1'>
+              <Skeleton className='h-4 w-16' />
+              <Skeleton className='h-5 w-32' />
             </div>
           </div>
         </CardContent>
@@ -71,7 +77,7 @@ function ProductDetailSkeleton() {
 
 export default function ProductDetailPage({
   companyId,
-  productId,
+  productId
 }: ProductDetailPageProps) {
   const router = useRouter();
 
@@ -79,7 +85,7 @@ export default function ProductDetailPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch product
+  // Fetch product (includes templates with columns, rows, extras)
   useEffect(() => {
     const fetchProduct = async () => {
       if (!companyId || !productId) return;
@@ -117,15 +123,15 @@ export default function ProductDetailPage({
   // Error state
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-10 space-y-4">
-        <div className="rounded-full bg-destructive/15 p-3">
-          <AlertCircle className="h-6 w-6 text-destructive" />
+      <div className='flex flex-col items-center justify-center space-y-4 py-10'>
+        <div className='bg-destructive/15 rounded-full p-3'>
+          <AlertCircle className='text-destructive h-6 w-6' />
         </div>
-        <div className="text-center space-y-2">
-          <h3 className="font-semibold">Failed to load product</h3>
-          <p className="text-sm text-muted-foreground">{error}</p>
+        <div className='space-y-2 text-center'>
+          <h3 className='font-semibold'>Failed to load product</h3>
+          <p className='text-muted-foreground text-sm'>{error}</p>
         </div>
-        <Button asChild variant="outline">
+        <Button asChild variant='outline'>
           <Link href={`/dashboard/${companyId}/product`}>Back to Products</Link>
         </Button>
       </div>
@@ -135,41 +141,44 @@ export default function ProductDetailPage({
   // Not found state
   if (!product) {
     return (
-      <div className="flex flex-col items-center justify-center py-10 space-y-4">
-        <div className="rounded-full bg-muted p-3">
-          <Package className="h-6 w-6 text-muted-foreground" />
+      <div className='flex flex-col items-center justify-center space-y-4 py-10'>
+        <div className='bg-muted rounded-full p-3'>
+          <Package className='text-muted-foreground h-6 w-6' />
         </div>
-        <div className="text-center space-y-2">
-          <h3 className="font-semibold">Product not found</h3>
-          <p className="text-sm text-muted-foreground">
+        <div className='space-y-2 text-center'>
+          <h3 className='font-semibold'>Product not found</h3>
+          <p className='text-muted-foreground text-sm'>
             The product you're looking for doesn't exist or has been deleted.
           </p>
         </div>
-        <Button asChild variant="outline">
+        <Button asChild variant='outline'>
           <Link href={`/dashboard/${companyId}/product`}>Back to Products</Link>
         </Button>
       </div>
     );
   }
 
+  // Cast templates from product/get response — they include columns, rows, extra
+  const productTemplates = (product.templates || []) as TemplateWithDetails[];
+
   return (
-    <div className="space-y-6">
+    <div className='space-y-6'>
       {/* Back Button */}
       <Link
         href={`/dashboard/${companyId}/product`}
-        className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+        className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
       >
-        <ArrowLeft className="mr-2 h-4 w-4" />
+        <ArrowLeft className='mr-2 h-4 w-4' />
         Back to Products
       </Link>
 
       {/* Product Header Card */}
       <Card>
         <CardHeader>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-2xl">{product.name}</CardTitle>
+          <div className='flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between'>
+            <div className='space-y-1'>
+              <div className='flex items-center gap-2'>
+                <CardTitle className='text-2xl'>{product.name}</CardTitle>
                 <Badge variant={product.isActive ? 'default' : 'secondary'}>
                   {product.isActive ? 'Active' : 'Inactive'}
                 </Badge>
@@ -177,47 +186,51 @@ export default function ProductDetailPage({
               <CardDescription>Product ID: {product.id}</CardDescription>
             </div>
             <Button
-              variant="outline"
+              variant='outline'
               onClick={() =>
                 router.push(`/dashboard/${companyId}/product/${productId}/edit`)
               }
             >
-              <Pencil className="mr-2 h-4 w-4" />
+              <Pencil className='mr-2 h-4 w-4' />
               Edit Product
             </Button>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Status</p>
-              <p className="font-medium">
+          <div className='grid grid-cols-2 gap-4 sm:grid-cols-4'>
+            <div className='space-y-1'>
+              <p className='text-muted-foreground text-sm'>Status</p>
+              <p className='font-medium'>
                 {product.isActive ? 'Active' : 'Inactive'}
               </p>
             </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Created At</p>
-              <p className="font-medium">{formatDate(product.createdAt)}</p>
+            <div className='space-y-1'>
+              <p className='text-muted-foreground text-sm'>Created At</p>
+              <p className='font-medium'>{formatDate(product.createdAt)}</p>
             </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Updated At</p>
-              <p className="font-medium">{formatDate(product.updatedAt)}</p>
+            <div className='space-y-1'>
+              <p className='text-muted-foreground text-sm'>Updated At</p>
+              <p className='font-medium'>{formatDate(product.updatedAt)}</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Tabs for Templates and other content */}
-      <Tabs defaultValue="templates" className="space-y-4">
+      <Tabs defaultValue='templates' className='space-y-4'>
         <TabsList>
-          <TabsTrigger value="templates" className="flex items-center gap-2">
-            <FileText className="h-4 w-4" />
+          <TabsTrigger value='templates' className='flex items-center gap-2'>
+            <FileText className='h-4 w-4' />
             Templates
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="templates" className="space-y-4">
-          <TemplateListing companyId={companyId} productId={productId} />
+        <TabsContent value='templates' className='space-y-4'>
+          <TemplateListing
+            companyId={companyId}
+            productId={productId}
+            initialTemplates={productTemplates}
+          />
         </TabsContent>
       </Tabs>
     </div>

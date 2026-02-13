@@ -1,11 +1,3 @@
-/**
- * Component: OrderExtraValues
- * Description: Editable extra fields (header, footer, media) for order templates.
- *              Supports TEXT, NUMBER, DATE value types with proper validation.
- *              IMAGE and FILE types support upload via the upload-single API.
- *              The uploaded file URL is stored as the extra field value.
- */
-
 'use client';
 
 import { useMemo, useCallback, useState, useRef } from 'react';
@@ -27,7 +19,7 @@ import {
   Upload,
   X,
   Loader2,
-  ExternalLink,
+  ExternalLink
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ImageViewer from '@/components/ui/image-viewer';
@@ -67,17 +59,17 @@ export interface OrderExtraValuesProps {
 const ValueTypeIcon = ({ type }: { type: string }) => {
   switch (type) {
     case 'TEXT':
-      return <Type className="h-3.5 w-3.5" />;
+      return <Type className='h-3.5 w-3.5' />;
     case 'NUMBER':
-      return <Hash className="h-3.5 w-3.5" />;
+      return <Hash className='h-3.5 w-3.5' />;
     case 'DATE':
-      return <Calendar className="h-3.5 w-3.5" />;
+      return <Calendar className='h-3.5 w-3.5' />;
     case 'IMAGE':
-      return <ImageIcon className="h-3.5 w-3.5" />;
+      return <ImageIcon className='h-3.5 w-3.5' />;
     case 'FILE':
-      return <Paperclip className="h-3.5 w-3.5" />;
+      return <Paperclip className='h-3.5 w-3.5' />;
     default:
-      return <Type className="h-3.5 w-3.5" />;
+      return <Type className='h-3.5 w-3.5' />;
   }
 };
 
@@ -114,7 +106,7 @@ const getSectionConfig = (sectionType: string) => {
         bgClass: 'bg-blue-50/50 dark:bg-blue-950/20',
         borderClass: 'border-blue-200 dark:border-blue-900',
         iconClass: 'text-blue-600 dark:text-blue-400',
-        titleClass: 'text-blue-900 dark:text-blue-100',
+        titleClass: 'text-blue-900 dark:text-blue-100'
       };
     case 'FOOTER':
       return {
@@ -123,7 +115,7 @@ const getSectionConfig = (sectionType: string) => {
         bgClass: 'bg-amber-50/50 dark:bg-amber-950/20',
         borderClass: 'border-amber-200 dark:border-amber-900',
         iconClass: 'text-amber-600 dark:text-amber-400',
-        titleClass: 'text-amber-900 dark:text-amber-100',
+        titleClass: 'text-amber-900 dark:text-amber-100'
       };
     case 'MEDIA':
       return {
@@ -132,7 +124,7 @@ const getSectionConfig = (sectionType: string) => {
         bgClass: 'bg-purple-50/50 dark:bg-purple-950/20',
         borderClass: 'border-purple-200 dark:border-purple-900',
         iconClass: 'text-purple-600 dark:text-purple-400',
-        titleClass: 'text-purple-900 dark:text-purple-100',
+        titleClass: 'text-purple-900 dark:text-purple-100'
       };
     default:
       return {
@@ -141,7 +133,7 @@ const getSectionConfig = (sectionType: string) => {
         bgClass: 'bg-muted/50',
         borderClass: 'border-border',
         iconClass: 'text-muted-foreground',
-        titleClass: 'text-foreground',
+        titleClass: 'text-foreground'
       };
   }
 };
@@ -177,7 +169,7 @@ export default function OrderExtraValues({
   errors = {},
   disabled = false,
   readOnly = false,
-  sectionType,
+  sectionType
 }: OrderExtraValuesProps) {
   const sortedExtras = useMemo(
     () =>
@@ -191,9 +183,7 @@ export default function OrderExtraValues({
   const [uploadingFields, setUploadingFields] = useState<
     Record<string, boolean>
   >({});
-  const [uploadErrors, setUploadErrors] = useState<
-    Record<string, string>
-  >({});
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   // ── Text/Number/Date value change ──────────────────────────────────
@@ -205,8 +195,8 @@ export default function OrderExtraValues({
         [extraId]: {
           value: newValue,
           orderExtraValueId: existing?.orderExtraValueId,
-          orderIndex: existing?.orderIndex ?? 0,
-        },
+          orderIndex: existing?.orderIndex ?? 0
+        }
       });
     },
     [values, onChange]
@@ -232,13 +222,13 @@ export default function OrderExtraValues({
           [extraId]: {
             value: result.url,
             orderExtraValueId: existing?.orderExtraValueId,
-            orderIndex: existing?.orderIndex ?? 0,
-          },
+            orderIndex: existing?.orderIndex ?? 0
+          }
         });
       } catch (err) {
         setUploadErrors((prev) => ({
           ...prev,
-          [extraId]: getError(err),
+          [extraId]: getError(err)
         }));
       } finally {
         setUploadingFields((prev) => ({ ...prev, [extraId]: false }));
@@ -267,8 +257,8 @@ export default function OrderExtraValues({
         [extraId]: {
           value: '',
           orderExtraValueId: existing?.orderExtraValueId,
-          orderIndex: existing?.orderIndex ?? 0,
-        },
+          orderIndex: existing?.orderIndex ?? 0
+        }
       });
       setUploadErrors((prev) => {
         const next = { ...prev };
@@ -286,16 +276,12 @@ export default function OrderExtraValues({
 
   return (
     <div
-      className={cn(
-        'border rounded-lg',
-        config.bgClass,
-        config.borderClass
-      )}
+      className={cn('rounded-lg border', config.bgClass, config.borderClass)}
     >
       {/* Section Header */}
       <div
         className={cn(
-          'flex items-center gap-2 px-4 py-2.5 border-b',
+          'flex items-center gap-2 border-b px-4 py-2.5',
           config.borderClass
         )}
       >
@@ -303,7 +289,7 @@ export default function OrderExtraValues({
         <h4 className={cn('text-sm font-semibold', config.titleClass)}>
           {config.label}
         </h4>
-        <Badge variant="secondary" className="text-[10px] ml-auto">
+        <Badge variant='secondary' className='ml-auto text-[10px]'>
           {sortedExtras.length} field{sortedExtras.length !== 1 ? 's' : ''}
         </Badge>
       </div>
@@ -314,7 +300,7 @@ export default function OrderExtraValues({
           'p-4',
           sectionType === 'MEDIA'
             ? 'space-y-3'
-            : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3'
+            : 'grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3'
         )}
       >
         {sortedExtras.map((extra) => {
@@ -329,77 +315,77 @@ export default function OrderExtraValues({
           return (
             <div
               key={extra.id}
-              className="bg-white dark:bg-background rounded-md border p-3 space-y-2"
+              className='dark:bg-background space-y-2 rounded-md border bg-white p-3'
             >
               {/* Field Label */}
-              <div className="flex items-center gap-1.5">
+              <div className='flex items-center gap-1.5'>
                 <ValueTypeIcon type={extra.valueType} />
-                <Label className="text-sm font-medium text-foreground">
+                <Label className='text-foreground text-sm font-medium'>
                   {extra.label}
                 </Label>
                 {extra.isRequired && (
-                  <span className="text-destructive text-xs font-bold">*</span>
+                  <span className='text-destructive text-xs font-bold'>*</span>
                 )}
               </div>
 
               {/* ── IMAGE / FILE field ─────────────────────────────── */}
               {isFileType ? (
-                <div className="space-y-2">
+                <div className='space-y-2'>
                   {/* Hidden file input */}
                   <input
-                    type="file"
+                    type='file'
                     ref={(el) => {
                       fileInputRefs.current[extra.id] = el;
                     }}
                     accept={getAcceptString(extra.valueType)}
                     onChange={(e) => handleFileInputChange(extra.id, e)}
-                    className="hidden"
+                    className='hidden'
                     disabled={disabled || readOnly || isUploading}
                   />
 
                   {isUploading ? (
                     /* Uploading spinner */
-                    <div className="flex flex-col items-center justify-center h-24 border-2 border-dashed rounded-md bg-muted/30">
-                      <Loader2 className="h-6 w-6 text-primary animate-spin mb-1" />
-                      <span className="text-[11px] text-muted-foreground">
+                    <div className='bg-muted/30 flex h-24 flex-col items-center justify-center rounded-md border-2 border-dashed'>
+                      <Loader2 className='text-primary mb-1 h-6 w-6 animate-spin' />
+                      <span className='text-muted-foreground text-[11px]'>
                         Uploading...
                       </span>
                     </div>
                   ) : hasValue ? (
                     /* ── Preview: image or file link ────────────────── */
-                    <div className="border rounded-md overflow-hidden">
+                    <div className='overflow-hidden rounded-md border'>
                       {extra.valueType === 'IMAGE' && isImageUrl(fieldValue) ? (
                         /* Image preview — click to open full viewer */
                         <div>
                           <ImageViewer
                             src={fieldValue}
                             alt={extra.label}
-                            className="w-full h-32 object-cover"
+                            className='h-32 w-full object-cover'
                           />
                           {!readOnly && (
-                            <div className="flex items-center gap-1 p-1.5 border-t bg-muted/30">
+                            <div className='bg-muted/30 flex items-center gap-1 border-t p-1.5'>
                               <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 text-xs flex-1"
+                                type='button'
+                                size='sm'
+                                variant='ghost'
+                                className='h-7 flex-1 text-xs'
                                 onClick={() =>
                                   fileInputRefs.current[extra.id]?.click()
                                 }
                                 disabled={disabled}
                               >
-                                <Upload className="h-3 w-3 mr-1" />
+                                <Upload className='mr-1 h-3 w-3' />
                                 Replace
                               </Button>
                               <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 text-xs flex-1 text-destructive hover:text-destructive"
+                                type='button'
+                                size='sm'
+                                variant='ghost'
+                                className='text-destructive hover:text-destructive h-7 flex-1 text-xs'
                                 onClick={() => handleRemoveFile(extra.id)}
                                 disabled={disabled}
                               >
-                                <X className="h-3 w-3 mr-1" />
+                                <X className='mr-1 h-3 w-3' />
                                 Remove
                               </Button>
                             </div>
@@ -407,35 +393,35 @@ export default function OrderExtraValues({
                         </div>
                       ) : (
                         /* File link */
-                        <div className="flex items-center gap-2 p-2">
-                          <Paperclip className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <div className='flex items-center gap-2 p-2'>
+                          <Paperclip className='text-muted-foreground h-4 w-4 flex-shrink-0' />
                           <a
                             href={fieldValue}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-primary hover:underline truncate flex-1"
+                            target='_blank'
+                            rel='noopener noreferrer'
+                            className='text-primary flex-1 truncate text-xs hover:underline'
                             title={fieldValue}
                           >
                             {getFileNameFromUrl(fieldValue)}
                           </a>
                           <a
                             href={fieldValue}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-muted-foreground hover:text-foreground flex-shrink-0"
+                            target='_blank'
+                            rel='noopener noreferrer'
+                            className='text-muted-foreground hover:text-foreground flex-shrink-0'
                           >
-                            <ExternalLink className="h-3.5 w-3.5" />
+                            <ExternalLink className='h-3.5 w-3.5' />
                           </a>
                           {!readOnly && (
                             <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className="h-6 w-6 flex-shrink-0"
+                              type='button'
+                              size='icon'
+                              variant='ghost'
+                              className='h-6 w-6 flex-shrink-0'
                               onClick={() => handleRemoveFile(extra.id)}
                               disabled={disabled}
                             >
-                              <X className="h-3.5 w-3.5" />
+                              <X className='h-3.5 w-3.5' />
                             </Button>
                           )}
                         </div>
@@ -443,18 +429,18 @@ export default function OrderExtraValues({
                     </div>
                   ) : readOnly ? (
                     /* Read-only empty */
-                    <div className="flex flex-col items-center justify-center h-20 border-2 border-dashed rounded-md bg-muted/30">
+                    <div className='bg-muted/30 flex h-20 flex-col items-center justify-center rounded-md border-2 border-dashed'>
                       {extra.valueType === 'IMAGE' ? (
                         <>
-                          <ImageIcon className="h-6 w-6 text-muted-foreground/40 mb-1" />
-                          <span className="text-[11px] text-muted-foreground">
+                          <ImageIcon className='text-muted-foreground/40 mb-1 h-6 w-6' />
+                          <span className='text-muted-foreground text-[11px]'>
                             No image
                           </span>
                         </>
                       ) : (
                         <>
-                          <Paperclip className="h-6 w-6 text-muted-foreground/40 mb-1" />
-                          <span className="text-[11px] text-muted-foreground">
+                          <Paperclip className='text-muted-foreground/40 mb-1 h-6 w-6' />
+                          <span className='text-muted-foreground text-[11px]'>
                             No file
                           </span>
                         </>
@@ -463,21 +449,19 @@ export default function OrderExtraValues({
                   ) : (
                     /* Upload button */
                     <button
-                      type="button"
-                      onClick={() =>
-                        fileInputRefs.current[extra.id]?.click()
-                      }
+                      type='button'
+                      onClick={() => fileInputRefs.current[extra.id]?.click()}
                       disabled={disabled}
                       className={cn(
-                        'flex flex-col items-center justify-center w-full h-20 border-2 border-dashed rounded-md bg-muted/30',
-                        'hover:bg-muted/50 hover:border-primary/50 transition-colors cursor-pointer',
-                        'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
-                        disabled && 'opacity-50 cursor-not-allowed',
+                        'bg-muted/30 flex h-20 w-full flex-col items-center justify-center rounded-md border-2 border-dashed',
+                        'hover:bg-muted/50 hover:border-primary/50 cursor-pointer transition-colors',
+                        'focus:ring-ring focus:ring-2 focus:ring-offset-2 focus:outline-none',
+                        disabled && 'cursor-not-allowed opacity-50',
                         fieldError && 'border-destructive'
                       )}
                     >
-                      <Upload className="h-5 w-5 text-muted-foreground mb-1" />
-                      <span className="text-[11px] text-muted-foreground">
+                      <Upload className='text-muted-foreground mb-1 h-5 w-5' />
+                      <span className='text-muted-foreground text-[11px]'>
                         {extra.valueType === 'IMAGE'
                           ? 'Click to upload image'
                           : 'Click to attach file'}
@@ -487,30 +471,30 @@ export default function OrderExtraValues({
 
                   {/* Upload error */}
                   {uploadError && (
-                    <div className="flex items-center gap-1 text-[10px] text-destructive">
-                      <AlertCircle className="h-3 w-3" />
+                    <div className='text-destructive flex items-center gap-1 text-[10px]'>
+                      <AlertCircle className='h-3 w-3' />
                       <span>{uploadError}</span>
                     </div>
                   )}
 
                   {/* Validation error */}
                   {fieldError && (
-                    <div className="flex items-center gap-1 text-[10px] text-destructive">
-                      <AlertCircle className="h-3 w-3" />
+                    <div className='text-destructive flex items-center gap-1 text-[10px]'>
+                      <AlertCircle className='h-3 w-3' />
                       <span>{fieldError}</span>
                     </div>
                   )}
                 </div>
               ) : readOnly ? (
                 /* ── Read-only text/number/date ──────────────────── */
-                <div className="h-9 flex items-center px-3 text-sm border rounded-md bg-muted/30">
+                <div className='bg-muted/30 flex h-9 items-center rounded-md border px-3 text-sm'>
                   {fieldValue || (
-                    <span className="text-muted-foreground">—</span>
+                    <span className='text-muted-foreground'>—</span>
                   )}
                 </div>
               ) : (
                 /* ── Editable text/number/date ───────────────────── */
-                <div className="space-y-1">
+                <div className='space-y-1'>
                   <Input
                     type={getInputType(extra.valueType)}
                     value={fieldValue}
@@ -519,15 +503,12 @@ export default function OrderExtraValues({
                     }
                     placeholder={getPlaceholder(extra.valueType)}
                     disabled={disabled}
-                    className={cn(
-                      'h-9',
-                      fieldError && 'border-destructive'
-                    )}
+                    className={cn('h-9', fieldError && 'border-destructive')}
                     step={extra.valueType === 'NUMBER' ? 'any' : undefined}
                   />
                   {fieldError && (
-                    <div className="flex items-center gap-1 text-[10px] text-destructive">
-                      <AlertCircle className="h-3 w-3" />
+                    <div className='text-destructive flex items-center gap-1 text-[10px]'>
+                      <AlertCircle className='h-3 w-3' />
                       <span>{fieldError}</span>
                     </div>
                   )}

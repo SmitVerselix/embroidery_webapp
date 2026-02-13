@@ -1,13 +1,23 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type WheelEvent as ReactWheelEvent,
+  type TouchEvent as ReactTouchEvent
+} from 'react';
 import { useRouter } from 'next/navigation';
-import { getOrder, getTemplate } from '@/lib/api/services';
+import { getOrder, updateOrderValues } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
   OrderWithDetails,
   TemplateWithDetails,
-  OrderTemplateData
+  OrderTemplateData,
+  UpdateOrderValuesData,
+  OrderValue
 } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,12 +30,30 @@ import {
   CardTitle
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { ArrowLeft, AlertCircle, Pencil } from 'lucide-react';
+import {
+  ArrowLeft,
+  AlertCircle,
+  Pencil,
+  Copy,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Minimize2,
+  Loader2
+} from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import Link from 'next/link';
 import OrderTemplateValues, {
   type TemplateValuesMap
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
+import { toast } from 'sonner';
 
 // =============================================================================
 // HELPERS
@@ -58,14 +86,34 @@ const getOrderTypeBadgeVariant = (type: string) => {
 };
 
 // =============================================================================
+// ZOOM / PAN CONSTANTS
+// =============================================================================
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 5;
+const ZOOM_STEP = 0.25;
+const SCROLL_ZOOM_FACTOR = 0.001;
+
+// =============================================================================
 // INTERNAL TYPES
 // =============================================================================
 
-/** Represents a single order-template instance (unique by orderTemplateId) */
+type OrderTemplateSummary = {
+  id: string;
+  total: string;
+  discount: string | null;
+  discountAmount: string;
+  discountType: string | null;
+  finalPayableAmount: string;
+};
+
 type OrderTemplateEntry = {
   orderTemplateId: string;
   templateId: string;
   template: TemplateWithDetails;
+  parentOrderTemplateId: string | null;
+  isChild: boolean;
+  summary: OrderTemplateSummary | null;
 };
 
 // =============================================================================
@@ -85,21 +133,117 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const router = useRouter();
 
   const [order, setOrder] = useState<OrderWithDetails | null>(null);
-  /** Each entry is a unique order-template instance */
   const [entries, setEntries] = useState<OrderTemplateEntry[]>([]);
-  /** Keyed by orderTemplateId (NOT templateId) */
   const [templateValues, setTemplateValues] = useState<
     Record<string, TemplateValuesMap>
   >({});
-  /** Keyed by orderTemplateId */
   const [extraValues, setExtraValues] = useState<
     Record<string, ExtraValuesMap>
   >({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isDuplicating, setIsDuplicating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Zoom & Pan state ──────────────────────────────────────────────────
+  const [zoom, setZoom] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [isFitted, setIsFitted] = useState(true);
+  const [isCanvasFocused, setIsCanvasFocused] = useState(false);
+
+  const dragStart = useRef({ x: 0, y: 0 });
+  const positionStart = useRef({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const lastPinchDist = useRef<number | null>(null);
+
   // ──────────────────────────────────────────────────────────────────────
-  // FETCH ORDER + TEMPLATES
+  // PROCESS TEMPLATE DATA (handles parent + children)
+  // ──────────────────────────────────────────────────────────────────────
+  const processOrderTemplates = useCallback((orderData: OrderWithDetails) => {
+    if (!orderData.templates || orderData.templates.length === 0) {
+      setEntries([]);
+      setTemplateValues({});
+      setExtraValues({});
+      return;
+    }
+
+    const templateCache: Record<string, TemplateWithDetails> = {};
+    const productTemplates = (orderData.product?.templates ||
+      []) as TemplateWithDetails[];
+    for (const tmpl of productTemplates) {
+      templateCache[tmpl.id] = tmpl;
+    }
+
+    const loadedEntries: OrderTemplateEntry[] = [];
+    const loadedValues: Record<string, TemplateValuesMap> = {};
+    const loadedExtraValues: Record<string, ExtraValuesMap> = {};
+
+    const processTemplate = (
+      tmplData: OrderTemplateData,
+      parentOrderTemplateId: string | null,
+      isChild: boolean
+    ) => {
+      const orderTemplateId = tmplData.id;
+      const fullTemplate = templateCache[tmplData.templateId];
+      if (!fullTemplate) return;
+
+      // Extract summary
+      const rawSummary = (tmplData as any).summary;
+      const summary: OrderTemplateSummary | null = rawSummary
+        ? {
+            id: rawSummary.id,
+            total: rawSummary.total ?? '0.0000',
+            discount: rawSummary.discount ?? null,
+            discountAmount: rawSummary.discountAmount ?? '0.0000',
+            discountType: rawSummary.discountType ?? null,
+            finalPayableAmount: rawSummary.finalPayableAmount ?? '0.0000'
+          }
+        : null;
+
+      loadedEntries.push({
+        orderTemplateId,
+        templateId: tmplData.templateId,
+        template: fullTemplate,
+        parentOrderTemplateId,
+        isChild,
+        summary
+      });
+
+      const valuesMap: TemplateValuesMap = {};
+      (tmplData.values || []).forEach((v) => {
+        if (!valuesMap[v.rowId]) valuesMap[v.rowId] = {};
+        valuesMap[v.rowId][v.columnId] = v.value ?? v.calculatedValue ?? '';
+      });
+      loadedValues[orderTemplateId] = valuesMap;
+
+      const extValMap: ExtraValuesMap = {};
+      (tmplData.extraValues || []).forEach((ev) => {
+        extValMap[ev.templateExtraFieldId] = {
+          value: ev.value,
+          orderExtraValueId: ev.id,
+          orderIndex: ev.orderIndex
+        };
+      });
+      loadedExtraValues[orderTemplateId] = extValMap;
+
+      if (tmplData.children && tmplData.children.length > 0) {
+        tmplData.children.forEach((child) => {
+          processTemplate(child, orderTemplateId, true);
+        });
+      }
+    };
+
+    orderData.templates.forEach((tmplData: OrderTemplateData) => {
+      processTemplate(tmplData, null, false);
+    });
+
+    setEntries(loadedEntries);
+    setTemplateValues(loadedValues);
+    setExtraValues(loadedExtraValues);
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // FETCH ORDER
   // ──────────────────────────────────────────────────────────────────────
   const fetchOrder = useCallback(async () => {
     setIsLoading(true);
@@ -107,80 +251,309 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     try {
       const orderData = await getOrder(companyId, orderId);
       setOrder(orderData);
-
-      if (orderData.templates && orderData.templates.length > 0) {
-        // Deduplicate getTemplate calls — same templateId fetched once
-        const templateCache: Record<string, TemplateWithDetails> = {};
-        const uniqueTemplateIds = Array.from(
-          new Set(orderData.templates.map((t) => t.templateId))
-        );
-
-        const tmplPromises = uniqueTemplateIds.map(async (templateId) => {
-          const full = await getTemplate(
-            companyId,
-            orderData.productId,
-            templateId
-          );
-          templateCache[templateId] = full;
-        });
-        await Promise.all(tmplPromises);
-
-        // Build entries and value maps keyed by orderTemplateId
-        const loadedEntries: OrderTemplateEntry[] = [];
-        const loadedValues: Record<string, TemplateValuesMap> = {};
-        const loadedExtraValues: Record<string, ExtraValuesMap> = {};
-
-        orderData.templates.forEach((tmplData: OrderTemplateData) => {
-          const orderTemplateId = tmplData.id; // API returns `id` as orderTemplateId
-          const fullTemplate = templateCache[tmplData.templateId];
-
-          if (!fullTemplate) return;
-
-          loadedEntries.push({
-            orderTemplateId,
-            templateId: tmplData.templateId,
-            template: fullTemplate
-          });
-
-          // Map main values — use value OR calculatedValue (for FORMULA cols)
-          const valuesMap: TemplateValuesMap = {};
-          (tmplData.values || []).forEach((v) => {
-            if (!valuesMap[v.rowId]) {
-              valuesMap[v.rowId] = {};
-            }
-            valuesMap[v.rowId][v.columnId] = v.value ?? v.calculatedValue ?? '';
-          });
-          loadedValues[orderTemplateId] = valuesMap;
-
-          // Map extra values
-          const extValMap: ExtraValuesMap = {};
-          (tmplData.extraValues || []).forEach((ev) => {
-            extValMap[ev.templateExtraFieldId] = {
-              value: ev.value,
-              orderExtraValueId: ev.id,
-              orderIndex: ev.orderIndex
-            };
-          });
-          loadedExtraValues[orderTemplateId] = extValMap;
-        });
-
-        setEntries(loadedEntries);
-        setTemplateValues(loadedValues);
-        setExtraValues(loadedExtraValues);
-      }
+      processOrderTemplates(orderData);
     } catch (err) {
       setError(getError(err));
     } finally {
       setIsLoading(false);
     }
-  }, [companyId, orderId]);
+  }, [companyId, orderId, processOrderTemplates]);
 
   useEffect(() => {
     fetchOrder();
   }, [fetchOrder]);
 
+  // ──────────────────────────────────────────────────────────────────────
+  // DUPLICATE TEMPLATE
+  // ──────────────────────────────────────────────────────────────────────
+  const handleDuplicate = useCallback(
+    async (entry: OrderTemplateEntry) => {
+      if (!order) return;
+
+      const parentEntry = entries.find(
+        (e) => e.templateId === entry.templateId && !e.isChild
+      );
+      if (!parentEntry) return;
+
+      const totalInstances = entries.filter(
+        (e) => e.templateId === entry.templateId
+      ).length;
+
+      if (totalInstances >= 2) {
+        toast.error('Maximum 2 templates allowed. Cannot duplicate further.');
+        return;
+      }
+
+      setIsDuplicating(true);
+
+      try {
+        const sourceValues = templateValues[entry.orderTemplateId] || {};
+        const template = entry.template;
+        const values: OrderValue[] = [];
+
+        const nonFormulaColumns = (template.columns || []).filter(
+          (col) => col.dataType !== 'FORMULA'
+        );
+
+        for (const row of template.rows || []) {
+          for (const col of nonFormulaColumns) {
+            const val = sourceValues[row.id]?.[col.id];
+            if (val !== undefined && val !== '') {
+              values.push({
+                value: val,
+                rowId: row.id,
+                columnId: col.id
+              });
+            }
+          }
+        }
+
+        const payload: UpdateOrderValuesData = {
+          templates: [
+            {
+              templateId: entry.templateId,
+              parentOrderTemplateId: parentEntry.orderTemplateId
+            }
+          ]
+        };
+
+        await updateOrderValues(companyId, orderId, payload);
+        toast.success('Template duplicated successfully');
+
+        const orderData = await getOrder(companyId, orderId);
+        setOrder(orderData);
+        processOrderTemplates(orderData);
+      } catch (err) {
+        toast.error(getError(err) || 'Failed to duplicate template');
+      } finally {
+        setIsDuplicating(false);
+      }
+    },
+    [order, entries, templateValues, companyId, orderId, processOrderTemplates]
+  );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // ZOOM HELPERS
+  // ──────────────────────────────────────────────────────────────────────
+  const clampZoom = useCallback((z: number) => {
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((z) => clampZoom(z + ZOOM_STEP));
+    setIsFitted(false);
+  }, [clampZoom]);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((z) => clampZoom(z - ZOOM_STEP));
+    setIsFitted(false);
+  }, [clampZoom]);
+
+  const handleToggleFit = useCallback(() => {
+    if (isFitted) {
+      setZoom(1);
+      setPosition({ x: 0, y: 0 });
+      setIsFitted(false);
+    } else {
+      setZoom(1);
+      setPosition({ x: 0, y: 0 });
+      setIsFitted(true);
+    }
+  }, [isFitted]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // CTRL + SCROLL WHEEL ZOOM
+  // ──────────────────────────────────────────────────────────────────────
+  const handleWheel = useCallback(
+    (e: ReactWheelEvent<HTMLDivElement>) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const delta = -e.deltaY * SCROLL_ZOOM_FACTOR;
+      setZoom((z) => clampZoom(z + delta * z));
+      setIsFitted(false);
+    },
+    [clampZoom]
+  );
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const preventNativeZoom = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    };
+    container.addEventListener('wheel', preventNativeZoom, { passive: false });
+    return () => container.removeEventListener('wheel', preventNativeZoom);
+  }, [entries.length]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // MOUSE DRAG / PAN
+  // ──────────────────────────────────────────────────────────────────────
+  const handleMouseDown = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (
+        target.closest('button') ||
+        target.closest('a') ||
+        target.closest('input') ||
+        target.closest('select') ||
+        target.closest('textarea')
+      )
+        return;
+      e.preventDefault();
+      setIsDragging(true);
+      dragStart.current = { x: e.clientX, y: e.clientY };
+      positionStart.current = { ...position };
+    },
+    [position]
+  );
+
+  const handleMouseMove = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStart.current.x;
+      const dy = e.clientY - dragStart.current.y;
+      setPosition({
+        x: positionStart.current.x + dx,
+        y: positionStart.current.y + dy
+      });
+    },
+    [isDragging]
+  );
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // TOUCH DRAG + PINCH-TO-ZOOM
+  // ──────────────────────────────────────────────────────────────────────
+  const getTouchDist = (t1: React.Touch, t2: React.Touch): number => {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const handleTouchStart = useCallback(
+    (e: ReactTouchEvent<HTMLDivElement>) => {
+      if (e.touches.length === 1) {
+        const target = e.target as HTMLElement;
+        if (
+          target.closest('button') ||
+          target.closest('a') ||
+          target.closest('input') ||
+          target.closest('select') ||
+          target.closest('textarea')
+        )
+          return;
+        setIsDragging(true);
+        dragStart.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY
+        };
+        positionStart.current = { ...position };
+      } else if (e.touches.length === 2) {
+        lastPinchDist.current = getTouchDist(e.touches[0], e.touches[1]);
+      }
+    },
+    [position]
+  );
+
+  const handleTouchMove = useCallback(
+    (e: ReactTouchEvent<HTMLDivElement>) => {
+      if (e.touches.length === 1 && isDragging) {
+        const dx = e.touches[0].clientX - dragStart.current.x;
+        const dy = e.touches[0].clientY - dragStart.current.y;
+        setPosition({
+          x: positionStart.current.x + dx,
+          y: positionStart.current.y + dy
+        });
+      } else if (e.touches.length === 2 && lastPinchDist.current !== null) {
+        const newDist = getTouchDist(e.touches[0], e.touches[1]);
+        const scale = newDist / lastPinchDist.current;
+        lastPinchDist.current = newDist;
+        setZoom((z) => clampZoom(z * scale));
+        setIsFitted(false);
+      }
+    },
+    [isDragging, clampZoom]
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    setIsDragging(false);
+    lastPinchDist.current = null;
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // DOUBLE-CLICK TO TOGGLE ZOOM
+  // ──────────────────────────────────────────────────────────────────────
+  const handleDoubleClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.closest('button') ||
+        target.closest('a') ||
+        target.closest('input') ||
+        target.closest('select') ||
+        target.closest('textarea')
+      )
+        return;
+      if (zoom > 1.1) {
+        setZoom(1);
+        setPosition({ x: 0, y: 0 });
+        setIsFitted(true);
+      } else {
+        setZoom(2.5);
+        setIsFitted(false);
+      }
+    },
+    [zoom]
+  );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // KEYBOARD SHORTCUTS (+/= zoom in, -/_ zoom out, 0 toggle fit)
+  // ──────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isCanvasFocused) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      switch (e.key) {
+        case '+':
+        case '=':
+          e.preventDefault();
+          handleZoomIn();
+          break;
+        case '-':
+        case '_':
+          e.preventDefault();
+          handleZoomOut();
+          break;
+        case '0':
+          e.preventDefault();
+          handleToggleFit();
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isCanvasFocused, handleZoomIn, handleZoomOut, handleToggleFit]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // HELPERS
+  // ──────────────────────────────────────────────────────────────────────
+  const canDuplicate = useCallback(
+    (templateId: string) => {
+      const count = entries.filter((e) => e.templateId === templateId).length;
+      return count < 2;
+    },
+    [entries]
+  );
+
   const backUrl = `/dashboard/${companyId}/orders`;
   const editUrl = `/dashboard/${companyId}/orders/${orderId}/edit`;
+  const zoomPercent = Math.round(zoom * 100);
 
   // ──────────────────────────────────────────────────────────────────────
   // LOADING
@@ -234,6 +607,15 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       </div>
     );
   }
+
+  // Group entries by templateId
+  const groupedByTemplate: Record<string, OrderTemplateEntry[]> = {};
+  entries.forEach((entry) => {
+    if (!groupedByTemplate[entry.templateId]) {
+      groupedByTemplate[entry.templateId] = [];
+    }
+    groupedByTemplate[entry.templateId].push(entry);
+  });
 
   // ──────────────────────────────────────────────────────────────────────
   // RENDER
@@ -309,31 +691,257 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         </CardContent>
       </Card>
 
-      {/* Template Values — one card per order-template instance */}
+      {/* ────────────────────────────────────────────────────────────────
+          TEMPLATE VALUES — Zoomable / Pannable Canvas
+      ──────────────────────────────────────────────────────────────── */}
       {entries.length > 0 && (
         <>
           <Separator />
-          <div className='space-y-2'>
-            <h2 className='text-lg font-semibold'>Template Values</h2>
-            <p className='text-muted-foreground text-sm'>
-              Values entered for this order&apos;s templates
-            </p>
+
+          {/* ── Top toolbar ───────────────────────────────────────── */}
+          <div className='bg-muted/60 flex items-center justify-between rounded-lg border px-4 py-2.5'>
+            <div className='flex min-w-0 items-center gap-3'>
+              <h2 className='truncate text-sm font-semibold'>
+                Template Values
+              </h2>
+              <span className='text-muted-foreground hidden text-xs sm:inline'>
+                Values entered for this order&apos;s templates
+              </span>
+            </div>
+
+            <div className='bg-background flex items-center gap-1 rounded-lg border px-1 py-0.5 shadow-sm'>
+              <CanvasToolbarButton
+                onClick={handleZoomOut}
+                disabled={zoom <= MIN_ZOOM}
+                title='Zoom out (−)'
+              >
+                <ZoomOut className='h-4 w-4' />
+              </CanvasToolbarButton>
+
+              <span className='text-muted-foreground w-12 text-center font-mono text-xs tabular-nums select-none'>
+                {zoomPercent}%
+              </span>
+
+              <CanvasToolbarButton
+                onClick={handleZoomIn}
+                disabled={zoom >= MAX_ZOOM}
+                title='Zoom in (+)'
+              >
+                <ZoomIn className='h-4 w-4' />
+              </CanvasToolbarButton>
+
+              <div className='bg-border mx-0.5 h-4 w-px' />
+
+              <CanvasToolbarButton
+                onClick={handleToggleFit}
+                title={isFitted ? 'Actual size' : 'Fit to screen (0)'}
+              >
+                {isFitted ? (
+                  <Maximize2 className='h-3.5 w-3.5' />
+                ) : (
+                  <Minimize2 className='h-3.5 w-3.5' />
+                )}
+              </CanvasToolbarButton>
+            </div>
+
+            <div className='w-20' />
           </div>
-          <div className='space-y-6'>
-            {entries.map((entry) => (
-              <OrderTemplateValues
-                key={entry.orderTemplateId}
-                template={entry.template}
-                values={templateValues[entry.orderTemplateId] || {}}
-                onChange={() => {}}
-                readOnly
-                extraValues={extraValues[entry.orderTemplateId] || {}}
-                onExtraValuesChange={() => {}}
-              />
-            ))}
+
+          {/* ── Canvas container ──────────────────────────────────── */}
+          <div
+            ref={containerRef}
+            tabIndex={0}
+            className={cn(
+              'bg-muted/30 relative overflow-auto rounded-xl border outline-none',
+              'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2',
+              isDragging ? 'cursor-grabbing' : 'cursor-grab'
+            )}
+            style={{ minHeight: '500px' }}
+            onFocus={() => setIsCanvasFocused(true)}
+            onBlur={() => setIsCanvasFocused(false)}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onWheel={handleWheel}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onDoubleClick={handleDoubleClick}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <div
+              className={cn(
+                'origin-top-left p-6',
+                !isDragging && 'transition-transform duration-150 ease-out'
+              )}
+              style={{
+                transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+                transformOrigin: 'top left'
+              }}
+            >
+              <div className='space-y-6'>
+                {Object.entries(groupedByTemplate).map(
+                  ([templateId, templateEntries]) => {
+                    const parentEntry = templateEntries.find((e) => !e.isChild);
+                    const childEntries = templateEntries.filter(
+                      (e) => e.isChild
+                    );
+                    const duplicateAllowed = canDuplicate(templateId);
+
+                    return (
+                      <div key={templateId} className='space-y-4'>
+                        {/* Parent Template */}
+                        {parentEntry && (
+                          <div className='relative'>
+                            <div className='mb-2 flex items-center justify-between'>
+                              <Badge
+                                variant='outline'
+                                className='text-xs font-normal'
+                              >
+                                Parent Template
+                              </Badge>
+                              <TooltipProvider delayDuration={200}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant='outline'
+                                      size='sm'
+                                      disabled={
+                                        !duplicateAllowed || isDuplicating
+                                      }
+                                      onClick={() =>
+                                        handleDuplicate(parentEntry)
+                                      }
+                                      className='gap-1.5'
+                                    >
+                                      {isDuplicating ? (
+                                        <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                                      ) : (
+                                        <Copy className='h-3.5 w-3.5' />
+                                      )}
+                                      Duplicate
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side='left'>
+                                    {duplicateAllowed
+                                      ? 'Duplicate this template with copied values'
+                                      : 'Maximum 2 templates reached'}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                            <OrderTemplateValues
+                              template={parentEntry.template}
+                              values={
+                                templateValues[parentEntry.orderTemplateId] ||
+                                {}
+                              }
+                              onChange={() => {}}
+                              readOnly
+                              extraValues={
+                                extraValues[parentEntry.orderTemplateId] || {}
+                              }
+                              onExtraValuesChange={() => {}}
+                              summary={parentEntry.summary}
+                            />
+                          </div>
+                        )}
+
+                        {/* Child Templates (duplicates) */}
+                        {childEntries.map((childEntry, idx) => (
+                          <div key={childEntry.orderTemplateId}>
+                            <div className='mb-2 flex items-center gap-2'>
+                              <Badge
+                                variant='secondary'
+                                className='text-xs font-normal'
+                              >
+                                Duplicate #{idx + 1}
+                              </Badge>
+                            </div>
+                            <OrderTemplateValues
+                              template={childEntry.template}
+                              values={
+                                templateValues[childEntry.orderTemplateId] || {}
+                              }
+                              onChange={() => {}}
+                              readOnly
+                              extraValues={
+                                extraValues[childEntry.orderTemplateId] || {}
+                              }
+                              onExtraValuesChange={() => {}}
+                              summary={childEntry.summary}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Bottom hint bar ───────────────────────────────────── */}
+          <div className='bg-muted/40 flex items-center justify-center rounded-lg border px-4 py-2'>
+            <p className='text-muted-foreground text-[11px] select-none'>
+              Drag to pan · Double-click to toggle zoom · Pinch to zoom on touch
+              ·{' '}
+              <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
+                Ctrl
+              </kbd>
+              {' + Scroll to zoom · '}
+              <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
+                +
+              </kbd>{' '}
+              <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
+                −
+              </kbd>{' '}
+              <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
+                0
+              </kbd>{' '}
+              for zoom controls
+            </p>
           </div>
         </>
       )}
     </div>
+  );
+}
+
+// =============================================================================
+// CANVAS TOOLBAR BUTTON
+// =============================================================================
+
+function CanvasToolbarButton({
+  onClick,
+  disabled = false,
+  title,
+  children
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type='button'
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      disabled={disabled}
+      title={title}
+      className={cn(
+        'inline-flex h-8 w-8 items-center justify-center rounded-md',
+        'text-muted-foreground hover:text-foreground hover:bg-accent',
+        'transition-colors duration-150',
+        'focus-visible:ring-ring focus:outline-none focus-visible:ring-2',
+        'disabled:pointer-events-none disabled:opacity-30'
+      )}
+    >
+      {children}
+    </button>
   );
 }

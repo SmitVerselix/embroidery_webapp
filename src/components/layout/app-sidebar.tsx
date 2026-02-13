@@ -1,10 +1,10 @@
-"use client";
+'use client';
 
 import {
   Collapsible,
   CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+  CollapsibleTrigger
+} from '@/components/ui/collapsible';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,8 +12,8 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
 import {
   Sidebar,
   SidebarContent,
@@ -28,12 +28,13 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
-} from "@/components/ui/sidebar";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { navItems } from "@/config/nav-config";
-import { useMediaQuery } from "@/hooks/use-media-query";
-import { useAuth } from "@/providers/auth-provider";
-import { useFilteredNavItems } from "@/hooks/use-nav";
+  useSidebar
+} from '@/components/ui/sidebar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { navItems } from '@/config/nav-config';
+import { useMediaQuery } from '@/hooks/use-media-query';
+import { useAuth } from '@/providers/auth-provider';
+import { useFilteredNavItems } from '@/hooks/use-nav';
 import {
   IconBell,
   IconChevronRight,
@@ -49,12 +50,12 @@ import {
   IconUser,
   IconStar,
   IconSettings,
-  IconHome,
-} from "@tabler/icons-react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import * as React from "react";
-import { CompanySwitcher } from "./company-switcher";
+  IconHome
+} from '@tabler/icons-react';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import * as React from 'react';
+import { CompanySwitcher } from './company-switcher';
 
 // =============================================================================
 // ICON MAP - Map icon names to actual icon components
@@ -69,7 +70,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   user: IconUser,
   star: IconStar,
   settings: IconSettings,
-  home: IconHome,
+  home: IconHome
 };
 
 // Default icon if not found
@@ -91,26 +92,26 @@ function UserAvatar({ className, showInfo }: UserAvatarProps) {
 
   const initials = user.name
     ? user.name
-        .split(" ")
+        .split(' ')
         .map((n) => n[0])
-        .join("")
+        .join('')
         .toUpperCase()
         .slice(0, 2)
-    : user.email?.[0]?.toUpperCase() || "U";
+    : user.email?.[0]?.toUpperCase() || 'U';
 
   return (
-    <div className="flex items-center gap-2">
-      <Avatar className={className || "h-8 w-8"}>
+    <div className='flex items-center gap-2'>
+      <Avatar className={className || 'h-8 w-8'}>
         <AvatarImage
           src={user.profileImage || undefined}
           alt={user.name || user.email}
         />
-        <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
+        <AvatarFallback className='rounded-lg'>{initials}</AvatarFallback>
       </Avatar>
       {showInfo && (
-        <div className="grid flex-1 text-left text-sm leading-tight">
-          <span className="truncate font-semibold">{user.name}</span>
-          <span className="truncate text-xs">{user.email}</span>
+        <div className='grid flex-1 text-left text-sm leading-tight'>
+          <span className='truncate font-semibold'>{user.name}</span>
+          <span className='truncate text-xs'>{user.email}</span>
         </div>
       )}
     </div>
@@ -127,6 +128,7 @@ export default function AppSidebar() {
   const { user, currentCompany, logout } = useAuth();
   const router = useRouter();
   const filteredItems = useFilteredNavItems(navItems);
+  const { state } = useSidebar();
 
   // Get company ID for building URLs
   const companyId = currentCompany?.company?.id;
@@ -142,7 +144,7 @@ export default function AppSidebar() {
   // Build URL with company ID
   const buildUrl = (url: string) => {
     if (!companyId) return url;
-    return url.replace("[companyId]", companyId);
+    return url.replace('[companyId]', companyId);
   };
 
   // Get icon component from icon name
@@ -151,8 +153,10 @@ export default function AppSidebar() {
     return iconMap[iconName] || DefaultIcon;
   };
 
+  const isCollapsed = state === 'collapsed';
+
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar collapsible='icon'>
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -160,19 +164,39 @@ export default function AppSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
-      <SidebarContent className="overflow-x-hidden">
+      <SidebarContent className='overflow-x-hidden'>
         <SidebarGroup>
           <SidebarGroupLabel>Overview</SidebarGroupLabel>
           <SidebarMenu>
             {filteredItems.map((item) => {
               const Icon = getIcon(item.icon);
-              
-              return item?.items && item?.items?.length > 0 ? (
+              const hasSubItems = item?.items && item?.items?.length > 0;
+
+              // When sidebar is collapsed, render all items as direct links
+              // (even those with sub-items) so they remain clickable
+              if (hasSubItems && isCollapsed) {
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      tooltip={item.title}
+                      isActive={pathname === item.url}
+                    >
+                      <Link href={item.url}>
+                        <Icon className='size-4' />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              }
+
+              return hasSubItems ? (
                 <Collapsible
                   key={item.title}
                   asChild
                   defaultOpen={item.isActive}
-                  className="group/collapsible"
+                  className='group/collapsible'
                 >
                   <SidebarMenuItem>
                     <CollapsibleTrigger asChild>
@@ -180,9 +204,9 @@ export default function AppSidebar() {
                         tooltip={item.title}
                         isActive={pathname === item.url}
                       >
-                        <Icon className="size-4" />
+                        <Icon className='size-4' />
                         <span>{item.title}</span>
-                        <IconChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+                        <IconChevronRight className='ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90' />
                       </SidebarMenuButton>
                     </CollapsibleTrigger>
                     <CollapsibleContent>
@@ -211,7 +235,7 @@ export default function AppSidebar() {
                     isActive={pathname === item.url}
                   >
                     <Link href={item.url}>
-                      <Icon className="size-4" />
+                      <Icon className='size-4' />
                       <span>{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
@@ -227,22 +251,22 @@ export default function AppSidebar() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton
-                  size="lg"
-                  className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                  size='lg'
+                  className='data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground'
                 >
-                  <UserAvatar className="h-8 w-8 rounded-lg" showInfo />
-                  <IconChevronsDown className="ml-auto size-4" />
+                  <UserAvatar className='h-8 w-8 rounded-lg' showInfo />
+                  <IconChevronsDown className='ml-auto size-4' />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
-                className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-                side="bottom"
-                align="end"
+                className='w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg'
+                side='bottom'
+                align='end'
                 sideOffset={4}
               >
-                <DropdownMenuLabel className="p-0 font-normal">
-                  <div className="px-1 py-1.5">
-                    <UserAvatar className="h-8 w-8 rounded-lg" showInfo />
+                <DropdownMenuLabel className='p-0 font-normal'>
+                  <div className='px-1 py-1.5'>
+                    <UserAvatar className='h-8 w-8 rounded-lg' showInfo />
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -250,35 +274,35 @@ export default function AppSidebar() {
                 <DropdownMenuGroup>
                   <DropdownMenuItem
                     onClick={() =>
-                      router.push(buildUrl("/dashboard/[companyId]/profile"))
+                      router.push(buildUrl('/dashboard/[companyId]/profile'))
                     }
-                    className="cursor-pointer"
+                    className='cursor-pointer'
                   >
-                    <IconUserCircle className="mr-2 h-4 w-4" />
+                    <IconUserCircle className='mr-2 h-4 w-4' />
                     Profile
                   </DropdownMenuItem>
                   {currentCompany && (
                     <DropdownMenuItem
                       onClick={() =>
-                        router.push(buildUrl("/dashboard/[companyId]/billing"))
+                        router.push(buildUrl('/dashboard/[companyId]/billing'))
                       }
-                      className="cursor-pointer"
+                      className='cursor-pointer'
                     >
-                      <IconCreditCard className="mr-2 h-4 w-4" />
+                      <IconCreditCard className='mr-2 h-4 w-4' />
                       Billing
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuItem className="cursor-pointer">
-                    <IconBell className="mr-2 h-4 w-4" />
+                  <DropdownMenuItem className='cursor-pointer'>
+                    <IconBell className='mr-2 h-4 w-4' />
                     Notifications
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={handleLogout}
-                  className="cursor-pointer text-red-600 focus:text-red-600"
+                  className='cursor-pointer text-red-600 focus:text-red-600'
                 >
-                  <IconLogout className="mr-2 h-4 w-4" />
+                  <IconLogout className='mr-2 h-4 w-4' />
                   Log out
                 </DropdownMenuItem>
               </DropdownMenuContent>

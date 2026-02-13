@@ -12,7 +12,7 @@ import {
   createOrder,
   getOrder,
   updateOrderExtraValues,
-  getCustomers,
+  getCustomers
 } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
@@ -23,7 +23,7 @@ import type {
   CreateOrderData,
   UpdateOrderExtraValuesData,
   UpdateOrderExtraValuesTemplatePayload,
-  UpdateOrderExtraValueItem,
+  UpdateOrderExtraValueItem
 } from '@/lib/api/types';
 import { ORDER_TYPES } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
@@ -35,14 +35,14 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
+  SelectValue
 } from '@/components/ui/select';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+  CardTitle
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -52,11 +52,11 @@ import {
   AlertCircle,
   CheckCircle2,
   Package,
-  Users,
+  Users
 } from 'lucide-react';
 import Link from 'next/link';
 import OrderTemplateValues, {
-  type TemplateValuesMap,
+  type TemplateValuesMap
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
 
@@ -64,18 +64,31 @@ import type { ExtraValuesMap } from './order-extra-values';
 // SCHEMA
 // =============================================================================
 
-const orderFormSchema = z.object({
-  orderNo: z
-    .string()
-    .min(1, 'Order number is required')
-    .max(50, 'Order number must be less than 50 characters'),
-  productId: z.string().min(1, 'Please select a product'),
-  orderType: z.enum(['SAMPLE', 'PRODUCTION', 'CUSTOM'], {
-    message: 'Please select an order type',
-  }),
-  description: z.string().optional(),
-  customerId: z.string().min(1, 'Please select a customer'),
-});
+const orderFormSchema = z
+  .object({
+    orderNo: z
+      .string()
+      .min(1, 'Order number is required')
+      .max(50, 'Order number must be less than 50 characters'),
+    productId: z.string().min(1, 'Please select a product'),
+    orderType: z.enum(['SAMPLE', 'PRODUCTION', 'CUSTOM'], {
+      message: 'Please select an order type'
+    }),
+    description: z.string().optional(),
+    customerId: z.string().optional()
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.orderType !== 'SAMPLE' &&
+      (!data.customerId || data.customerId.trim() === '')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Please select a customer',
+        path: ['customerId']
+      });
+    }
+  });
 
 type OrderFormData = z.infer<typeof orderFormSchema>;
 
@@ -100,9 +113,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const [productError, setProductError] = useState<string | null>(null);
 
   // Customers
-   const [customers, setCustomers] = useState<Customer[]>([]);
-   const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
-   const [customerError, setCustomerError] = useState<string | null>(null);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
+  const [customerError, setCustomerError] = useState<string | null>(null);
 
   // Templates (loaded when product is selected)
   const [templates, setTemplates] = useState<TemplateWithDetails[]>([]);
@@ -138,7 +151,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     handleSubmit,
     watch,
     setValue,
-    formState: { errors },
+    formState: { errors }
   } = useForm<OrderFormData>({
     resolver: zodResolver(orderFormSchema),
     defaultValues: {
@@ -146,8 +159,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       productId: '',
       orderType: undefined,
       description: '',
-      customerId: '',
-    },
+      customerId: ''
+    }
   });
 
   const selectedProductId = watch('productId');
@@ -166,7 +179,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           page: 1,
           limit: 1000,
           sortBy: 'createdAt',
-          sortOrder: 'DESC',
+          sortOrder: 'DESC'
         });
         setCustomers(res.rows);
       } catch (err) {
@@ -190,7 +203,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           page: 1,
           limit: 100,
           sortBy: 'createdAt',
-          sortOrder: 'ASC',
+          sortOrder: 'ASC'
         });
         setProducts(res.rows);
       } catch (err) {
@@ -258,6 +271,12 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     fetchTemplatesForProduct();
   }, [companyId, selectedProductId]);
 
+  useEffect(() => {
+    if (selectedOrderType === 'SAMPLE') {
+      setValue('customerId', '');
+    }
+  }, [selectedOrderType, setValue]);
+
   // ──────────────────────────────────────────────────────────────────────
   // VALUE HANDLERS
   // ──────────────────────────────────────────────────────────────────────
@@ -265,11 +284,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     (templateId: string, values: TemplateValuesMap) => {
       setTemplateValues((prev) => ({
         ...prev,
-        [templateId]: values,
+        [templateId]: values
       }));
       setCellErrors((prev) => ({
         ...prev,
-        [templateId]: {},
+        [templateId]: {}
       }));
     },
     []
@@ -279,11 +298,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     (templateId: string, values: ExtraValuesMap) => {
       setExtraValues((prev) => ({
         ...prev,
-        [templateId]: values,
+        [templateId]: values
       }));
       setExtraFieldErrors((prev) => ({
         ...prev,
-        [templateId]: {},
+        [templateId]: {}
       }));
     },
     []
@@ -392,43 +411,40 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
     try {
       // ── Step 1: Build create order payload (main values only) ──────
-      const templatesPayload: OrderTemplatePayload[] = templates.map(
-        (tmpl) => {
-          const tmplValues = templateValues[tmpl.id] || {};
-          const columns = tmpl.columns || [];
-          const rows = tmpl.rows || [];
+      const templatesPayload: OrderTemplatePayload[] = templates.map((tmpl) => {
+        const tmplValues = templateValues[tmpl.id] || {};
+        const columns = tmpl.columns || [];
+        const rows = tmpl.rows || [];
 
-          const values: { value: string; rowId: string; columnId: string }[] =
-            [];
+        const values: { value: string; rowId: string; columnId: string }[] = [];
 
-          rows.forEach((row) => {
-            columns.forEach((col) => {
-              if (col.dataType === 'FORMULA') return;
-              const value = tmplValues[row.id]?.[col.id] || '';
-              if (value.trim()) {
-                values.push({
-                  value: value.trim(),
-                  rowId: row.id,
-                  columnId: col.id,
-                });
-              }
-            });
+        rows.forEach((row) => {
+          columns.forEach((col) => {
+            if (col.dataType === 'FORMULA') return;
+            const value = tmplValues[row.id]?.[col.id] || '';
+            if (value.trim()) {
+              values.push({
+                value: value.trim(),
+                rowId: row.id,
+                columnId: col.id
+              });
+            }
           });
+        });
 
-          return {
-            templateId: tmpl.id,
-            values,
-          };
-        }
-      );
+        return {
+          templateId: tmpl.id,
+          values
+        };
+      });
 
       const createData: CreateOrderData = {
         orderNo: data.orderNo,
         productId: data.productId,
         orderType: data.orderType,
         description: data.description || undefined,
-        customerId: data.customerId,
-        templates: templatesPayload,
+        ...(data.customerId ? { customerId: data.customerId } : {}),
+        templates: templatesPayload
       };
 
       const createdOrder = await createOrder(companyId, createData);
@@ -445,9 +461,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
             orderDetails.templates.forEach((orderTmpl) => {
               // orderTmpl.id = orderTemplateId, orderTmpl.templateId = templateId
-              const tmpl = templates.find(
-                (t) => t.id === orderTmpl.templateId
-              );
+              const tmpl = templates.find((t) => t.id === orderTmpl.templateId);
               if (!tmpl) return;
 
               const tmplExtras = tmpl.extra || [];
@@ -463,7 +477,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   values.push({
                     value: val.trim(),
                     templateExtraFieldId: extra.id,
-                    orderIndex: 0,
+                    orderIndex: 0
                   });
                 }
               });
@@ -473,14 +487,14 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   templateId: orderTmpl.templateId,
                   orderTemplateId: orderTmpl.id, // API `id` = orderTemplateId
                   parentOrderTemplateId: null,
-                  values,
+                  values
                 });
               }
             });
 
             if (extraTemplates.length > 0) {
               const updateExtraPayload: UpdateOrderExtraValuesData = {
-                templates: extraTemplates,
+                templates: extraTemplates
               };
               await updateOrderExtraValues(
                 companyId,
@@ -523,16 +537,16 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   // RENDER
   // ──────────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
+    <div className='space-y-6'>
       <Link
         href={backUrl}
-        className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+        className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
       >
-        <ArrowLeft className="mr-2 h-4 w-4" />
+        <ArrowLeft className='mr-2 h-4 w-4' />
         Back to Orders
       </Link>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      <form onSubmit={handleSubmit(onSubmit)} className='space-y-6'>
         {/* ════════════════ ORDER DETAILS CARD ════════════════ */}
         <Card>
           <CardHeader>
@@ -541,36 +555,36 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               Enter the basic information for your order
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className='space-y-4'>
             {(submitError || productError) && (
-              <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-3 text-sm'>
+                <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
                 <span>{submitError || productError}</span>
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="orderNo">
-                  Order Number <span className="text-destructive">*</span>
+            <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
+              <div className='space-y-2'>
+                <Label htmlFor='orderNo'>
+                  Order Number <span className='text-destructive'>*</span>
                 </Label>
                 <Input
-                  id="orderNo"
-                  placeholder="e.g., ORD-001"
+                  id='orderNo'
+                  placeholder='e.g., ORD-001'
                   disabled={isSubmitting}
                   {...register('orderNo')}
                   className={errors.orderNo ? 'border-destructive' : ''}
                 />
                 {errors.orderNo && (
-                  <p className="text-sm text-destructive">
+                  <p className='text-destructive text-sm'>
                     {errors.orderNo.message}
                   </p>
                 )}
               </div>
 
-              <div className="space-y-2">
+              <div className='space-y-2'>
                 <Label>
-                  Order Type <span className="text-destructive">*</span>
+                  Order Type <span className='text-destructive'>*</span>
                 </Label>
                 <Select
                   value={selectedOrderType}
@@ -580,7 +594,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   <SelectTrigger
                     className={errors.orderType ? 'border-destructive' : ''}
                   >
-                    <SelectValue placeholder="Select order type" />
+                    <SelectValue placeholder='Select order type' />
                   </SelectTrigger>
                   <SelectContent>
                     {ORDER_TYPES.map((type) => (
@@ -591,19 +605,19 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   </SelectContent>
                 </Select>
                 {errors.orderType && (
-                  <p className="text-sm text-destructive">
+                  <p className='text-destructive text-sm'>
                     {errors.orderType.message}
                   </p>
                 )}
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className='space-y-2'>
               <Label>
-                Product <span className="text-destructive">*</span>
+                Product <span className='text-destructive'>*</span>
               </Label>
               {isLoadingProducts ? (
-                <Skeleton className="h-10 w-full" />
+                <Skeleton className='h-10 w-full' />
               ) : (
                 <Select
                   value={selectedProductId}
@@ -613,18 +627,18 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   <SelectTrigger
                     className={errors.productId ? 'border-destructive' : ''}
                   >
-                    <SelectValue placeholder="Select a product" />
+                    <SelectValue placeholder='Select a product' />
                   </SelectTrigger>
                   <SelectContent>
                     {products.length === 0 ? (
-                      <div className="px-2 py-3 text-sm text-muted-foreground text-center">
+                      <div className='text-muted-foreground px-2 py-3 text-center text-sm'>
                         No products available. Create a product first.
                       </div>
                     ) : (
                       products.map((product) => (
                         <SelectItem key={product.id} value={product.id}>
-                          <span className="flex items-center gap-2">
-                            <Package className="h-3 w-3" />
+                          <span className='flex items-center gap-2'>
+                            <Package className='h-3 w-3' />
                             {product.name}
                           </span>
                         </SelectItem>
@@ -634,66 +648,68 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 </Select>
               )}
               {errors.productId && (
-                <p className="text-sm text-destructive">
+                <p className='text-destructive text-sm'>
                   {errors.productId.message}
                 </p>
               )}
             </div>
 
             {/* Customer Select */}
-           <div className="space-y-2">
-             <Label>
-               Customer <span className="text-destructive">*</span>
-             </Label>
-             {isLoadingCustomers ? (
-               <Skeleton className="h-10 w-full" />
-             ) : (
-               <Select
-                 value={selectedCustomerId}
-                 onValueChange={(v) => setValue('customerId', v)}
-                 disabled={isSubmitting}
-               >
-                 <SelectTrigger
-                   className={errors.customerId ? 'border-destructive' : ''}
-                 >
-                   <SelectValue placeholder="Select a customer" />
-                 </SelectTrigger>
-                 <SelectContent>
-                   {customers.length === 0 ? (
-                     <div className="px-2 py-3 text-sm text-muted-foreground text-center">
-                       No customers available. Create a customer first.
-                     </div>
-                   ) : (
-                     customers.map((customer) => (
-                       <SelectItem key={customer.id} value={customer.id}>
-                         <span className="flex items-center gap-2">
-                           <Users className="h-3 w-3" />
-                           {customer.name}
-                           <span className="text-muted-foreground text-xs">
-                             ({customer.referenceCode})
-                           </span>
-                         </span>
-                       </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
+            {selectedOrderType !== 'SAMPLE' && (
+              <div className='space-y-2'>
+                <Label>
+                  Customer <span className='text-destructive'>*</span>
+                </Label>
+                {isLoadingCustomers ? (
+                  <Skeleton className='h-10 w-full' />
+                ) : (
+                  <Select
+                    value={selectedCustomerId}
+                    onValueChange={(v) => setValue('customerId', v)}
+                    disabled={isSubmitting}
+                  >
+                    <SelectTrigger
+                      className={errors.customerId ? 'border-destructive' : ''}
+                    >
+                      <SelectValue placeholder='Select a customer' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customers.length === 0 ? (
+                        <div className='text-muted-foreground px-2 py-3 text-center text-sm'>
+                          No customers available. Create a customer first.
+                        </div>
+                      ) : (
+                        customers.map((customer) => (
+                          <SelectItem key={customer.id} value={customer.id}>
+                            <span className='flex items-center gap-2'>
+                              <Users className='h-3 w-3' />
+                              {customer.name}
+                              <span className='text-muted-foreground text-xs'>
+                                ({customer.referenceCode})
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+                {customerError && (
+                  <p className='text-destructive text-sm'>{customerError}</p>
+                )}
+                {errors.customerId && (
+                  <p className='text-destructive text-sm'>
+                    {errors.customerId.message}
+                  </p>
+                )}
+              </div>
             )}
-            {customerError && (
-              <p className="text-sm text-destructive">{customerError}</p>
-            )}
-            {errors.customerId && (
-               <p className="text-sm text-destructive">
-                 {errors.customerId.message}
-               </p>
-             )}
-           </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+            <div className='space-y-2'>
+              <Label htmlFor='description'>Description</Label>
               <Textarea
-                id="description"
-                placeholder="Enter order description (optional)"
+                id='description'
+                placeholder='Enter order description (optional)'
                 disabled={isSubmitting}
                 rows={3}
                 {...register('description')}
@@ -707,19 +723,19 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           <>
             <Separator />
 
-            <div className="space-y-2">
-              <h2 className="text-lg font-semibold">Template Values</h2>
-              <p className="text-sm text-muted-foreground">
+            <div className='space-y-2'>
+              <h2 className='text-lg font-semibold'>Template Values</h2>
+              <p className='text-muted-foreground text-sm'>
                 Enter values for each template. Formula columns are
                 auto-calculated. Fields marked with{' '}
-                <span className="text-destructive font-bold">*</span> are
+                <span className='text-destructive font-bold'>*</span> are
                 required.
               </p>
             </div>
 
             {totalCellErrors > 0 && (
-              <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-3 text-sm'>
+                <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
                 <span>
                   {totalCellErrors} validation error
                   {totalCellErrors !== 1 ? 's' : ''} found. Please fix them
@@ -729,30 +745,30 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             )}
 
             {isLoadingTemplates ? (
-              <div className="space-y-4">
+              <div className='space-y-4'>
                 {[1, 2].map((i) => (
                   <Card key={i}>
                     <CardHeader>
-                      <Skeleton className="h-5 w-40" />
-                      <Skeleton className="h-4 w-64" />
+                      <Skeleton className='h-5 w-40' />
+                      <Skeleton className='h-4 w-64' />
                     </CardHeader>
                     <CardContent>
-                      <Skeleton className="h-48 w-full" />
+                      <Skeleton className='h-48 w-full' />
                     </CardContent>
                   </Card>
                 ))}
               </div>
             ) : templateError ? (
-              <div className="rounded-md bg-destructive/15 p-4 text-destructive flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-4'>
+                <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
                 <span>{templateError}</span>
               </div>
             ) : templates.length === 0 ? (
               <Card>
-                <CardContent className="py-8">
-                  <div className="flex flex-col items-center justify-center text-center">
-                    <AlertCircle className="h-8 w-8 text-muted-foreground mb-2" />
-                    <p className="text-sm text-muted-foreground">
+                <CardContent className='py-8'>
+                  <div className='flex flex-col items-center justify-center text-center'>
+                    <AlertCircle className='text-muted-foreground mb-2 h-8 w-8' />
+                    <p className='text-muted-foreground text-sm'>
                       No templates found for this product. Please add templates
                       to the product first.
                     </p>
@@ -760,7 +776,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 </CardContent>
               </Card>
             ) : (
-              <div className="space-y-6">
+              <div className='space-y-6'>
                 {templates.map((tmpl) => (
                   <OrderTemplateValues
                     key={tmpl.id}
@@ -784,27 +800,27 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         )}
 
         {/* ════════════════ SUBMIT ════════════════ */}
-        <div className="flex items-center gap-4 pt-2">
+        <div className='flex items-center gap-4 pt-2'>
           <Button
-            type="submit"
+            type='submit'
             disabled={isSubmitting || isLoadingTemplates}
-            size="lg"
+            size='lg'
           >
             {isSubmitting ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                 Creating Order...
               </>
             ) : (
               <>
-                <CheckCircle2 className="mr-2 h-4 w-4" />
+                <CheckCircle2 className='mr-2 h-4 w-4' />
                 Create Order
               </>
             )}
           </Button>
           <Button
-            type="button"
-            variant="outline"
+            type='button'
+            variant='outline'
             onClick={() => router.push(backUrl)}
             disabled={isSubmitting}
           >

@@ -5,7 +5,7 @@ import type {
   TemplateWithDetails,
   TemplateColumn,
   TemplateRow,
-  TemplateExtra,
+  TemplateExtra
 } from '@/lib/api/types';
 import {
   Table,
@@ -13,7 +13,7 @@ import {
   TableCell,
   TableHead,
   TableHeader,
-  TableRow,
+  TableRow
 } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -22,23 +22,22 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+  CardTitle
 } from '@/components/ui/card';
 import {
   Calculator,
   Columns,
   Rows,
   AlertCircle,
-  LayoutTemplate,
+  LayoutTemplate
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   parseFormula,
-  getFormulaPreview,
+  getFormulaPreview
 } from '@/features/templates/components/template-builder/formula-builder';
-import OrderExtraValues, {
-  type ExtraValuesMap,
-} from './order-extra-values';
+import OrderExtraValues, { type ExtraValuesMap } from './order-extra-values';
+import { Separator } from '@/components/ui/separator';
 
 // =============================================================================
 // TYPES
@@ -58,6 +57,7 @@ export interface OrderTemplateValuesProps {
   extraValues?: ExtraValuesMap;
   onExtraValuesChange?: (values: ExtraValuesMap) => void;
   extraErrors?: Record<string, string>;
+  summary?: any;
 }
 
 // =============================================================================
@@ -159,6 +159,7 @@ export default function OrderTemplateValues({
   extraValues = {},
   onExtraValuesChange,
   extraErrors = {},
+  summary = {}
 }: OrderTemplateValuesProps) {
   const columns = useMemo(
     () => [...(template.columns || [])].sort((a, b) => a.orderNo - b.orderNo),
@@ -245,16 +246,22 @@ export default function OrderTemplateValues({
     [onExtraValuesChange]
   );
 
+  const formatAmount = (value: string | null | undefined): string => {
+    if (!value) return '0.00';
+    const num = parseFloat(value);
+    return isNaN(num) ? '0.00' : num.toFixed(2);
+  };
+
   // ──────────────────────────────────────────────────────────────────────
   // RENDER: Main Value Entry Table
   // ──────────────────────────────────────────────────────────────────────
   const renderValueTable = () => {
     if (!hasData) {
       return (
-        <div className="flex-1 min-w-0 flex items-center justify-center py-12 border rounded-lg bg-muted/30">
-          <div className="text-center">
-            <AlertCircle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">
+        <div className='bg-muted/30 flex min-w-0 flex-1 items-center justify-center rounded-lg border py-12'>
+          <div className='text-center'>
+            <AlertCircle className='text-muted-foreground mx-auto mb-2 h-8 w-8' />
+            <p className='text-muted-foreground text-sm'>
               This template has no columns or rows defined.
             </p>
           </div>
@@ -263,36 +270,36 @@ export default function OrderTemplateValues({
     }
 
     return (
-      <div className="border rounded-lg overflow-hidden flex-1 min-w-0">
-        <div className="overflow-x-auto">
+      <div className='min-w-0 flex-1 overflow-hidden rounded-lg border'>
+        <div className='overflow-x-auto'>
           <Table>
             <TableHeader>
-              <TableRow className="bg-muted/50">
-                <TableHead className="font-semibold min-w-[140px] sticky left-0 bg-muted/50 z-10">
+              <TableRow className='bg-muted/50'>
+                <TableHead className='bg-muted/50 sticky left-0 z-10 min-w-[140px] font-semibold'>
                   Row / Item
                 </TableHead>
                 {columns.map((column) => (
                   <TableHead
                     key={column.id}
-                    className="min-w-[140px] text-center"
+                    className='min-w-[140px] text-center'
                   >
-                    <div className="flex flex-col items-center gap-1">
-                      <span className="font-semibold">{column.label}</span>
-                      <div className="flex items-center gap-1">
+                    <div className='flex flex-col items-center gap-1'>
+                      <span className='font-semibold'>{column.label}</span>
+                      <div className='flex items-center gap-1'>
                         <Badge
                           variant={
                             column.dataType === 'NUMBER'
                               ? 'default'
                               : column.dataType === 'FORMULA'
-                              ? 'outline'
-                              : 'secondary'
+                                ? 'outline'
+                                : 'secondary'
                           }
-                          className="text-[10px] px-1.5 py-0"
+                          className='px-1.5 py-0 text-[10px]'
                         >
                           {column.dataType}
                         </Badge>
                         {column.isRequired && (
-                          <span className="text-destructive text-xs">*</span>
+                          <span className='text-destructive text-xs'>*</span>
                         )}
                       </div>
                     </div>
@@ -310,11 +317,11 @@ export default function OrderTemplateValues({
                     key={row.id}
                     className={cn(isTotal && 'bg-muted font-semibold')}
                   >
-                    <TableCell className="font-medium sticky left-0 bg-background z-10">
-                      <div className="flex items-center gap-2">
+                    <TableCell className='bg-background sticky left-0 z-10 font-medium'>
+                      <div className='flex items-center gap-2'>
                         <span>{row.label}</span>
                         {isTotal && (
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge variant='outline' className='text-[10px]'>
                             TOTAL
                           </Badge>
                         )}
@@ -334,19 +341,16 @@ export default function OrderTemplateValues({
                         return (
                           <TableCell
                             key={column.id}
-                            className={cn(
-                              'text-center',
-                              isTotal && 'bg-muted'
-                            )}
+                            className={cn('text-center', isTotal && 'bg-muted')}
                           >
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="flex items-center gap-1.5">
-                                <Calculator className="h-3 w-3 text-muted-foreground" />
-                                <span className="font-mono text-sm font-medium">
+                            <div className='flex flex-col items-center gap-1'>
+                              <div className='flex items-center gap-1.5'>
+                                <Calculator className='text-muted-foreground h-3 w-3' />
+                                <span className='font-mono text-sm font-medium'>
                                   {calculatedValue}
                                 </span>
                               </div>
-                              <span className="text-[10px] text-muted-foreground italic">
+                              <span className='text-muted-foreground text-[10px] italic'>
                                 {getFormulaText(column)}
                               </span>
                             </div>
@@ -359,7 +363,7 @@ export default function OrderTemplateValues({
                           key={column.id}
                           className={cn(isTotal && 'bg-muted')}
                         >
-                          <div className="space-y-1">
+                          <div className='space-y-1'>
                             <Input
                               type={
                                 column.dataType === 'NUMBER' ? 'number' : 'text'
@@ -379,7 +383,7 @@ export default function OrderTemplateValues({
                               }
                               disabled={disabled || readOnly}
                               className={cn(
-                                'h-9 text-center min-w-[100px]',
+                                'h-9 min-w-[100px] text-center',
                                 cellError && 'border-destructive'
                               )}
                               step={
@@ -387,7 +391,7 @@ export default function OrderTemplateValues({
                               }
                             />
                             {cellError && (
-                              <p className="text-[10px] text-destructive text-center">
+                              <p className='text-destructive text-center text-[10px]'>
                                 {cellError}
                               </p>
                             )}
@@ -400,6 +404,58 @@ export default function OrderTemplateValues({
               })}
             </TableBody>
           </Table>
+          <div className='mt-4 flex justify-end border-t'>
+            <div className='space-y-2.5 rounded-lg p-4 text-sm'>
+              {/* Total */}
+              <div className='flex items-center justify-between gap-8'>
+                <span className='text-muted-foreground'>Total</span>
+                <span className='font-medium tabular-nums'>
+                  {formatAmount(summary.total)}
+                </span>
+              </div>
+
+              {/* Discount Value (e.g. 10 for 10%) */}
+              <div className='flex items-center justify-between gap-8'>
+                <span className='text-muted-foreground'>Discount</span>
+                <span className='font-medium tabular-nums'>
+                  {summary.discount ?? '—'}
+                </span>
+              </div>
+
+              {/* Discount Type */}
+              <div className='flex items-center justify-between gap-8'>
+                <span className='text-muted-foreground'>Discount Type</span>
+                <span className='font-medium'>
+                  {summary.discountType ?? '—'}
+                </span>
+              </div>
+
+              {/* Discount Amount (calculated) */}
+              <div className='flex items-center justify-between gap-8'>
+                <span className='text-muted-foreground'>Discount Amount</span>
+                <span
+                  className={cn(
+                    'font-medium tabular-nums',
+                    parseFloat(summary.discountAmount || '0') > 0 &&
+                      'text-destructive'
+                  )}
+                >
+                  {parseFloat(summary.discountAmount || '0') > 0 ? '− ' : ''}
+                  {formatAmount(summary.discountAmount)}
+                </span>
+              </div>
+
+              <Separator />
+
+              {/* Final Payable Amount */}
+              <div className='flex items-center justify-between gap-8 pt-0.5'>
+                <span className='font-semibold'>Final Payable Amount</span>
+                <span className='text-base font-semibold tabular-nums'>
+                  {formatAmount(summary.finalPayableAmount)}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -410,32 +466,32 @@ export default function OrderTemplateValues({
   // ──────────────────────────────────────────────────────────────────────
   return (
     <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+      <CardHeader className='pb-3'>
+        <div className='flex items-center justify-between'>
           <div>
-            <CardTitle className="text-base flex items-center gap-2">
-              <LayoutTemplate className="h-4 w-4" />
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <LayoutTemplate className='h-4 w-4' />
               {template.name}
               <Badge
                 variant={template.type === 'COSTING' ? 'default' : 'secondary'}
-                className="text-xs"
+                className='text-xs'
               >
                 {template.type}
               </Badge>
             </CardTitle>
             {template.description && (
-              <CardDescription className="mt-1">
+              <CardDescription className='mt-1'>
                 {template.description}
               </CardDescription>
             )}
           </div>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <Columns className="h-3 w-3" />
+          <div className='text-muted-foreground flex items-center gap-3 text-xs'>
+            <div className='flex items-center gap-1'>
+              <Columns className='h-3 w-3' />
               {columns.length} cols
             </div>
-            <div className="flex items-center gap-1">
-              <Rows className="h-3 w-3" />
+            <div className='flex items-center gap-1'>
+              <Rows className='h-3 w-3' />
               {rows.length} rows
             </div>
           </div>
@@ -443,14 +499,14 @@ export default function OrderTemplateValues({
       </CardHeader>
       <CardContent>
         {!hasData && !hasAnyExtras ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center border rounded-lg bg-muted/30">
-            <AlertCircle className="h-8 w-8 text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground">
+          <div className='bg-muted/30 flex flex-col items-center justify-center rounded-lg border py-8 text-center'>
+            <AlertCircle className='text-muted-foreground mb-2 h-8 w-8' />
+            <p className='text-muted-foreground text-sm'>
               This template has no data structure defined.
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className='space-y-4'>
             {/* Header Extra Fields */}
             {hasHeaderExtras && (
               <OrderExtraValues
@@ -460,17 +516,17 @@ export default function OrderTemplateValues({
                 errors={extraErrors}
                 disabled={disabled}
                 readOnly={readOnly}
-                sectionType="HEADER"
+                sectionType='HEADER'
               />
             )}
 
             {/* Main Table + Media sidebar */}
-            <div className="flex gap-4 items-start">
+            <div className='flex items-start gap-4'>
               {renderValueTable()}
 
               {/* Media Extra Fields (sidebar) */}
               {hasMediaExtras && (
-                <div className="w-[220px] flex-shrink-0">
+                <div className='w-[220px] flex-shrink-0'>
                   <OrderExtraValues
                     extras={extras}
                     values={extraValues}
@@ -478,7 +534,7 @@ export default function OrderTemplateValues({
                     errors={extraErrors}
                     disabled={disabled}
                     readOnly={readOnly}
-                    sectionType="MEDIA"
+                    sectionType='MEDIA'
                   />
                 </div>
               )}
@@ -493,7 +549,7 @@ export default function OrderTemplateValues({
                 errors={extraErrors}
                 disabled={disabled}
                 readOnly={readOnly}
-                sectionType="FOOTER"
+                sectionType='FOOTER'
               />
             )}
           </div>
