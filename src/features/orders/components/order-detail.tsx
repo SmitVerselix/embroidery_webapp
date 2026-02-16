@@ -312,7 +312,16 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           templates: [
             {
               templateId: entry.templateId,
-              parentOrderTemplateId: parentEntry.orderTemplateId
+              parentOrderTemplateId: parentEntry.orderTemplateId,
+              values: values,
+              extravalues: Object.entries(
+                extraValues[entry.orderTemplateId] || {}
+              ).map(([templateExtraFieldId, ev]) => ({
+                templateExtraFieldId,
+                value: ev.value,
+                orderExtraValueId: ev.orderExtraValueId,
+                orderIndex: ev.orderIndex ?? 0
+              }))
             }
           ]
         };

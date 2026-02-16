@@ -2,12 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  getOrder,
-  getTemplate,
-  updateOrderValues,
-  updateOrderExtraValues
-} from '@/lib/api/services';
+import { getOrder, getTemplate, updateOrderValues } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
   OrderWithDetails,
@@ -16,9 +11,9 @@ import type {
   UpdateOrderValuesData,
   UpdateOrderValuesTemplatePayload,
   UpdateOrderValueItem,
-  UpdateOrderExtraValuesData,
-  UpdateOrderExtraValuesTemplatePayload,
-  UpdateOrderExtraValueItem
+  OrderExtraValuePayload,
+  DiscountType,
+  TemplateSummaryPayload
 } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,12 +26,15 @@ import {
   CardTitle
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import {
   Loader2,
   ArrowLeft,
   AlertCircle,
   CheckCircle2,
-  Save
+  Save,
+  MessageSquare
 } from 'lucide-react';
 import Link from 'next/link';
 import OrderTemplateValues, {
@@ -127,6 +125,14 @@ export default function OrderEditForm({
     Record<string, Record<string, string>>
   >({});
 
+  // Comment field
+  const [comment, setComment] = useState('');
+
+  // Discount per template: orderTemplateId → { discountType, discountValue }
+  const [templateDiscounts, setTemplateDiscounts] = useState<
+    Record<string, { discountType: DiscountType; discountValue: string }>
+  >({});
+
   // Loading / error
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -177,16 +183,19 @@ export default function OrderEditForm({
         const loadedExtraValues: Record<string, ExtraValuesMap> = {};
         const valueIdMap: Record<string, Record<string, string>> = {};
         const extraValueIdMap: Record<string, Record<string, string>> = {};
+        const discountMap: Record<
+          string,
+          { discountType: DiscountType; discountValue: string }
+        > = {};
 
-        orderData.templates.forEach((tmplData: OrderTemplateData) => {
-          const orderTemplateId = tmplData.id; // API `id` = orderTemplateId
+        const processTemplate = (
+          tmplData: OrderTemplateData,
+          parentOrderTemplateId: string | null
+        ) => {
+          const orderTemplateId = tmplData.id;
           const fullTemplate = templateCache[tmplData.templateId];
 
           if (!fullTemplate) return;
-
-          // Determine parentOrderTemplateId from children structure or null
-          // For top-level templates, there's no parent
-          const parentOrderTemplateId: string | null = null;
 
           loadedEntries.push({
             orderTemplateId,
@@ -195,21 +204,20 @@ export default function OrderEditForm({
             template: fullTemplate
           });
 
-          // Map main values (handle null value for formula columns)
+          // Map main values
           const valuesMap: TemplateValuesMap = {};
           const vIdMap: Record<string, string> = {};
           (tmplData.values || []).forEach((v) => {
             if (!valuesMap[v.rowId]) {
               valuesMap[v.rowId] = {};
             }
-            // Use value for editable cols, calculatedValue for formula cols
             valuesMap[v.rowId][v.columnId] = v.value ?? v.calculatedValue ?? '';
             vIdMap[`${v.rowId}-${v.columnId}`] = v.id;
           });
           loadedValues[orderTemplateId] = valuesMap;
           valueIdMap[orderTemplateId] = vIdMap;
 
-          // Map extra values (including image URLs)
+          // Map extra values
           const extValMap: ExtraValuesMap = {};
           const evIdMap: Record<string, string> = {};
           (tmplData.extraValues || []).forEach((ev) => {
@@ -222,6 +230,32 @@ export default function OrderEditForm({
           });
           loadedExtraValues[orderTemplateId] = extValMap;
           extraValueIdMap[orderTemplateId] = evIdMap;
+
+          // Extract discount from summary
+          const rawSummary = tmplData.summary;
+          if (rawSummary) {
+            discountMap[orderTemplateId] = {
+              discountType:
+                (rawSummary.discountType as DiscountType) || 'PERCENT',
+              discountValue: rawSummary.discount ?? '0'
+            };
+          } else {
+            discountMap[orderTemplateId] = {
+              discountType: 'PERCENT',
+              discountValue: '0'
+            };
+          }
+
+          // Process children recursively
+          if (tmplData.children && tmplData.children.length > 0) {
+            tmplData.children.forEach((child) => {
+              processTemplate(child, orderTemplateId);
+            });
+          }
+        };
+
+        orderData.templates.forEach((tmplData: OrderTemplateData) => {
+          processTemplate(tmplData, null);
         });
 
         setEntries(loadedEntries);
@@ -229,6 +263,7 @@ export default function OrderEditForm({
         setExtraValues(loadedExtraValues);
         setOriginalValueIds(valueIdMap);
         setOriginalExtraValueIds(extraValueIdMap);
+        setTemplateDiscounts(discountMap);
       }
     } catch (err) {
       setError(getError(err));
@@ -268,6 +303,17 @@ export default function OrderEditForm({
       setExtraFieldErrors((prev) => ({
         ...prev,
         [orderTemplateId]: {}
+      }));
+      setSaveSuccess(false);
+    },
+    []
+  );
+
+  const handleDiscountChange = useCallback(
+    (orderTemplateId: string, type: DiscountType, value: string) => {
+      setTemplateDiscounts((prev) => ({
+        ...prev,
+        [orderTemplateId]: { discountType: type, discountValue: value }
       }));
       setSaveSuccess(false);
     },
@@ -316,7 +362,7 @@ export default function OrderEditForm({
     });
     setCellErrors(newCellErrors);
 
-    // Validate extra values (including IMAGE/FILE required check)
+    // Validate extra values
     const newExtraErrors: Record<string, Record<string, string>> = {};
     entries.forEach((entry) => {
       const tmpl = entry.template;
@@ -327,14 +373,12 @@ export default function OrderEditForm({
       extras.forEach((extra) => {
         const val = tmplExtraValues[extra.id]?.value || '';
 
-        // Required check — applies to ALL types including IMAGE/FILE
         if (extra.isRequired && !val.trim()) {
           extErrors[extra.id] = 'Required';
           isValid = false;
           return;
         }
 
-        // Number validation (skip IMAGE/FILE)
         if (extra.valueType === 'NUMBER' && val.trim()) {
           const num = Number(val);
           if (isNaN(num)) {
@@ -352,7 +396,7 @@ export default function OrderEditForm({
   }, [entries, templateValues, extraValues]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // SUBMIT
+  // SUBMIT — unified payload: values + extravalues + summary + comment
   // ──────────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     setSubmitError(null);
@@ -366,16 +410,24 @@ export default function OrderEditForm({
     setIsSubmitting(true);
 
     try {
-      // ── Build update-values payload ────────────────────────────────
-      const valuesTemplates: UpdateOrderValuesTemplatePayload[] = [];
+      // Group entries: top-level (parentOrderTemplateId === null) and children
+      const topLevelEntries = entries.filter(
+        (e) => e.parentOrderTemplateId === null
+      );
 
-      entries.forEach((entry) => {
+      const buildTemplatePayload = (
+        entry: OrderTemplateEntry
+      ): UpdateOrderValuesTemplatePayload => {
         const tmpl = entry.template;
         const tmplValues = templateValues[entry.orderTemplateId] || {};
         const columns = tmpl.columns || [];
         const rows = tmpl.rows || [];
         const origIds = originalValueIds[entry.orderTemplateId] || {};
+        const origExIds = originalExtraValueIds[entry.orderTemplateId] || {};
+        const tmplExtras = tmpl.extra || [];
+        const tmplExtraValues = extraValues[entry.orderTemplateId] || {};
 
+        // ── Build main values ────────────────────────────────────────
         const values: UpdateOrderValueItem[] = [];
         const usedOriginalIds = new Set<string>();
 
@@ -409,32 +461,8 @@ export default function OrderEditForm({
           }
         });
 
-        valuesTemplates.push({
-          templateId: entry.templateId,
-          orderTemplateId: entry.orderTemplateId,
-          parentOrderTemplateId: entry.parentOrderTemplateId,
-          deleteOrderValueIds:
-            deleteOrderValueIds.length > 0 ? deleteOrderValueIds : undefined,
-          values
-        });
-      });
-
-      const updateValuesPayload: UpdateOrderValuesData = {
-        templates: valuesTemplates
-      };
-
-      // ── Build update-extra-values payload ──────────────────────────
-      const extraTemplates: UpdateOrderExtraValuesTemplatePayload[] = [];
-
-      entries.forEach((entry) => {
-        const tmpl = entry.template;
-        const tmplExtras = tmpl.extra || [];
-        const tmplExtraValues = extraValues[entry.orderTemplateId] || {};
-        const origExIds = originalExtraValueIds[entry.orderTemplateId] || {};
-
-        if (tmplExtras.length === 0) return;
-
-        const values: UpdateOrderExtraValueItem[] = [];
+        // ── Build extra values ───────────────────────────────────────
+        const extravalues: OrderExtraValuePayload[] = [];
         const usedExtraIds = new Set<string>();
 
         tmplExtras.forEach((extra) => {
@@ -443,12 +471,12 @@ export default function OrderEditForm({
             tmplExtraValues[extra.id]?.orderExtraValueId || origExIds[extra.id];
           const orderIndex = tmplExtraValues[extra.id]?.orderIndex ?? 0;
 
-          // For IMAGE/FILE, the value is the uploaded URL
           if (val.trim() || existingId) {
-            values.push({
+            extravalues.push({
               ...(existingId ? { orderExtraValueId: existingId } : {}),
-              value: val.trim(),
               templateExtraFieldId: extra.id,
+              value: val.trim(),
+              meta: null,
               orderIndex
             });
             if (existingId) {
@@ -465,40 +493,61 @@ export default function OrderEditForm({
           }
         });
 
-        if (values.length > 0 || deleteOrderExtraValueIds.length > 0) {
-          extraTemplates.push({
-            templateId: entry.templateId,
-            orderTemplateId: entry.orderTemplateId,
-            parentOrderTemplateId: entry.parentOrderTemplateId,
-            deleteOrderExtraValueIds:
-              deleteOrderExtraValueIds.length > 0
-                ? deleteOrderExtraValueIds
-                : undefined,
-            values
-          });
-        }
-      });
+        // ── Build summary ────────────────────────────────────────────
+        const discount = templateDiscounts[entry.orderTemplateId] || {
+          discountType: 'PERCENT' as DiscountType,
+          discountValue: '0'
+        };
+        const summary: TemplateSummaryPayload = {
+          discountType: discount.discountType,
+          discountValue: discount.discountValue || '0'
+        };
 
-      const updateExtraPayload: UpdateOrderExtraValuesData = {
-        templates: extraTemplates
+        // ── Find children for this entry ─────────────────────────────
+        const childEntries = entries.filter(
+          (e) => e.parentOrderTemplateId === entry.orderTemplateId
+        );
+        const children: UpdateOrderValuesTemplatePayload[] =
+          childEntries.map(buildTemplatePayload);
+
+        const payload: UpdateOrderValuesTemplatePayload = {
+          templateId: entry.templateId,
+          orderTemplateId: entry.orderTemplateId,
+          parentOrderTemplateId: entry.parentOrderTemplateId,
+          values,
+          summary
+        };
+
+        if (deleteOrderValueIds.length > 0) {
+          payload.deleteOrderValueIds = deleteOrderValueIds;
+        }
+        if (deleteOrderExtraValueIds.length > 0) {
+          payload.deleteOrderExtraValueIds = deleteOrderExtraValueIds;
+        }
+        if (extravalues.length > 0) {
+          payload.extravalues = extravalues;
+        }
+        if (children.length > 0) {
+          payload.children = children;
+        }
+
+        return payload;
       };
 
-      // ── Execute API calls ──────────────────────────────────────────
-      const promises: Promise<void>[] = [];
+      const valuesTemplates: UpdateOrderValuesTemplatePayload[] =
+        topLevelEntries.map(buildTemplatePayload);
 
-      if (valuesTemplates.length > 0) {
-        promises.push(
-          updateOrderValues(companyId, orderId, updateValuesPayload)
-        );
+      const updatePayload: UpdateOrderValuesData = {
+        templates: valuesTemplates
+      };
+
+      // Include comment if provided
+      if (comment.trim()) {
+        updatePayload.comment = comment.trim();
       }
 
-      if (extraTemplates.length > 0) {
-        promises.push(
-          updateOrderExtraValues(companyId, orderId, updateExtraPayload)
-        );
-      }
-
-      await Promise.all(promises);
+      // ── Single API call for everything ─────────────────────────────
+      await updateOrderValues(companyId, orderId, updatePayload);
 
       setSaveSuccess(true);
 
@@ -642,6 +691,12 @@ export default function OrderEditForm({
               </p>
             </div>
           </div>
+          {order.referenceNo && (
+            <div className='mt-3 text-sm'>
+              <span className='text-muted-foreground'>Reference No</span>
+              <p className='font-medium'>{order.referenceNo}</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -688,26 +743,107 @@ export default function OrderEditForm({
             </div>
           )}
 
-          {/* Template cards — one per order-template instance */}
+          {/* Template cards — grouped: parent + children underneath */}
           <div className='space-y-6'>
-            {entries.map((entry) => (
-              <OrderTemplateValues
-                key={entry.orderTemplateId}
-                template={entry.template}
-                values={templateValues[entry.orderTemplateId] || {}}
-                onChange={(vals) =>
-                  handleTemplateValuesChange(entry.orderTemplateId, vals)
-                }
-                errors={cellErrors[entry.orderTemplateId] || {}}
-                disabled={isSubmitting}
-                // Extra values (including uploaded image URLs)
-                extraValues={extraValues[entry.orderTemplateId] || {}}
-                onExtraValuesChange={(vals) =>
-                  handleExtraValuesChange(entry.orderTemplateId, vals)
-                }
-                extraErrors={extraFieldErrors[entry.orderTemplateId] || {}}
-              />
-            ))}
+            {entries
+              .filter((e) => e.parentOrderTemplateId === null)
+              .map((parent) => {
+                const childEntries = entries.filter(
+                  (e) => e.parentOrderTemplateId === parent.orderTemplateId
+                );
+                const hasChildren = childEntries.length > 0;
+
+                return (
+                  <div key={parent.orderTemplateId} className='space-y-4'>
+                    {/* Parent badge when children exist */}
+                    {hasChildren && (
+                      <Badge variant='outline' className='text-xs'>
+                        Parent Template
+                        <span className='text-muted-foreground ml-1.5'>
+                          — {childEntries.length} child
+                          {childEntries.length !== 1 ? 'ren' : ''}
+                        </span>
+                      </Badge>
+                    )}
+
+                    {/* Parent — editable */}
+                    <OrderTemplateValues
+                      template={parent.template}
+                      values={templateValues[parent.orderTemplateId] || {}}
+                      onChange={(vals) =>
+                        handleTemplateValuesChange(parent.orderTemplateId, vals)
+                      }
+                      errors={cellErrors[parent.orderTemplateId] || {}}
+                      disabled={isSubmitting}
+                      extraValues={extraValues[parent.orderTemplateId] || {}}
+                      onExtraValuesChange={(vals) =>
+                        handleExtraValuesChange(parent.orderTemplateId, vals)
+                      }
+                      extraErrors={
+                        extraFieldErrors[parent.orderTemplateId] || {}
+                      }
+                      discountType={
+                        templateDiscounts[parent.orderTemplateId]
+                          ?.discountType || 'PERCENT'
+                      }
+                      discountValue={
+                        templateDiscounts[parent.orderTemplateId]
+                          ?.discountValue || '0'
+                      }
+                      onDiscountChange={(type, value) =>
+                        handleDiscountChange(
+                          parent.orderTemplateId,
+                          type,
+                          value
+                        )
+                      }
+                    />
+
+                    {/* Children — editable */}
+                    {childEntries.map((child, idx) => (
+                      <div key={child.orderTemplateId} className='space-y-2'>
+                        <Badge variant='secondary' className='text-xs'>
+                          Child #{idx + 1}
+                        </Badge>
+                        <OrderTemplateValues
+                          template={child.template}
+                          values={templateValues[child.orderTemplateId] || {}}
+                          onChange={(vals) =>
+                            handleTemplateValuesChange(
+                              child.orderTemplateId,
+                              vals
+                            )
+                          }
+                          errors={cellErrors[child.orderTemplateId] || {}}
+                          disabled={isSubmitting}
+                          extraValues={extraValues[child.orderTemplateId] || {}}
+                          onExtraValuesChange={(vals) =>
+                            handleExtraValuesChange(child.orderTemplateId, vals)
+                          }
+                          extraErrors={
+                            extraFieldErrors[child.orderTemplateId] || {}
+                          }
+                          discountType={
+                            templateDiscounts[child.orderTemplateId]
+                              ?.discountType || 'PERCENT'
+                          }
+                          discountValue={
+                            templateDiscounts[child.orderTemplateId]
+                              ?.discountValue || '0'
+                          }
+                          onDiscountChange={(type, value) =>
+                            handleDiscountChange(
+                              child.orderTemplateId,
+                              type,
+                              value
+                            )
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
           </div>
         </>
       )}
@@ -725,6 +861,33 @@ export default function OrderEditForm({
           </CardContent>
         </Card>
       )}
+
+      {/* Comment Section */}
+      <Card>
+        <CardHeader className='pb-3'>
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <MessageSquare className='h-4 w-4' />
+            Comment
+          </CardTitle>
+          <CardDescription>
+            Add a comment for this update (optional). This will be sent with
+            your changes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Textarea
+            value={comment}
+            onChange={(e) => {
+              setComment(e.target.value);
+              setSaveSuccess(false);
+            }}
+            placeholder='Enter your comment here...'
+            disabled={isSubmitting}
+            rows={3}
+            className='resize-none'
+          />
+        </CardContent>
+      </Card>
 
       {/* Action Buttons */}
       <div className='flex items-center gap-4 pt-2'>

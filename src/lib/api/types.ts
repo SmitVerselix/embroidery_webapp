@@ -467,6 +467,26 @@ export type TemplateWithDetails = Template & {
 };
 
 // =============================================================================
+// DISCOUNT TYPES
+// =============================================================================
+
+export type DiscountType = 'PERCENT' | 'AMOUNT';
+
+export const DISCOUNT_TYPES: { label: string; value: DiscountType }[] = [
+  { label: 'Percentage (%)', value: 'PERCENT' },
+  { label: 'Amount (₹)', value: 'AMOUNT' }
+];
+
+// =============================================================================
+// TEMPLATE SUMMARY PAYLOAD (for create/update)
+// =============================================================================
+
+export type TemplateSummaryPayload = {
+  discountType: DiscountType;
+  discountValue: string;
+};
+
+// =============================================================================
 // ORDER TYPES
 // =============================================================================
 
@@ -509,9 +529,21 @@ export type OrderValue = {
   columnId: string;
 };
 
+/** Extra value item for create/update payloads */
+export type OrderExtraValuePayload = {
+  orderExtraValueId?: string;
+  templateExtraFieldId: string;
+  value: string;
+  meta?: unknown;
+  orderIndex: number;
+};
+
 export type OrderTemplatePayload = {
   templateId: string;
   values: OrderValue[];
+  extravalues?: OrderExtraValuePayload[];
+  summary?: TemplateSummaryPayload;
+  children?: OrderTemplatePayload[];
 };
 
 export type OrderExtraValue = {
@@ -626,6 +658,7 @@ export type OrderListParams = {
   sortBy?: string;
   sortOrder?: 'ASC' | 'DESC';
   search?: string;
+  orderType?: string;
 };
 
 // =============================================================================
@@ -634,6 +667,7 @@ export type OrderListParams = {
 
 export type CreateOrderData = {
   orderNo: string;
+  referenceNo?: string;
   productId: string;
   orderType: OrderType;
   description?: string;
@@ -642,7 +676,7 @@ export type CreateOrderData = {
 };
 
 // =============================================================================
-// ORDER UPDATE VALUES PAYLOAD (for main template values)
+// ORDER UPDATE VALUES PAYLOAD (unified: main values + extra values + summary)
 // =============================================================================
 
 export type UpdateOrderValueItem = {
@@ -657,19 +691,24 @@ export type UpdateOrderValuesTemplatePayload = {
   orderTemplateId?: string;
   parentOrderTemplateId?: string | null;
   deleteOrderValueIds?: string[];
+  deleteOrderExtraValueIds?: string[];
   values?: UpdateOrderValueItem[];
+  extravalues?: OrderExtraValuePayload[];
+  summary?: TemplateSummaryPayload;
+  children?: UpdateOrderValuesTemplatePayload[];
 };
 
 export type UpdateOrderValuesData = {
   templates: UpdateOrderValuesTemplatePayload[];
+  comment?: string;
 };
 
 // =============================================================================
-// ORDER UPDATE EXTRA VALUES PAYLOAD (for header/footer/media extras)
+// ORDER UPDATE EXTRA VALUES PAYLOAD (kept for backward compat if needed)
 // =============================================================================
 
 export type UpdateOrderExtraValueItem = {
-  orderExtraValueId?: string; // existing extra value ID (omit for new)
+  orderExtraValueId?: string;
   value: string;
   templateExtraFieldId: string;
   orderIndex?: number;
@@ -680,7 +719,7 @@ export type UpdateOrderExtraValuesTemplatePayload = {
   templateId: string;
   orderTemplateId: string;
   parentOrderTemplateId?: string | null;
-  deleteOrderExtraValueIds?: string[]; // IDs of extra values to delete
+  deleteOrderExtraValueIds?: string[];
   values: UpdateOrderExtraValueItem[];
 };
 

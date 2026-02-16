@@ -5,8 +5,10 @@ import type {
   TemplateWithDetails,
   TemplateColumn,
   TemplateRow,
-  TemplateExtra
+  TemplateExtra,
+  DiscountType
 } from '@/lib/api/types';
+import { DISCOUNT_TYPES } from '@/lib/api/types';
 import {
   Table,
   TableBody,
@@ -25,11 +27,20 @@ import {
   CardTitle
 } from '@/components/ui/card';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select';
+import {
   Calculator,
   Columns,
   Rows,
   AlertCircle,
-  LayoutTemplate
+  LayoutTemplate,
+  Percent,
+  IndianRupee
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -38,6 +49,7 @@ import {
 } from '@/features/templates/components/template-builder/formula-builder';
 import OrderExtraValues, { type ExtraValuesMap } from './order-extra-values';
 import { Separator } from '@/components/ui/separator';
+import { Label } from '@/components/ui/label';
 
 // =============================================================================
 // TYPES
@@ -58,6 +70,10 @@ export interface OrderTemplateValuesProps {
   onExtraValuesChange?: (values: ExtraValuesMap) => void;
   extraErrors?: Record<string, string>;
   summary?: any;
+  // Discount support
+  discountType?: DiscountType;
+  discountValue?: string;
+  onDiscountChange?: (type: DiscountType, value: string) => void;
 }
 
 // =============================================================================
@@ -159,7 +175,10 @@ export default function OrderTemplateValues({
   extraValues = {},
   onExtraValuesChange,
   extraErrors = {},
-  summary = {}
+  summary = {},
+  discountType,
+  discountValue,
+  onDiscountChange
 }: OrderTemplateValuesProps) {
   const columns = useMemo(
     () => [...(template.columns || [])].sort((a, b) => a.orderNo - b.orderNo),
@@ -250,6 +269,95 @@ export default function OrderTemplateValues({
     if (!value) return '0.00';
     const num = parseFloat(value);
     return isNaN(num) ? '0.00' : num.toFixed(2);
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // DISCOUNT HANDLERS
+  // ──────────────────────────────────────────────────────────────────────
+  const handleDiscountTypeChange = useCallback(
+    (type: string) => {
+      onDiscountChange?.(type as DiscountType, discountValue || '0');
+    },
+    [onDiscountChange, discountValue]
+  );
+
+  const handleDiscountValueChange = useCallback(
+    (value: string) => {
+      onDiscountChange?.(discountType || 'PERCENT', value);
+    },
+    [onDiscountChange, discountType]
+  );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // RENDER: Discount Controls
+  // ──────────────────────────────────────────────────────────────────────
+  const renderDiscountControls = () => {
+    // Only show discount controls in edit mode (not readOnly) or when onDiscountChange is provided
+    if (!onDiscountChange && !readOnly) return null;
+
+    // In readOnly mode, show the summary discount info from the API
+    if (readOnly) {
+      return null; // Summary is shown below in the summary section
+    }
+
+    return (
+      <div className='rounded-lg border bg-slate-50/50 p-4 dark:bg-slate-950/20'>
+        <h4 className='mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300'>
+          Discount Settings
+        </h4>
+        <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+          <div className='space-y-1.5'>
+            <Label className='text-muted-foreground text-xs'>
+              Discount Type
+            </Label>
+            <Select
+              value={discountType || 'PERCENT'}
+              onValueChange={handleDiscountTypeChange}
+              disabled={disabled}
+            >
+              <SelectTrigger className='h-9'>
+                <SelectValue placeholder='Select type' />
+              </SelectTrigger>
+              <SelectContent>
+                {DISCOUNT_TYPES.map((dt) => (
+                  <SelectItem key={dt.value} value={dt.value}>
+                    <span className='flex items-center gap-2'>
+                      {dt.value === 'PERCENT' ? (
+                        <Percent className='h-3 w-3' />
+                      ) : (
+                        <IndianRupee className='h-3 w-3' />
+                      )}
+                      {dt.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className='space-y-1.5'>
+            <Label className='text-muted-foreground text-xs'>
+              Discount Value{' '}
+              {discountType === 'PERCENT' || !discountType ? '(%)' : '(₹)'}
+            </Label>
+            <div className='relative'>
+              <Input
+                type='number'
+                value={discountValue || ''}
+                onChange={(e) => handleDiscountValueChange(e.target.value)}
+                placeholder='0'
+                disabled={disabled}
+                className='h-9 pr-8'
+                step='any'
+                min='0'
+              />
+              <span className='text-muted-foreground absolute top-1/2 right-3 -translate-y-1/2 text-xs'>
+                {discountType === 'AMOUNT' ? '₹' : '%'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   // ──────────────────────────────────────────────────────────────────────
@@ -404,6 +512,8 @@ export default function OrderTemplateValues({
               })}
             </TableBody>
           </Table>
+
+          {/* Summary Section */}
           <div className='mt-4 flex justify-end border-t'>
             <div className='space-y-2.5 rounded-lg p-4 text-sm'>
               {/* Total */}
@@ -539,6 +649,9 @@ export default function OrderTemplateValues({
                 </div>
               )}
             </div>
+
+            {/* Discount Controls */}
+            {renderDiscountControls()}
 
             {/* Footer Extra Fields */}
             {hasFooterExtras && (

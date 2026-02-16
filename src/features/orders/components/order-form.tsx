@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -10,20 +10,23 @@ import {
   getProduct,
   getTemplate,
   createOrder,
+  getOrders,
   getOrder,
-  updateOrderExtraValues,
   getCustomers
 } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
   Product,
   Customer,
+  Order,
+  OrderWithDetails,
+  OrderTemplateData,
   TemplateWithDetails,
   OrderTemplatePayload,
+  OrderExtraValuePayload,
   CreateOrderData,
-  UpdateOrderExtraValuesData,
-  UpdateOrderExtraValuesTemplatePayload,
-  UpdateOrderExtraValueItem
+  DiscountType,
+  TemplateSummaryPayload
 } from '@/lib/api/types';
 import { ORDER_TYPES } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
@@ -44,6 +47,7 @@ import {
   CardHeader,
   CardTitle
 } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -52,16 +56,35 @@ import {
   AlertCircle,
   CheckCircle2,
   Package,
-  Users
+  Users,
+  Search,
+  FileText,
+  X,
+  Link2
 } from 'lucide-react';
 import Link from 'next/link';
 import OrderTemplateValues, {
   type TemplateValuesMap
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger
+} from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
+import { useDebounce } from '@/hooks/use-debounce';
 
 // =============================================================================
-// SCHEMA
+// HELPERS
+// =============================================================================
+
+/** Unique key for a child template's editable state */
+const getChildKey = (parentTmplId: string, idx: number) =>
+  `${parentTmplId}__child__${idx}`;
+
+// =============================================================================
+// SCHEMA — productId is conditionally required (handled in superRefine)
 // =============================================================================
 
 const orderFormSchema = z
@@ -70,7 +93,8 @@ const orderFormSchema = z
       .string()
       .min(1, 'Order number is required')
       .max(50, 'Order number must be less than 50 characters'),
-    productId: z.string().min(1, 'Please select a product'),
+    referenceNo: z.string().optional(),
+    productId: z.string().optional(),
     orderType: z.enum(['SAMPLE', 'PRODUCTION', 'CUSTOM'], {
       message: 'Please select an order type'
     }),
@@ -78,6 +102,18 @@ const orderFormSchema = z
     customerId: z.string().optional()
   })
   .superRefine((data, ctx) => {
+    // productId required only in manual mode (no referenceNo)
+    if (
+      (!data.referenceNo || data.referenceNo.trim() === '') &&
+      (!data.productId || data.productId.trim() === '')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Please select a product',
+        path: ['productId']
+      });
+    }
+
     if (
       data.orderType !== 'SAMPLE' &&
       (!data.customerId || data.customerId.trim() === '')
@@ -107,7 +143,7 @@ interface OrderFormProps {
 export default function OrderForm({ companyId }: OrderFormProps) {
   const router = useRouter();
 
-  // Products
+  // Products (for manual mode)
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [productError, setProductError] = useState<string | null>(null);
@@ -117,32 +153,73 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
   const [customerError, setCustomerError] = useState<string | null>(null);
 
-  // Templates (loaded when product is selected)
+  // Orders (for referenceNo picker)
+  const [ordersList, setOrdersList] = useState<Order[]>([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
+  const [ordersSearch, setOrdersSearch] = useState('');
+  const [isOrdersPopoverOpen, setIsOrdersPopoverOpen] = useState(false);
+  const debouncedOrdersSearch = useDebounce(ordersSearch, 300);
+
+  // ── Reference Order State ─────────────────────────────────────────
+  const [referencedOrder, setReferencedOrder] =
+    useState<OrderWithDetails | null>(null);
+  const [referencedOrderId, setReferencedOrderId] = useState<string | null>(
+    null
+  );
+  const [isLoadingReference, setIsLoadingReference] = useState(false);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
+
+  /**
+   * Metadata for children from the referenced order, keyed by parent
+   * templateId. Used to know how many children exist and their templateIds.
+   */
+  const [refChildrenMeta, setRefChildrenMeta] = useState<
+    Record<string, { templateId: string }[]>
+  >({});
+
+  // Prevents the product-change effect from wiping reference-loaded data
+  const isReferenceModeRef = useRef(false);
+
+  // ── Templates ─────────────────────────────────────────────────────
   const [templates, setTemplates] = useState<TemplateWithDetails[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
 
-  // Template values: { [templateId]: { [rowId]: { [columnId]: value } } }
+  // ── Parent template editable state ────────────────────────────────
   const [templateValues, setTemplateValues] = useState<
     Record<string, TemplateValuesMap>
   >({});
-
-  // Extra values: { [templateId]: { [extraFieldId]: { value, ... } } }
   const [extraValues, setExtraValues] = useState<
     Record<string, ExtraValuesMap>
   >({});
-
-  // Validation errors for template cells
+  const [templateDiscounts, setTemplateDiscounts] = useState<
+    Record<string, { discountType: DiscountType; discountValue: string }>
+  >({});
   const [cellErrors, setCellErrors] = useState<
     Record<string, Record<string, string>>
   >({});
-
-  // Validation errors for extra fields
   const [extraFieldErrors, setExtraFieldErrors] = useState<
     Record<string, Record<string, string>>
   >({});
 
-  // Submit state
+  // ── Child template editable state (keyed by getChildKey) ──────────
+  const [childTemplateValues, setChildTemplateValues] = useState<
+    Record<string, TemplateValuesMap>
+  >({});
+  const [childExtraValues, setChildExtraValues] = useState<
+    Record<string, ExtraValuesMap>
+  >({});
+  const [childDiscounts, setChildDiscounts] = useState<
+    Record<string, { discountType: DiscountType; discountValue: string }>
+  >({});
+  const [childCellErrors, setChildCellErrors] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [childExtraFieldErrors, setChildExtraFieldErrors] = useState<
+    Record<string, Record<string, string>>
+  >({});
+
+  // Submit
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -156,6 +233,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     resolver: zodResolver(orderFormSchema),
     defaultValues: {
       orderNo: '',
+      referenceNo: '',
       productId: '',
       orderType: undefined,
       description: '',
@@ -166,6 +244,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const selectedProductId = watch('productId');
   const selectedOrderType = watch('orderType');
   const selectedCustomerId = watch('customerId');
+  const referenceNoValue = watch('referenceNo');
+
+  const isReferenceMode = !!referencedOrder;
 
   // ──────────────────────────────────────────────────────────────────────
   // FETCH CUSTOMERS
@@ -192,7 +273,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   }, [companyId]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // FETCH PRODUCTS
+  // FETCH PRODUCTS (manual mode only)
   // ──────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const fetchProducts = async () => {
@@ -216,16 +297,45 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   }, [companyId]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // FETCH TEMPLATES WHEN PRODUCT IS SELECTED
+  // FETCH ORDERS (for referenceNo picker list)
   // ──────────────────────────────────────────────────────────────────────
   useEffect(() => {
+    const fetchOrders = async () => {
+      setIsLoadingOrders(true);
+      try {
+        const res = await getOrders(companyId, {
+          page: 1,
+          limit: 20,
+          search: debouncedOrdersSearch,
+          sortBy: 'createdAt',
+          sortOrder: 'DESC',
+          orderType: 'SAMPLE'
+        });
+        setOrdersList(res.rows);
+      } catch {
+        // Silently fail
+      } finally {
+        setIsLoadingOrders(false);
+      }
+    };
+    if (companyId) fetchOrders();
+  }, [companyId, debouncedOrdersSearch]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // FETCH TEMPLATES WHEN PRODUCT IS MANUALLY SELECTED
+  // ──────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isReferenceModeRef.current) return;
+
     const fetchTemplatesForProduct = async () => {
       if (!selectedProductId) {
         setTemplates([]);
         setTemplateValues({});
         setExtraValues({});
+        setTemplateDiscounts({});
         setCellErrors({});
         setExtraFieldErrors({});
+        clearChildState();
         return;
       }
 
@@ -234,8 +344,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       setTemplates([]);
       setTemplateValues({});
       setExtraValues({});
+      setTemplateDiscounts({});
       setCellErrors({});
       setExtraFieldErrors({});
+      clearChildState();
 
       try {
         const product = await getProduct(companyId, selectedProductId);
@@ -255,12 +367,21 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
         const initialValues: Record<string, TemplateValuesMap> = {};
         const initialExtraValues: Record<string, ExtraValuesMap> = {};
+        const initialDiscounts: Record<
+          string,
+          { discountType: DiscountType; discountValue: string }
+        > = {};
         fullTemplates.forEach((tmpl) => {
           initialValues[tmpl.id] = {};
           initialExtraValues[tmpl.id] = {};
+          initialDiscounts[tmpl.id] = {
+            discountType: 'PERCENT',
+            discountValue: '0'
+          };
         });
         setTemplateValues(initialValues);
         setExtraValues(initialExtraValues);
+        setTemplateDiscounts(initialDiscounts);
       } catch (err) {
         setTemplateError(getError(err));
       } finally {
@@ -278,124 +399,361 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   }, [selectedOrderType, setValue]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // VALUE HANDLERS
+  // HELPER: clear all child editable state
+  // ──────────────────────────────────────────────────────────────────────
+  const clearChildState = useCallback(() => {
+    setRefChildrenMeta({});
+    setChildTemplateValues({});
+    setChildExtraValues({});
+    setChildDiscounts({});
+    setChildCellErrors({});
+    setChildExtraFieldErrors({});
+  }, []);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SELECT REFERENCE ORDER → fetch full data, load templates, pre-fill
+  // ──────────────────────────────────────────────────────────────────────
+  const handleSelectReferenceOrder = useCallback(
+    async (order: Order) => {
+      setIsOrdersPopoverOpen(false);
+      setOrdersSearch('');
+      setReferenceError(null);
+
+      setValue('referenceNo', order.orderNo);
+      setReferencedOrderId(order.id);
+      setIsLoadingReference(true);
+
+      try {
+        // 1) Fetch the full order
+        const orderData = await getOrder(companyId, order.id);
+        setReferencedOrder(orderData);
+
+        // 2) Auto-set productId (flag prevents product effect from firing)
+        isReferenceModeRef.current = true;
+        setValue('productId', orderData.productId);
+
+        // 3) Load full template definitions from the product
+        const product = await getProduct(companyId, orderData.productId);
+        const templateCache: Record<string, TemplateWithDetails> = {};
+
+        if (product.templates && product.templates.length > 0) {
+          const tmplPromises = (product.templates as { id: string }[]).map(
+            async (t) => {
+              const full = await getTemplate(
+                companyId,
+                orderData.productId,
+                t.id
+              );
+              templateCache[full.id] = full;
+              return full;
+            }
+          );
+          const fullTemplates = await Promise.all(tmplPromises);
+          setTemplates(fullTemplates);
+        } else {
+          setTemplates([]);
+        }
+
+        // 4) Pre-fill parent + child editable state
+        const loadedValues: Record<string, TemplateValuesMap> = {};
+        const loadedExtraValues: Record<string, ExtraValuesMap> = {};
+        const loadedDiscounts: Record<
+          string,
+          { discountType: DiscountType; discountValue: string }
+        > = {};
+        const loadedChildMeta: Record<string, { templateId: string }[]> = {};
+        const loadedChildValues: Record<string, TemplateValuesMap> = {};
+        const loadedChildExtras: Record<string, ExtraValuesMap> = {};
+        const loadedChildDiscounts: Record<
+          string,
+          { discountType: DiscountType; discountValue: string }
+        > = {};
+
+        // Initialize every template with empties
+        Object.values(templateCache).forEach((tmpl) => {
+          loadedValues[tmpl.id] = {};
+          loadedExtraValues[tmpl.id] = {};
+          loadedDiscounts[tmpl.id] = {
+            discountType: 'PERCENT',
+            discountValue: '0'
+          };
+        });
+
+        // Fill from the order's template data
+        (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
+          const tid = tmplData.templateId;
+
+          // ── Parent values ──
+          const valuesMap: TemplateValuesMap = {};
+          (tmplData.values || []).forEach((v) => {
+            if (!valuesMap[v.rowId]) valuesMap[v.rowId] = {};
+            valuesMap[v.rowId][v.columnId] = v.value ?? v.calculatedValue ?? '';
+          });
+          loadedValues[tid] = valuesMap;
+
+          // ── Parent extra values ──
+          const extValMap: ExtraValuesMap = {};
+          (tmplData.extraValues || []).forEach((ev) => {
+            extValMap[ev.templateExtraFieldId] = {
+              value: ev.value,
+              orderIndex: ev.orderIndex
+            };
+          });
+          loadedExtraValues[tid] = extValMap;
+
+          // ── Parent discount ──
+          const rawSummary = tmplData.summary;
+          if (rawSummary) {
+            loadedDiscounts[tid] = {
+              discountType:
+                (rawSummary.discountType as DiscountType) || 'PERCENT',
+              discountValue: rawSummary.discount ?? '0'
+            };
+          }
+
+          // ── Children → populate editable child state ──
+          if (tmplData.children && tmplData.children.length > 0) {
+            loadedChildMeta[tid] = [];
+
+            tmplData.children.forEach((child, idx) => {
+              const childKey = getChildKey(tid, idx);
+              loadedChildMeta[tid].push({ templateId: child.templateId });
+
+              // Child values
+              const childValMap: TemplateValuesMap = {};
+              (child.values || []).forEach((v) => {
+                if (!childValMap[v.rowId]) childValMap[v.rowId] = {};
+                childValMap[v.rowId][v.columnId] =
+                  v.value ?? v.calculatedValue ?? '';
+              });
+              loadedChildValues[childKey] = childValMap;
+
+              // Child extra values
+              const childExtMap: ExtraValuesMap = {};
+              (child.extraValues || []).forEach((ev) => {
+                childExtMap[ev.templateExtraFieldId] = {
+                  value: ev.value,
+                  orderIndex: ev.orderIndex
+                };
+              });
+              loadedChildExtras[childKey] = childExtMap;
+
+              // Child discount
+              const childSummary = child.summary;
+              loadedChildDiscounts[childKey] = {
+                discountType:
+                  (childSummary?.discountType as DiscountType) || 'PERCENT',
+                discountValue: childSummary?.discount ?? '0'
+              };
+            });
+          }
+        });
+
+        setTemplateValues(loadedValues);
+        setExtraValues(loadedExtraValues);
+        setTemplateDiscounts(loadedDiscounts);
+        setRefChildrenMeta(loadedChildMeta);
+        setChildTemplateValues(loadedChildValues);
+        setChildExtraValues(loadedChildExtras);
+        setChildDiscounts(loadedChildDiscounts);
+        setCellErrors({});
+        setExtraFieldErrors({});
+        setChildCellErrors({});
+        setChildExtraFieldErrors({});
+        setTemplateError(null);
+      } catch (err) {
+        setReferenceError(getError(err));
+        setReferencedOrder(null);
+        setReferencedOrderId(null);
+        isReferenceModeRef.current = false;
+      } finally {
+        setIsLoadingReference(false);
+      }
+    },
+    [companyId, setValue]
+  );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // CLEAR REFERENCE — go back to manual mode
+  // ──────────────────────────────────────────────────────────────────────
+  const handleClearReference = useCallback(() => {
+    setValue('referenceNo', '');
+    setValue('productId', '');
+    setReferencedOrder(null);
+    setReferencedOrderId(null);
+    setReferenceError(null);
+    isReferenceModeRef.current = false;
+
+    setTemplates([]);
+    setTemplateValues({});
+    setExtraValues({});
+    setTemplateDiscounts({});
+    setCellErrors({});
+    setExtraFieldErrors({});
+    clearChildState();
+  }, [setValue, clearChildState]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // PARENT VALUE HANDLERS
   // ──────────────────────────────────────────────────────────────────────
   const handleTemplateValuesChange = useCallback(
     (templateId: string, values: TemplateValuesMap) => {
-      setTemplateValues((prev) => ({
-        ...prev,
-        [templateId]: values
-      }));
-      setCellErrors((prev) => ({
-        ...prev,
-        [templateId]: {}
-      }));
+      setTemplateValues((prev) => ({ ...prev, [templateId]: values }));
+      setCellErrors((prev) => ({ ...prev, [templateId]: {} }));
     },
     []
   );
 
   const handleExtraValuesChange = useCallback(
     (templateId: string, values: ExtraValuesMap) => {
-      setExtraValues((prev) => ({
+      setExtraValues((prev) => ({ ...prev, [templateId]: values }));
+      setExtraFieldErrors((prev) => ({ ...prev, [templateId]: {} }));
+    },
+    []
+  );
+
+  const handleDiscountChange = useCallback(
+    (templateId: string, type: DiscountType, value: string) => {
+      setTemplateDiscounts((prev) => ({
         ...prev,
-        [templateId]: values
-      }));
-      setExtraFieldErrors((prev) => ({
-        ...prev,
-        [templateId]: {}
+        [templateId]: { discountType: type, discountValue: value }
       }));
     },
     []
   );
 
   // ──────────────────────────────────────────────────────────────────────
-  // VALIDATION
+  // CHILD VALUE HANDLERS (keyed by childKey)
+  // ──────────────────────────────────────────────────────────────────────
+  const handleChildValuesChange = useCallback(
+    (childKey: string, values: TemplateValuesMap) => {
+      setChildTemplateValues((prev) => ({ ...prev, [childKey]: values }));
+      setChildCellErrors((prev) => ({ ...prev, [childKey]: {} }));
+    },
+    []
+  );
+
+  const handleChildExtraValuesChange = useCallback(
+    (childKey: string, values: ExtraValuesMap) => {
+      setChildExtraValues((prev) => ({ ...prev, [childKey]: values }));
+      setChildExtraFieldErrors((prev) => ({ ...prev, [childKey]: {} }));
+    },
+    []
+  );
+
+  const handleChildDiscountChange = useCallback(
+    (childKey: string, type: DiscountType, value: string) => {
+      setChildDiscounts((prev) => ({
+        ...prev,
+        [childKey]: { discountType: type, discountValue: value }
+      }));
+    },
+    []
+  );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // VALIDATION — parents + children
   // ──────────────────────────────────────────────────────────────────────
   const validateTemplateValues = useCallback((): boolean => {
     let isValid = true;
 
-    const newCellErrors: Record<string, Record<string, string>> = {};
-    templates.forEach((tmpl) => {
-      const tmplErrors: Record<string, string> = {};
-      const tmplValues = templateValues[tmpl.id] || {};
+    // Helper to validate a set of values against a template
+    const validateValues = (
+      tmpl: TemplateWithDetails,
+      vals: TemplateValuesMap,
+      exVals: ExtraValuesMap
+    ) => {
+      const cErrors: Record<string, string> = {};
+      const eErrors: Record<string, string> = {};
       const columns = tmpl.columns || [];
       const rows = tmpl.rows || [];
 
       rows.forEach((row) => {
         columns.forEach((col) => {
           if (col.dataType === 'FORMULA') return;
-
-          const value = tmplValues[row.id]?.[col.id] || '';
+          const value = vals[row.id]?.[col.id] || '';
           const cellKey = `${row.id}-${col.id}`;
 
           if (col.isRequired && !value.trim()) {
-            tmplErrors[cellKey] = 'Required';
+            cErrors[cellKey] = 'Required';
             isValid = false;
             return;
           }
-
           if (col.dataType === 'NUMBER' && value.trim()) {
-            const num = Number(value);
-            if (isNaN(num)) {
-              tmplErrors[cellKey] = 'Must be a number';
+            if (isNaN(Number(value))) {
+              cErrors[cellKey] = 'Must be a number';
               isValid = false;
             }
           }
         });
       });
 
-      newCellErrors[tmpl.id] = tmplErrors;
-    });
-    setCellErrors(newCellErrors);
-
-    // Validate extra values (including IMAGE/FILE required check)
-    const newExtraErrors: Record<string, Record<string, string>> = {};
-    templates.forEach((tmpl) => {
-      const extErrors: Record<string, string> = {};
-      const extras = tmpl.extra || [];
-      const tmplExtraValues = extraValues[tmpl.id] || {};
-
-      extras.forEach((extra) => {
-        const val = tmplExtraValues[extra.id]?.value || '';
-
+      (tmpl.extra || []).forEach((extra) => {
+        const val = exVals[extra.id]?.value || '';
         if (extra.isRequired && !val.trim()) {
-          extErrors[extra.id] = 'Required';
+          eErrors[extra.id] = 'Required';
           isValid = false;
           return;
         }
-
         if (extra.valueType === 'NUMBER' && val.trim()) {
-          const num = Number(val);
-          if (isNaN(num)) {
-            extErrors[extra.id] = 'Must be a number';
+          if (isNaN(Number(val))) {
+            eErrors[extra.id] = 'Must be a number';
             isValid = false;
           }
         }
       });
 
-      newExtraErrors[tmpl.id] = extErrors;
+      return { cErrors, eErrors };
+    };
+
+    // Validate parents
+    const newCellErrors: Record<string, Record<string, string>> = {};
+    const newExtraErrors: Record<string, Record<string, string>> = {};
+    templates.forEach((tmpl) => {
+      const { cErrors, eErrors } = validateValues(
+        tmpl,
+        templateValues[tmpl.id] || {},
+        extraValues[tmpl.id] || {}
+      );
+      newCellErrors[tmpl.id] = cErrors;
+      newExtraErrors[tmpl.id] = eErrors;
     });
+    setCellErrors(newCellErrors);
     setExtraFieldErrors(newExtraErrors);
 
-    return isValid;
-  }, [templates, templateValues, extraValues]);
+    // Validate children
+    const newChildCellErrors: Record<string, Record<string, string>> = {};
+    const newChildExtraErrors: Record<string, Record<string, string>> = {};
+    Object.entries(refChildrenMeta).forEach(([parentTmplId, children]) => {
+      const parentTmpl = templates.find((t) => t.id === parentTmplId);
+      if (!parentTmpl) return;
 
-  // ──────────────────────────────────────────────────────────────────────
-  // Check if any extra values need saving
-  // ──────────────────────────────────────────────────────────────────────
-  const hasExtraValuesToSave = useMemo(() => {
-    return templates.some((tmpl) => {
-      const tmplExtras = tmpl.extra || [];
-      const tmplExtraValues = extraValues[tmpl.id] || {};
-      return tmplExtras.some((extra) => {
-        const val = tmplExtraValues[extra.id]?.value || '';
-        return val.trim() !== '';
+      children.forEach((_, idx) => {
+        const childKey = getChildKey(parentTmplId, idx);
+        const { cErrors, eErrors } = validateValues(
+          parentTmpl,
+          childTemplateValues[childKey] || {},
+          childExtraValues[childKey] || {}
+        );
+        newChildCellErrors[childKey] = cErrors;
+        newChildExtraErrors[childKey] = eErrors;
       });
     });
-  }, [templates, extraValues]);
+    setChildCellErrors(newChildCellErrors);
+    setChildExtraFieldErrors(newChildExtraErrors);
+
+    return isValid;
+  }, [
+    templates,
+    templateValues,
+    extraValues,
+    refChildrenMeta,
+    childTemplateValues,
+    childExtraValues
+  ]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // SUBMIT
+  // SUBMIT — unified payload with editable children
   // ──────────────────────────────────────────────────────────────────────
   const onSubmit = async (data: OrderFormData) => {
     setSubmitError(null);
@@ -410,14 +768,13 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     setIsSubmitting(true);
 
     try {
-      // ── Step 1: Build create order payload (main values only) ──────
       const templatesPayload: OrderTemplatePayload[] = templates.map((tmpl) => {
         const tmplValues = templateValues[tmpl.id] || {};
         const columns = tmpl.columns || [];
         const rows = tmpl.rows || [];
 
+        // Main values
         const values: { value: string; rowId: string; columnId: string }[] = [];
-
         rows.forEach((row) => {
           columns.forEach((col) => {
             if (col.dataType === 'FORMULA') return;
@@ -432,84 +789,118 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           });
         });
 
-        return {
-          templateId: tmpl.id,
-          values
+        // Extra values
+        const tmplExtras = tmpl.extra || [];
+        const tmplExtraValues = extraValues[tmpl.id] || {};
+        const extravalues: OrderExtraValuePayload[] = [];
+        tmplExtras.forEach((extra) => {
+          const val = tmplExtraValues[extra.id]?.value || '';
+          if (val.trim()) {
+            extravalues.push({
+              templateExtraFieldId: extra.id,
+              value: val.trim(),
+              meta: null,
+              orderIndex: tmplExtraValues[extra.id]?.orderIndex ?? 0
+            });
+          }
+        });
+
+        // Summary
+        const discount = templateDiscounts[tmpl.id] || {
+          discountType: 'PERCENT' as DiscountType,
+          discountValue: '0'
         };
-      });
+        const summary: TemplateSummaryPayload = {
+          discountType: discount.discountType,
+          discountValue: discount.discountValue || '0'
+        };
 
-      const createData: CreateOrderData = {
-        orderNo: data.orderNo,
-        productId: data.productId,
-        orderType: data.orderType,
-        description: data.description || undefined,
-        ...(data.customerId ? { customerId: data.customerId } : {}),
-        templates: templatesPayload
-      };
+        const payload: OrderTemplatePayload = {
+          templateId: tmpl.id,
+          values,
+          summary
+        };
+        if (extravalues.length > 0) payload.extravalues = extravalues;
 
-      const createdOrder = await createOrder(companyId, createData);
+        // ── Build children from editable state ───────────────────────
+        const childMeta = refChildrenMeta[tmpl.id];
+        if (childMeta && childMeta.length > 0) {
+          payload.children = childMeta.map((meta, idx) => {
+            const childKey = getChildKey(tmpl.id, idx);
+            const childVals = childTemplateValues[childKey] || {};
+            const childExVals = childExtraValues[childKey] || {};
+            const childDisc = childDiscounts[childKey] || {
+              discountType: 'PERCENT' as DiscountType,
+              discountValue: '0'
+            };
 
-      // ── Step 2: Save extra values (image URLs, text, etc.) ─────────
-      // The create API doesn't support extra values, so we fetch the
-      // created order to get orderTemplateIds, then call update-extra-values.
-      if (hasExtraValuesToSave) {
-        try {
-          const orderDetails = await getOrder(companyId, createdOrder.id);
-
-          if (orderDetails.templates && orderDetails.templates.length > 0) {
-            const extraTemplates: UpdateOrderExtraValuesTemplatePayload[] = [];
-
-            orderDetails.templates.forEach((orderTmpl) => {
-              // orderTmpl.id = orderTemplateId, orderTmpl.templateId = templateId
-              const tmpl = templates.find((t) => t.id === orderTmpl.templateId);
-              if (!tmpl) return;
-
-              const tmplExtras = tmpl.extra || [];
-              const tmplExtraValues = extraValues[tmpl.id] || {};
-
-              if (tmplExtras.length === 0) return;
-
-              const values: UpdateOrderExtraValueItem[] = [];
-
-              tmplExtras.forEach((extra) => {
-                const val = tmplExtraValues[extra.id]?.value || '';
-                if (val.trim()) {
-                  values.push({
-                    value: val.trim(),
-                    templateExtraFieldId: extra.id,
-                    orderIndex: 0
+            // Child main values
+            const cValues: {
+              value: string;
+              rowId: string;
+              columnId: string;
+            }[] = [];
+            rows.forEach((row) => {
+              columns.forEach((col) => {
+                if (col.dataType === 'FORMULA') return;
+                const v = childVals[row.id]?.[col.id] || '';
+                if (v.trim()) {
+                  cValues.push({
+                    value: v.trim(),
+                    rowId: row.id,
+                    columnId: col.id
                   });
                 }
               });
+            });
 
-              if (values.length > 0) {
-                extraTemplates.push({
-                  templateId: orderTmpl.templateId,
-                  orderTemplateId: orderTmpl.id, // API `id` = orderTemplateId
-                  parentOrderTemplateId: null,
-                  values
+            // Child extra values
+            const cExtras: OrderExtraValuePayload[] = [];
+            tmplExtras.forEach((extra) => {
+              const v = childExVals[extra.id]?.value || '';
+              if (v.trim()) {
+                cExtras.push({
+                  templateExtraFieldId: extra.id,
+                  value: v.trim(),
+                  meta: null,
+                  orderIndex: childExVals[extra.id]?.orderIndex ?? 0
                 });
               }
             });
 
-            if (extraTemplates.length > 0) {
-              const updateExtraPayload: UpdateOrderExtraValuesData = {
-                templates: extraTemplates
-              };
-              await updateOrderExtraValues(
-                companyId,
-                createdOrder.id,
-                updateExtraPayload
-              );
-            }
-          }
-        } catch (extraErr) {
-          console.error(
-            'Order created but failed to save extra values:',
-            extraErr
-          );
+            // Child summary
+            const cSummary: TemplateSummaryPayload = {
+              discountType: childDisc.discountType,
+              discountValue: childDisc.discountValue || '0'
+            };
+
+            const childPayload: OrderTemplatePayload = {
+              templateId: meta.templateId,
+              values: cValues,
+              summary: cSummary
+            };
+            if (cExtras.length > 0) childPayload.extravalues = cExtras;
+
+            return childPayload;
+          });
         }
-      }
+
+        return payload;
+      });
+
+      const productId = data.productId || referencedOrder?.productId || '';
+
+      const createData: CreateOrderData = {
+        orderNo: data.orderNo,
+        productId,
+        orderType: data.orderType,
+        description: data.description || undefined,
+        ...(data.referenceNo ? { referenceNo: data.referenceNo } : {}),
+        ...(data.customerId ? { customerId: data.customerId } : {}),
+        templates: templatesPayload
+      };
+
+      await createOrder(companyId, createData);
 
       router.push(`/dashboard/${companyId}/orders`);
       router.refresh();
@@ -524,14 +915,23 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   const totalCellErrors = useMemo(() => {
     let count = 0;
-    Object.values(cellErrors).forEach((tmplErrs) => {
-      count += Object.keys(tmplErrs).length;
+    Object.values(cellErrors).forEach((e) => {
+      count += Object.keys(e).length;
     });
-    Object.values(extraFieldErrors).forEach((tmplErrs) => {
-      count += Object.keys(tmplErrs).length;
+    Object.values(extraFieldErrors).forEach((e) => {
+      count += Object.keys(e).length;
+    });
+    Object.values(childCellErrors).forEach((e) => {
+      count += Object.keys(e).length;
+    });
+    Object.values(childExtraFieldErrors).forEach((e) => {
+      count += Object.keys(e).length;
     });
     return count;
-  }, [cellErrors, extraFieldErrors]);
+  }, [cellErrors, extraFieldErrors, childCellErrors, childExtraFieldErrors]);
+
+  const hasTemplates = templates.length > 0;
+  const showTemplateSection = isReferenceMode ? true : !!selectedProductId;
 
   // ──────────────────────────────────────────────────────────────────────
   // RENDER
@@ -612,47 +1012,165 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               </div>
             </div>
 
+            {/* ══════════ Reference No — Order Picker ══════════ */}
             <div className='space-y-2'>
-              <Label>
-                Product <span className='text-destructive'>*</span>
-              </Label>
-              {isLoadingProducts ? (
-                <Skeleton className='h-10 w-full' />
-              ) : (
-                <Select
-                  value={selectedProductId}
-                  onValueChange={(v) => setValue('productId', v)}
-                  disabled={isSubmitting}
-                >
-                  <SelectTrigger
-                    className={errors.productId ? 'border-destructive' : ''}
-                  >
-                    <SelectValue placeholder='Select a product' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {products.length === 0 ? (
-                      <div className='text-muted-foreground px-2 py-3 text-center text-sm'>
-                        No products available. Create a product first.
-                      </div>
-                    ) : (
-                      products.map((product) => (
-                        <SelectItem key={product.id} value={product.id}>
-                          <span className='flex items-center gap-2'>
-                            <Package className='h-3 w-3' />
-                            {product.name}
-                          </span>
-                        </SelectItem>
-                      ))
+              <Label htmlFor='referenceNo'>Reference No</Label>
+
+              {isReferenceMode ? (
+                <div className='flex items-center gap-2'>
+                  <div className='bg-muted flex flex-1 items-center gap-2 rounded-md border px-3 py-2'>
+                    <Link2 className='text-primary h-4 w-4 flex-shrink-0' />
+                    <span className='text-sm font-medium'>
+                      #{referencedOrder.orderNo}
+                    </span>
+                    <Badge variant='secondary' className='ml-1 text-[10px]'>
+                      {referencedOrder.orderType}
+                    </Badge>
+                    {referencedOrder.product?.name && (
+                      <span className='text-muted-foreground ml-auto text-xs'>
+                        {referencedOrder.product.name}
+                      </span>
                     )}
-                  </SelectContent>
-                </Select>
+                  </div>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='icon'
+                    className='h-9 w-9 flex-shrink-0'
+                    onClick={handleClearReference}
+                    disabled={isSubmitting}
+                    title='Clear reference'
+                  >
+                    <X className='h-4 w-4' />
+                  </Button>
+                </div>
+              ) : (
+                <Popover
+                  open={isOrdersPopoverOpen}
+                  onOpenChange={setIsOrdersPopoverOpen}
+                >
+                  <PopoverTrigger asChild>
+                    <div className='relative'>
+                      <Input
+                        id='referenceNo'
+                        placeholder='Click to select from existing orders'
+                        disabled={isSubmitting || isLoadingReference}
+                        value={referenceNoValue || ''}
+                        readOnly
+                        onFocus={() => setIsOrdersPopoverOpen(true)}
+                        className='cursor-pointer pr-10'
+                      />
+                      {isLoadingReference ? (
+                        <Loader2 className='text-muted-foreground absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 animate-spin' />
+                      ) : (
+                        <FileText className='text-muted-foreground absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2' />
+                      )}
+                    </div>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className='w-[var(--radix-popover-trigger-width)] p-0'
+                    align='start'
+                    onOpenAutoFocus={(e) => e.preventDefault()}
+                  >
+                    <div className='border-b p-2'>
+                      <div className='relative'>
+                        <Search className='text-muted-foreground absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2' />
+                        <Input
+                          placeholder='Search orders...'
+                          value={ordersSearch}
+                          onChange={(e) => setOrdersSearch(e.target.value)}
+                          className='h-8 pl-8 text-sm'
+                        />
+                      </div>
+                    </div>
+                    <div className='max-h-[220px] overflow-y-auto'>
+                      {isLoadingOrders ? (
+                        <div className='flex items-center justify-center py-4'>
+                          <Loader2 className='text-muted-foreground h-4 w-4 animate-spin' />
+                        </div>
+                      ) : ordersList.length === 0 ? (
+                        <div className='text-muted-foreground py-4 text-center text-sm'>
+                          No orders found
+                        </div>
+                      ) : (
+                        ordersList.map((o) => (
+                          <button
+                            key={o.id}
+                            type='button'
+                            className='hover:bg-accent flex w-full items-center justify-between px-3 py-2.5 text-left text-sm transition-colors'
+                            onClick={() => handleSelectReferenceOrder(o)}
+                          >
+                            <div className='flex items-center gap-2'>
+                              <span className='font-medium'>#{o.orderNo}</span>
+                              <Badge variant='outline' className='text-[10px]'>
+                                {o.orderType}
+                              </Badge>
+                            </div>
+                            <span className='text-muted-foreground text-xs'>
+                              {o.status || 'DRAFT'}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               )}
-              {errors.productId && (
-                <p className='text-destructive text-sm'>
-                  {errors.productId.message}
-                </p>
+
+              {referenceError && (
+                <p className='text-destructive text-sm'>{referenceError}</p>
               )}
+              <p className='text-muted-foreground text-xs'>
+                {isReferenceMode
+                  ? 'Order data loaded from reference. Clear to select a different product manually.'
+                  : 'Select an existing order to copy its data. Product will be auto-selected.'}
+              </p>
             </div>
+
+            {/* ══════════ Product Select — manual mode only ══════════ */}
+            {!isReferenceMode && (
+              <div className='space-y-2'>
+                <Label>
+                  Product <span className='text-destructive'>*</span>
+                </Label>
+                {isLoadingProducts ? (
+                  <Skeleton className='h-10 w-full' />
+                ) : (
+                  <Select
+                    value={selectedProductId || ''}
+                    onValueChange={(v) => setValue('productId', v)}
+                    disabled={isSubmitting}
+                  >
+                    <SelectTrigger
+                      className={errors.productId ? 'border-destructive' : ''}
+                    >
+                      <SelectValue placeholder='Select a product' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {products.length === 0 ? (
+                        <div className='text-muted-foreground px-2 py-3 text-center text-sm'>
+                          No products available. Create a product first.
+                        </div>
+                      ) : (
+                        products.map((product) => (
+                          <SelectItem key={product.id} value={product.id}>
+                            <span className='flex items-center gap-2'>
+                              <Package className='h-3 w-3' />
+                              {product.name}
+                            </span>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+                {errors.productId && (
+                  <p className='text-destructive text-sm'>
+                    {errors.productId.message}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Customer Select */}
             {selectedOrderType !== 'SAMPLE' && (
@@ -718,16 +1236,72 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           </CardContent>
         </Card>
 
+        {/* ═══════════ REFERENCED ORDER INFO CARD ═══════════ */}
+        {isReferenceMode && referencedOrder && (
+          <Card className='border-primary/20 bg-primary/5'>
+            <CardHeader className='pb-3'>
+              <CardTitle className='flex items-center gap-2 text-base'>
+                <Link2 className='h-4 w-4' />
+                Referenced Order — #{referencedOrder.orderNo}
+              </CardTitle>
+              <CardDescription>
+                Data pre-filled from the referenced order. Edit the values below
+                before creating.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className='grid grid-cols-2 gap-4 text-sm md:grid-cols-4'>
+                <div>
+                  <span className='text-muted-foreground'>Product</span>
+                  <p className='font-medium'>
+                    {referencedOrder.product?.name ?? '—'}
+                  </p>
+                </div>
+                <div>
+                  <span className='text-muted-foreground'>Order Type</span>
+                  <p className='font-medium'>{referencedOrder.orderType}</p>
+                </div>
+                <div>
+                  <span className='text-muted-foreground'>Status</span>
+                  <p className='font-medium'>
+                    {referencedOrder.status || 'DRAFT'}
+                  </p>
+                </div>
+                <div>
+                  <span className='text-muted-foreground'>Customer</span>
+                  <p className='font-medium'>
+                    {referencedOrder.customer?.name ?? '—'}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Loading reference */}
+        {isLoadingReference && (
+          <div className='flex items-center justify-center rounded-lg border py-8'>
+            <div className='flex flex-col items-center gap-2'>
+              <Loader2 className='text-primary h-6 w-6 animate-spin' />
+              <p className='text-muted-foreground text-sm'>
+                Loading referenced order data...
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ════════════════ TEMPLATE VALUES ════════════════ */}
-        {selectedProductId && (
+        {showTemplateSection && !isLoadingReference && (
           <>
             <Separator />
 
             <div className='space-y-2'>
               <h2 className='text-lg font-semibold'>Template Values</h2>
               <p className='text-muted-foreground text-sm'>
-                Enter values for each template. Formula columns are
-                auto-calculated. Fields marked with{' '}
+                {isReferenceMode
+                  ? 'Values pre-filled from the referenced order. Edit as needed.'
+                  : 'Enter values for each template.'}{' '}
+                Formula columns are auto-calculated. Fields marked with{' '}
                 <span className='text-destructive font-bold'>*</span> are
                 required.
               </p>
@@ -763,7 +1337,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
                 <span>{templateError}</span>
               </div>
-            ) : templates.length === 0 ? (
+            ) : !hasTemplates ? (
               <Card>
                 <CardContent className='py-8'>
                   <div className='flex flex-col items-center justify-center text-center'>
@@ -777,23 +1351,93 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               </Card>
             ) : (
               <div className='space-y-6'>
-                {templates.map((tmpl) => (
-                  <OrderTemplateValues
-                    key={tmpl.id}
-                    template={tmpl}
-                    values={templateValues[tmpl.id] || {}}
-                    onChange={(vals) =>
-                      handleTemplateValuesChange(tmpl.id, vals)
-                    }
-                    errors={cellErrors[tmpl.id] || {}}
-                    disabled={isSubmitting}
-                    extraValues={extraValues[tmpl.id] || {}}
-                    onExtraValuesChange={(vals) =>
-                      handleExtraValuesChange(tmpl.id, vals)
-                    }
-                    extraErrors={extraFieldErrors[tmpl.id] || {}}
-                  />
-                ))}
+                {templates.map((tmpl) => {
+                  const childMeta = refChildrenMeta[tmpl.id];
+                  const hasChildren = childMeta && childMeta.length > 0;
+
+                  return (
+                    <div key={tmpl.id} className='space-y-4'>
+                      {/* Parent badge when children exist */}
+                      {hasChildren && (
+                        <Badge variant='outline' className='text-xs'>
+                          Parent Template
+                          <span className='text-muted-foreground ml-1.5'>
+                            — {childMeta.length} child
+                            {childMeta.length !== 1 ? 'ren' : ''} from reference
+                          </span>
+                        </Badge>
+                      )}
+
+                      {/* Parent — editable */}
+                      <OrderTemplateValues
+                        template={tmpl}
+                        values={templateValues[tmpl.id] || {}}
+                        onChange={(vals) =>
+                          handleTemplateValuesChange(tmpl.id, vals)
+                        }
+                        errors={cellErrors[tmpl.id] || {}}
+                        disabled={isSubmitting}
+                        extraValues={extraValues[tmpl.id] || {}}
+                        onExtraValuesChange={(vals) =>
+                          handleExtraValuesChange(tmpl.id, vals)
+                        }
+                        extraErrors={extraFieldErrors[tmpl.id] || {}}
+                        discountType={
+                          templateDiscounts[tmpl.id]?.discountType || 'PERCENT'
+                        }
+                        discountValue={
+                          templateDiscounts[tmpl.id]?.discountValue || '0'
+                        }
+                        onDiscountChange={(type, value) =>
+                          handleDiscountChange(tmpl.id, type, value)
+                        }
+                      />
+
+                      {/* Children — editable */}
+                      {hasChildren &&
+                        childMeta.map((_, idx) => {
+                          const childKey = getChildKey(tmpl.id, idx);
+                          return (
+                            <div key={childKey} className='space-y-2'>
+                              <Badge variant='secondary' className='text-xs'>
+                                Child #{idx + 1}
+                              </Badge>
+                              <OrderTemplateValues
+                                template={tmpl}
+                                values={childTemplateValues[childKey] || {}}
+                                onChange={(vals) =>
+                                  handleChildValuesChange(childKey, vals)
+                                }
+                                errors={childCellErrors[childKey] || {}}
+                                disabled={isSubmitting}
+                                extraValues={childExtraValues[childKey] || {}}
+                                onExtraValuesChange={(vals) =>
+                                  handleChildExtraValuesChange(childKey, vals)
+                                }
+                                extraErrors={
+                                  childExtraFieldErrors[childKey] || {}
+                                }
+                                discountType={
+                                  childDiscounts[childKey]?.discountType ||
+                                  'PERCENT'
+                                }
+                                discountValue={
+                                  childDiscounts[childKey]?.discountValue || '0'
+                                }
+                                onDiscountChange={(type, value) =>
+                                  handleChildDiscountChange(
+                                    childKey,
+                                    type,
+                                    value
+                                  )
+                                }
+                              />
+                            </div>
+                          );
+                        })}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </>
@@ -803,7 +1447,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         <div className='flex items-center gap-4 pt-2'>
           <Button
             type='submit'
-            disabled={isSubmitting || isLoadingTemplates}
+            disabled={isSubmitting || isLoadingTemplates || isLoadingReference}
             size='lg'
           >
             {isSubmitting ? (
