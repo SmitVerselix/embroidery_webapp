@@ -50,7 +50,8 @@ import {
   IconUser,
   IconStar,
   IconSettings,
-  IconHome
+  IconHome,
+  IconUsers
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -70,7 +71,9 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   user: IconUser,
   star: IconStar,
   settings: IconSettings,
-  home: IconHome
+  home: IconHome,
+  users: IconUsers,
+  orders: IconReceipt
 };
 
 // Default icon if not found

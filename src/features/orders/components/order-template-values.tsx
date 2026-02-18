@@ -40,7 +40,8 @@ import {
   AlertCircle,
   LayoutTemplate,
   Percent,
-  IndianRupee
+  IndianRupee,
+  Layers
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -57,6 +58,11 @@ import { Label } from '@/components/ui/label';
 
 export type TemplateValuesMap = Record<string, Record<string, string>>;
 // TemplateValuesMap[rowId][columnId] = value
+
+type TemplateBlock = {
+  index: number;
+  label: string;
+};
 
 export interface OrderTemplateValuesProps {
   template: TemplateWithDetails;
@@ -75,6 +81,34 @@ export interface OrderTemplateValuesProps {
   discountValue?: string;
   onDiscountChange?: (type: DiscountType, value: string) => void;
 }
+
+// =============================================================================
+// BLOCK HELPERS
+// =============================================================================
+
+/** Derive blocks from columns' blockIndex values */
+function deriveBlocks(columns: TemplateColumn[]): TemplateBlock[] {
+  const indices = new Set<number>();
+  columns.forEach((col) => indices.add(col.blockIndex));
+
+  if (indices.size === 0) {
+    indices.add(0);
+  }
+
+  return Array.from(indices)
+    .sort((a, b) => a - b)
+    .map((index) => ({ index, label: `Block ${index}` }));
+}
+
+// Block header colors (cycle through a set of colors)
+const blockColors = [
+  'bg-blue-100 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 border-blue-300 dark:border-blue-800',
+  'bg-green-100 dark:bg-green-950/40 text-green-800 dark:text-green-200 border-green-300 dark:border-green-800',
+  'bg-purple-100 dark:bg-purple-950/40 text-purple-800 dark:text-purple-200 border-purple-300 dark:border-purple-800',
+  'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-800',
+  'bg-pink-100 dark:bg-pink-950/40 text-pink-800 dark:text-pink-200 border-pink-300 dark:border-pink-800',
+  'bg-teal-100 dark:bg-teal-950/40 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-800'
+];
 
 // =============================================================================
 // FORMULA EVALUATOR (basic client-side for preview)
@@ -175,7 +209,7 @@ export default function OrderTemplateValues({
   extraValues = {},
   onExtraValuesChange,
   extraErrors = {},
-  summary = {},
+  summary,
   discountType,
   discountValue,
   onDiscountChange
@@ -208,6 +242,30 @@ export default function OrderTemplateValues({
     [extras]
   );
 
+  // ── Block grouping ──────────────────────────────────────────────────
+  const blocks = useMemo(() => deriveBlocks(columns), [columns]);
+
+  // Group columns by blockIndex, preserving block order
+  const orderedBlockColumns = useMemo(() => {
+    const grouped: { block: TemplateBlock; columns: TemplateColumn[] }[] = [];
+    blocks.forEach((block) => {
+      const blockCols = columns.filter((col) => col.blockIndex === block.index);
+      if (blockCols.length > 0) {
+        grouped.push({ block, columns: blockCols });
+      }
+    });
+    return grouped;
+  }, [blocks, columns]);
+
+  // Flat list of columns in block order (for rendering table cells)
+  const flatOrderedColumns = useMemo(
+    () => orderedBlockColumns.flatMap((g) => g.columns),
+    [orderedBlockColumns]
+  );
+
+  // Check if we have multiple blocks with columns
+  const hasMultipleBlocks = orderedBlockColumns.length > 1;
+
   const hasColumns = columns.length > 0;
   const hasRows = rows.length > 0;
   const hasData = hasColumns && hasRows;
@@ -215,6 +273,10 @@ export default function OrderTemplateValues({
   const hasFooterExtras = footerExtras.length > 0;
   const hasMediaExtras = mediaExtras.length > 0;
   const hasAnyExtras = hasHeaderExtras || hasFooterExtras || hasMediaExtras;
+
+  // Check if summary has actual data
+  const hasSummary =
+    summary && typeof summary === 'object' && Object.keys(summary).length > 0;
 
   // ──────────────────────────────────────────────────────────────────────
   // HANDLERS
@@ -292,13 +354,8 @@ export default function OrderTemplateValues({
   // RENDER: Discount Controls
   // ──────────────────────────────────────────────────────────────────────
   const renderDiscountControls = () => {
-    // Only show discount controls in edit mode (not readOnly) or when onDiscountChange is provided
     if (!onDiscountChange && !readOnly) return null;
-
-    // In readOnly mode, show the summary discount info from the API
-    if (readOnly) {
-      return null; // Summary is shown below in the summary section
-    }
+    if (readOnly) return null;
 
     return (
       <div className='rounded-lg border bg-slate-50/50 p-4 dark:bg-slate-950/20'>
@@ -382,11 +439,45 @@ export default function OrderTemplateValues({
         <div className='overflow-x-auto'>
           <Table>
             <TableHeader>
+              {/* ── Row 1: Block Group Headers (only if multiple blocks) ── */}
+              {hasMultipleBlocks && hasColumns && (
+                <TableRow className='bg-muted/30 border-b-2'>
+                  {/* Row label spacer */}
+                  <TableHead
+                    className='bg-muted/30 sticky left-0 z-10 min-w-[140px] border-r font-semibold'
+                    rowSpan={2}
+                  >
+                    Row / Item
+                  </TableHead>
+
+                  {/* Block group headers with colspan */}
+                  {orderedBlockColumns.map((group, idx) => (
+                    <TableHead
+                      key={group.block.index}
+                      colSpan={group.columns.length}
+                      className={cn(
+                        'border-x text-center text-sm font-bold',
+                        blockColors[idx % blockColors.length]
+                      )}
+                    >
+                      <div className='flex items-center justify-center gap-2 py-1'>
+                        <Layers className='h-3.5 w-3.5' />
+                        <span>{group.block.label}</span>
+                      </div>
+                    </TableHead>
+                  ))}
+                </TableRow>
+              )}
+
+              {/* ── Row 2: Individual Column Headers ── */}
               <TableRow className='bg-muted/50'>
-                <TableHead className='bg-muted/50 sticky left-0 z-10 min-w-[140px] font-semibold'>
-                  Row / Item
-                </TableHead>
-                {columns.map((column) => (
+                {/* Row label (only if single block — otherwise it's in the row above with rowSpan) */}
+                {!hasMultipleBlocks && (
+                  <TableHead className='bg-muted/50 sticky left-0 z-10 min-w-[140px] font-semibold'>
+                    Row / Item
+                  </TableHead>
+                )}
+                {flatOrderedColumns.map((column) => (
                   <TableHead
                     key={column.id}
                     className='min-w-[140px] text-center'
@@ -436,7 +527,7 @@ export default function OrderTemplateValues({
                       </div>
                     </TableCell>
 
-                    {columns.map((column) => {
+                    {flatOrderedColumns.map((column) => {
                       const cellKey = getErrorKey(row.id, column.id);
                       const cellError = errors[cellKey];
 
@@ -513,59 +604,61 @@ export default function OrderTemplateValues({
             </TableBody>
           </Table>
 
-          {/* Summary Section */}
-          <div className='mt-4 flex justify-end border-t'>
-            <div className='space-y-2.5 rounded-lg p-4 text-sm'>
-              {/* Total */}
-              <div className='flex items-center justify-between gap-8'>
-                <span className='text-muted-foreground'>Total</span>
-                <span className='font-medium tabular-nums'>
-                  {formatAmount(summary.total)}
-                </span>
-              </div>
+          {/* Summary Section — only render when summary data exists */}
+          {hasSummary && (
+            <div className='mt-4 flex justify-end border-t'>
+              <div className='space-y-2.5 rounded-lg p-4 text-sm'>
+                {/* Total */}
+                <div className='flex items-center justify-between gap-8'>
+                  <span className='text-muted-foreground'>Total</span>
+                  <span className='font-medium tabular-nums'>
+                    {formatAmount(summary.total)}
+                  </span>
+                </div>
 
-              {/* Discount Value (e.g. 10 for 10%) */}
-              <div className='flex items-center justify-between gap-8'>
-                <span className='text-muted-foreground'>Discount</span>
-                <span className='font-medium tabular-nums'>
-                  {summary.discount ?? '—'}
-                </span>
-              </div>
+                {/* Discount Value (e.g. 10 for 10%) */}
+                <div className='flex items-center justify-between gap-8'>
+                  <span className='text-muted-foreground'>Discount</span>
+                  <span className='font-medium tabular-nums'>
+                    {summary.discount ?? '—'}
+                  </span>
+                </div>
 
-              {/* Discount Type */}
-              <div className='flex items-center justify-between gap-8'>
-                <span className='text-muted-foreground'>Discount Type</span>
-                <span className='font-medium'>
-                  {summary.discountType ?? '—'}
-                </span>
-              </div>
+                {/* Discount Type */}
+                <div className='flex items-center justify-between gap-8'>
+                  <span className='text-muted-foreground'>Discount Type</span>
+                  <span className='font-medium'>
+                    {summary.discountType ?? '—'}
+                  </span>
+                </div>
 
-              {/* Discount Amount (calculated) */}
-              <div className='flex items-center justify-between gap-8'>
-                <span className='text-muted-foreground'>Discount Amount</span>
-                <span
-                  className={cn(
-                    'font-medium tabular-nums',
-                    parseFloat(summary.discountAmount || '0') > 0 &&
-                      'text-destructive'
-                  )}
-                >
-                  {parseFloat(summary.discountAmount || '0') > 0 ? '− ' : ''}
-                  {formatAmount(summary.discountAmount)}
-                </span>
-              </div>
+                {/* Discount Amount (calculated) */}
+                <div className='flex items-center justify-between gap-8'>
+                  <span className='text-muted-foreground'>Discount Amount</span>
+                  <span
+                    className={cn(
+                      'font-medium tabular-nums',
+                      parseFloat(summary.discountAmount || '0') > 0 &&
+                        'text-destructive'
+                    )}
+                  >
+                    {parseFloat(summary.discountAmount || '0') > 0 ? '− ' : ''}
+                    {formatAmount(summary.discountAmount)}
+                  </span>
+                </div>
 
-              <Separator />
+                <Separator />
 
-              {/* Final Payable Amount */}
-              <div className='flex items-center justify-between gap-8 pt-0.5'>
-                <span className='font-semibold'>Final Payable Amount</span>
-                <span className='text-base font-semibold tabular-nums'>
-                  {formatAmount(summary.finalPayableAmount)}
-                </span>
+                {/* Final Payable Amount */}
+                <div className='flex items-center justify-between gap-8 pt-0.5'>
+                  <span className='font-semibold'>Final Payable Amount</span>
+                  <span className='text-base font-semibold tabular-nums'>
+                    {formatAmount(summary.finalPayableAmount)}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     );
@@ -596,6 +689,12 @@ export default function OrderTemplateValues({
             )}
           </div>
           <div className='text-muted-foreground flex items-center gap-3 text-xs'>
+            {hasMultipleBlocks && (
+              <div className='flex items-center gap-1'>
+                <Layers className='h-3 w-3' />
+                {orderedBlockColumns.length} blocks
+              </div>
+            )}
             <div className='flex items-center gap-1'>
               <Columns className='h-3 w-3' />
               {columns.length} cols
@@ -617,6 +716,31 @@ export default function OrderTemplateValues({
           </div>
         ) : (
           <div className='space-y-4'>
+            {/* Block Legend (only when multiple blocks) */}
+            {hasMultipleBlocks && (
+              <div className='flex flex-wrap items-center gap-2'>
+                {orderedBlockColumns.map((group, idx) => (
+                  <div
+                    key={group.block.index}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium',
+                      blockColors[idx % blockColors.length]
+                    )}
+                  >
+                    <Layers className='h-3 w-3' />
+                    {group.block.label}
+                    <Badge
+                      variant='secondary'
+                      className='ml-1 px-1.5 py-0 text-[10px]'
+                    >
+                      {group.columns.length} col
+                      {group.columns.length !== 1 ? 's' : ''}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Header Extra Fields */}
             {hasHeaderExtras && (
               <OrderExtraValues

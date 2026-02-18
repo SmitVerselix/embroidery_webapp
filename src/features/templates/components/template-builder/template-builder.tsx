@@ -1,10 +1,3 @@
-/**
- * Component: TemplateBuilder
- * Description: Main template builder with columns, rows, extras, and live preview
- *
- * Tabs: Preview | Columns | Rows | Extra
- */
-
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -36,6 +29,8 @@ import type {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Card,
   CardContent,
@@ -80,11 +75,12 @@ import {
   AlertCircle,
   Loader2,
   Settings,
-  LayoutTemplate
+  LayoutTemplate,
+  Layers
 } from 'lucide-react';
 import Link from 'next/link';
 
-import ColumnFormDialog from './column-form-dialog';
+import ColumnFormDialog, { type TemplateBlock } from './column-form-dialog';
 import RowFormDialog from './row-form-dialog';
 import ExtraFormDialog from './extra-form-dialog';
 import TemplatePreview from './template-preview';
@@ -122,6 +118,27 @@ function BuilderSkeleton() {
 }
 
 // =============================================================================
+// HELPER: Derive blocks from existing columns
+// =============================================================================
+
+function deriveBlocksFromColumns(columns: TemplateColumn[]): TemplateBlock[] {
+  const blockIndices = new Set<number>();
+  columns.forEach((col) => blockIndices.add(col.blockIndex));
+
+  // Always have at least block 0
+  if (blockIndices.size === 0) {
+    blockIndices.add(0);
+  }
+
+  return Array.from(blockIndices)
+    .sort((a, b) => a - b)
+    .map((index) => ({
+      index,
+      label: `Block ${index}`
+    }));
+}
+
+// =============================================================================
 // COMPONENT
 // =============================================================================
 
@@ -137,6 +154,16 @@ export default function TemplateBuilder({
   const [columns, setColumns] = useState<TemplateColumn[]>([]);
   const [rows, setRows] = useState<TemplateRow[]>([]);
   const [extras, setExtras] = useState<TemplateExtra[]>([]);
+
+  // Block management
+  const [blocks, setBlocks] = useState<TemplateBlock[]>([
+    { index: 0, label: 'Block 0' }
+  ]);
+  const [newBlockLabel, setNewBlockLabel] = useState('');
+  const [editingBlockIndex, setEditingBlockIndex] = useState<number | null>(
+    null
+  );
+  const [editingBlockLabel, setEditingBlockLabel] = useState('');
 
   // Loading states
   const [isLoading, setIsLoading] = useState(true);
@@ -181,12 +208,16 @@ export default function TemplateBuilder({
     try {
       const data = await getTemplate(companyId, productId, templateId);
       setTemplate(data);
-      setColumns(
-        [...(data.columns || [])].sort((a, b) => a.orderNo - b.orderNo)
+      const sortedCols = [...(data.columns || [])].sort(
+        (a, b) => a.orderNo - b.orderNo
       );
+      setColumns(sortedCols);
       setRows([...(data.rows || [])].sort((a, b) => a.orderNo - b.orderNo));
-      // API returns "extra" (singular)
       setExtras([...(data.extra || [])].sort((a, b) => a.orderNo - b.orderNo));
+
+      // Derive blocks from existing columns
+      const derivedBlocks = deriveBlocksFromColumns(sortedCols);
+      setBlocks(derivedBlocks);
     } catch (err) {
       setError(getError(err));
     } finally {
@@ -198,13 +229,75 @@ export default function TemplateBuilder({
     fetchTemplate();
   }, [fetchTemplate]);
 
-  // Group extras by section type for the Extra tab display
+  // Group extras by section type
   const groupedExtras = useMemo(() => {
     const header = extras.filter((e) => e.sectionType === 'HEADER');
     const footer = extras.filter((e) => e.sectionType === 'FOOTER');
     const media = extras.filter((e) => e.sectionType === 'MEDIA');
     return { header, footer, media };
   }, [extras]);
+
+  // Group columns by blockIndex
+  const columnsByBlock = useMemo(() => {
+    const grouped: Record<number, TemplateColumn[]> = {};
+    blocks.forEach((block) => {
+      grouped[block.index] = [];
+    });
+    columns.forEach((col) => {
+      if (!grouped[col.blockIndex]) {
+        grouped[col.blockIndex] = [];
+      }
+      grouped[col.blockIndex].push(col);
+    });
+    // Sort within each block
+    Object.keys(grouped).forEach((key) => {
+      grouped[Number(key)].sort((a, b) => a.orderNo - b.orderNo);
+    });
+    return grouped;
+  }, [columns, blocks]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // BLOCK HANDLERS
+  // ──────────────────────────────────────────────────────────────────────
+  const handleAddBlock = () => {
+    if (!newBlockLabel.trim()) return;
+    const maxIndex =
+      blocks.length > 0 ? Math.max(...blocks.map((b) => b.index)) : -1;
+    const newIndex = maxIndex + 1;
+    setBlocks((prev) => [
+      ...prev,
+      { index: newIndex, label: newBlockLabel.trim() }
+    ]);
+    setNewBlockLabel('');
+  };
+
+  const handleUpdateBlockLabel = (blockIndex: number) => {
+    if (!editingBlockLabel.trim()) return;
+    setBlocks((prev) =>
+      prev.map((b) =>
+        b.index === blockIndex ? { ...b, label: editingBlockLabel.trim() } : b
+      )
+    );
+    setEditingBlockIndex(null);
+    setEditingBlockLabel('');
+  };
+
+  const handleRemoveBlock = (blockIndex: number) => {
+    // Only allow removing blocks that have no columns
+    const blockColumns = columns.filter((c) => c.blockIndex === blockIndex);
+    if (blockColumns.length > 0) {
+      setError(
+        'Cannot remove a block that has columns. Delete the columns first.'
+      );
+      return;
+    }
+    // Don't allow removing the last block
+    if (blocks.length <= 1) {
+      setError('Must have at least one block.');
+      return;
+    }
+    setBlocks((prev) => prev.filter((b) => b.index !== blockIndex));
+  };
 
   // ──────────────────────────────────────────────────────────────────────
   // COLUMN HANDLERS
@@ -239,7 +332,7 @@ export default function TemplateBuilder({
         const oldKey = editingColumn.key;
         const keyChanged = oldKey !== generatedKey;
 
-        // 1. Update the edited column itself
+        // Update the edited column (with correct blockIndex)
         await updateColumn(companyId, productId, templateId, editingColumn.id, {
           key: generatedKey,
           label: data.label,
@@ -250,14 +343,13 @@ export default function TemplateBuilder({
           formula: data.formula
         });
 
-        // Update local state for the edited column
         let updatedColumns = columns.map((col) =>
           col.id === editingColumn.id
             ? { ...col, ...data, key: generatedKey }
             : col
         );
 
-        // 2. If key changed, find and update all FORMULA columns referencing the old key
+        // If key changed, update all FORMULA columns referencing the old key
         if (keyChanged) {
           const escapedOldKey = oldKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const keyRegex = new RegExp(`\\b${escapedOldKey}\\b`, 'g');
@@ -276,7 +368,6 @@ export default function TemplateBuilder({
               generatedKey
             );
 
-            // Individual API call for each affected formula column
             await updateColumn(
               companyId,
               productId,
@@ -293,7 +384,6 @@ export default function TemplateBuilder({
               }
             );
 
-            // Update local state for this formula column
             updatedColumns = updatedColumns.map((col) =>
               col.id === formulaCol.id
                 ? { ...col, formula: updatedFormula }
@@ -304,6 +394,7 @@ export default function TemplateBuilder({
 
         setColumns(updatedColumns);
       } else {
+        // Create new column with the correct blockIndex
         const newColumn = await createColumn(
           companyId,
           productId,
@@ -441,10 +532,8 @@ export default function TemplateBuilder({
         const deletedColumn = itemToDelete as TemplateColumn;
         await deleteColumn(companyId, productId, templateId, deletedColumn.id);
 
-        // Remove the column from local state
         let updatedColumns = columns.filter((c) => c.id !== deletedColumn.id);
 
-        // Update any FORMULA columns that reference the deleted column's key
         const deletedKey = deletedColumn.key;
         const escapedKey = deletedKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const keyRegex = new RegExp(`\\b${escapedKey}\\b`);
@@ -460,7 +549,6 @@ export default function TemplateBuilder({
           const parsed = parseFormula(formulaCol.formula!);
           if (!parsed) continue;
 
-          // Remove ALL steps referencing the deleted column key
           let stepIndex: number;
           while (
             (stepIndex = parsed.steps.findIndex(
@@ -539,7 +627,7 @@ export default function TemplateBuilder({
   const backUrl = `/dashboard/${companyId}/product/${productId}`;
 
   // ──────────────────────────────────────────────────────────────────────
-  // RENDER: Extra section table (used inside the Extra tab)
+  // RENDER: Extra section table
   // ──────────────────────────────────────────────────────────────────────
   const renderExtraSection = (
     title: string,
@@ -682,17 +770,24 @@ export default function TemplateBuilder({
 
       {/* Error */}
       {error && (
-        <div className='bg-destructive/15 text-destructive rounded-md p-4'>
-          {error}
+        <div className='bg-destructive/15 text-destructive flex items-center justify-between rounded-md p-4'>
+          <span>{error}</span>
+          <Button variant='ghost' size='sm' onClick={() => setError(null)}>
+            Dismiss
+          </Button>
         </div>
       )}
 
       {/* ══════════════ TABS ══════════════ */}
       <Tabs defaultValue='preview' className='space-y-4'>
-        <TabsList className='grid w-full grid-cols-4'>
+        <TabsList className='grid w-full grid-cols-5'>
           <TabsTrigger value='preview' className='flex items-center gap-2'>
             <Eye className='h-4 w-4' />
             Preview
+          </TabsTrigger>
+          <TabsTrigger value='blocks' className='flex items-center gap-2'>
+            <Layers className='h-4 w-4' />
+            Blocks ({blocks.length})
           </TabsTrigger>
           <TabsTrigger value='columns' className='flex items-center gap-2'>
             <Columns className='h-4 w-4' />
@@ -715,7 +810,174 @@ export default function TemplateBuilder({
             columns={columns}
             rows={rows}
             extras={extras}
+            blocks={blocks}
           />
+        </TabsContent>
+
+        {/* ── Blocks Tab ──────────────────────────────────────────── */}
+        <TabsContent value='blocks'>
+          <Card>
+            <CardHeader>
+              <div className='flex items-center justify-between'>
+                <div>
+                  <CardTitle className='text-lg'>Block Groups</CardTitle>
+                  <CardDescription>
+                    Define column groups (e.g., &quot;Before Line
+                    Balancing&quot;, &quot;After Line Balancing&quot;). Each
+                    block groups related columns together with a shared header.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className='space-y-6'>
+              {/* Add new block */}
+              <div className='flex items-end gap-3'>
+                <div className='flex-1 space-y-2'>
+                  <Label>New Block Name</Label>
+                  <Input
+                    placeholder='e.g., Before Line Balancing'
+                    value={newBlockLabel}
+                    onChange={(e) => setNewBlockLabel(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddBlock();
+                      }
+                    }}
+                  />
+                </div>
+                <Button
+                  onClick={handleAddBlock}
+                  disabled={!newBlockLabel.trim()}
+                >
+                  <Plus className='mr-2 h-4 w-4' />
+                  Add Block
+                </Button>
+              </div>
+
+              {/* Existing blocks */}
+              <div className='space-y-3'>
+                {blocks.map((block) => {
+                  const blockCols = columnsByBlock[block.index] || [];
+                  const isEditing = editingBlockIndex === block.index;
+
+                  return (
+                    <div
+                      key={block.index}
+                      className='flex items-center gap-3 rounded-lg border p-4'
+                    >
+                      {/* Block index badge */}
+                      <Badge
+                        variant='outline'
+                        className='shrink-0 font-mono text-sm'
+                      >
+                        {block.index}
+                      </Badge>
+
+                      {/* Block label (editable) */}
+                      <div className='flex-1'>
+                        {isEditing ? (
+                          <div className='flex items-center gap-2'>
+                            <Input
+                              value={editingBlockLabel}
+                              onChange={(e) =>
+                                setEditingBlockLabel(e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleUpdateBlockLabel(block.index);
+                                }
+                                if (e.key === 'Escape') {
+                                  setEditingBlockIndex(null);
+                                  setEditingBlockLabel('');
+                                }
+                              }}
+                              className='h-8'
+                              autoFocus
+                            />
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              className='h-8'
+                              onClick={() =>
+                                handleUpdateBlockLabel(block.index)
+                              }
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              size='sm'
+                              variant='ghost'
+                              className='h-8'
+                              onClick={() => {
+                                setEditingBlockIndex(null);
+                                setEditingBlockLabel('');
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className='flex items-center gap-2'>
+                            <span className='font-medium'>{block.label}</span>
+                            <Badge variant='secondary' className='text-xs'>
+                              {blockCols.length} column
+                              {blockCols.length !== 1 ? 's' : ''}
+                            </Badge>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions */}
+                      {!isEditing && (
+                        <div className='flex items-center gap-1'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-8 w-8'
+                            onClick={() => {
+                              setEditingBlockIndex(block.index);
+                              setEditingBlockLabel(block.label);
+                            }}
+                          >
+                            <Pencil className='h-4 w-4' />
+                          </Button>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='text-destructive hover:text-destructive h-8 w-8'
+                            onClick={() => handleRemoveBlock(block.index)}
+                            disabled={blocks.length <= 1}
+                          >
+                            <Trash2 className='h-4 w-4' />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Info */}
+              <div className='flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-400'>
+                <Layers className='mt-0.5 h-4 w-4 flex-shrink-0' />
+                <div>
+                  <p className='font-medium'>How blocks work</p>
+                  <p className='mt-1 text-xs'>
+                    Blocks group related columns together. When adding a column,
+                    you select which block it belongs to. The block index is
+                    sent as{' '}
+                    <code className='rounded bg-blue-100 px-1 dark:bg-blue-900'>
+                      blockIndex
+                    </code>{' '}
+                    in the API call. Each column creation triggers its own API
+                    call with the correct blockIndex.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* ── Columns Tab ─────────────────────────────────────────── */}
@@ -726,7 +988,8 @@ export default function TemplateBuilder({
                 <div>
                   <CardTitle className='text-lg'>Columns</CardTitle>
                   <CardDescription>
-                    Define the columns (fields) for your template
+                    Define the columns (fields) for your template, grouped by
+                    blocks
                   </CardDescription>
                 </div>
                 <Button onClick={handleAddColumn}>
@@ -749,90 +1012,124 @@ export default function TemplateBuilder({
                   </Button>
                 </div>
               ) : (
-                <div className='rounded-md border'>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Label</TableHead>
-                        <TableHead>Key</TableHead>
-                        <TableHead>Data Type</TableHead>
-                        <TableHead>Required</TableHead>
-                        <TableHead>Formula</TableHead>
-                        <TableHead className='w-[70px]'>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {columns
-                        .sort((a, b) => a.orderNo - b.orderNo)
-                        .map((column) => (
-                          <TableRow key={column.id}>
-                            <TableCell className='font-medium'>
-                              {column.label}
-                            </TableCell>
-                            <TableCell>
-                              <code className='bg-muted rounded px-2 py-1 text-xs'>
-                                {column.key}
-                              </code>
-                            </TableCell>
-                            <TableCell>
-                              <Badge
-                                variant={
-                                  column.dataType === 'NUMBER'
-                                    ? 'default'
-                                    : column.dataType === 'FORMULA'
-                                      ? 'outline'
-                                      : 'secondary'
-                                }
-                              >
-                                {column.dataType}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              {column.isRequired ? (
-                                <Badge variant='destructive'>Yes</Badge>
-                              ) : (
-                                <span className='text-muted-foreground'>
-                                  No
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className='max-w-[150px] truncate'>
-                              {column.formula || '—'}
-                            </TableCell>
-                            <TableCell>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant='ghost'
-                                    size='icon'
-                                    className='h-8 w-8'
-                                  >
-                                    <MoreHorizontal className='h-4 w-4' />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align='end'>
-                                  <DropdownMenuItem
-                                    onClick={() => handleEditColumn(column)}
-                                  >
-                                    <Pencil className='mr-2 h-4 w-4' />
-                                    Edit
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() =>
-                                      handleDeleteClick('column', column)
-                                    }
-                                    className='text-destructive focus:text-destructive'
-                                  >
-                                    <Trash2 className='mr-2 h-4 w-4' />
-                                    Delete
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                    </TableBody>
-                  </Table>
+                <div className='space-y-6'>
+                  {blocks.map((block) => {
+                    const blockCols = columnsByBlock[block.index] || [];
+                    return (
+                      <div key={block.index} className='space-y-3'>
+                        {/* Block header */}
+                        <div className='flex items-center gap-2'>
+                          <Badge variant='outline' className='font-mono'>
+                            Block {block.index}
+                          </Badge>
+                          <h4 className='text-sm font-semibold'>
+                            {block.label}
+                          </h4>
+                          <Badge variant='secondary' className='text-xs'>
+                            {blockCols.length} column
+                            {blockCols.length !== 1 ? 's' : ''}
+                          </Badge>
+                        </div>
+
+                        {blockCols.length === 0 ? (
+                          <div className='text-muted-foreground rounded-md border border-dashed py-4 text-center text-sm'>
+                            No columns in this block yet
+                          </div>
+                        ) : (
+                          <div className='rounded-md border'>
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Label</TableHead>
+                                  <TableHead>Key</TableHead>
+                                  <TableHead>Data Type</TableHead>
+                                  <TableHead>Required</TableHead>
+                                  <TableHead>Formula</TableHead>
+                                  <TableHead className='w-[70px]'>
+                                    Actions
+                                  </TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {blockCols.map((column) => (
+                                  <TableRow key={column.id}>
+                                    <TableCell className='font-medium'>
+                                      {column.label}
+                                    </TableCell>
+                                    <TableCell>
+                                      <code className='bg-muted rounded px-2 py-1 text-xs'>
+                                        {column.key}
+                                      </code>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge
+                                        variant={
+                                          column.dataType === 'NUMBER'
+                                            ? 'default'
+                                            : column.dataType === 'FORMULA'
+                                              ? 'outline'
+                                              : 'secondary'
+                                        }
+                                      >
+                                        {column.dataType}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell>
+                                      {column.isRequired ? (
+                                        <Badge variant='destructive'>Yes</Badge>
+                                      ) : (
+                                        <span className='text-muted-foreground'>
+                                          No
+                                        </span>
+                                      )}
+                                    </TableCell>
+                                    <TableCell className='max-w-[150px] truncate'>
+                                      {column.formula || '—'}
+                                    </TableCell>
+                                    <TableCell>
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button
+                                            variant='ghost'
+                                            size='icon'
+                                            className='h-8 w-8'
+                                          >
+                                            <MoreHorizontal className='h-4 w-4' />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align='end'>
+                                          <DropdownMenuItem
+                                            onClick={() =>
+                                              handleEditColumn(column)
+                                            }
+                                          >
+                                            <Pencil className='mr-2 h-4 w-4' />
+                                            Edit
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem
+                                            onClick={() =>
+                                              handleDeleteClick(
+                                                'column',
+                                                column
+                                              )
+                                            }
+                                            className='text-destructive focus:text-destructive'
+                                          >
+                                            <Trash2 className='mr-2 h-4 w-4' />
+                                            Delete
+                                          </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -1012,6 +1309,7 @@ export default function TemplateBuilder({
         onSubmit={handleColumnSubmit}
         initialData={editingColumn}
         availableColumns={columns}
+        blocks={blocks}
         isLoading={isColumnLoading}
         error={columnError}
       />

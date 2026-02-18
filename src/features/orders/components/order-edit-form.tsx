@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { getOrder, getTemplate, updateOrderValues } from '@/lib/api/services';
+import { getOrder, updateOrderValues } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
   OrderWithDetails,
@@ -82,6 +82,8 @@ type OrderTemplateEntry = {
   templateId: string;
   parentOrderTemplateId: string | null;
   template: TemplateWithDetails;
+  /** true when the product template has no corresponding order-template yet */
+  isNew?: boolean;
 };
 
 // =============================================================================
@@ -151,7 +153,7 @@ export default function OrderEditForm({
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // ──────────────────────────────────────────────────────────────────────
-  // FETCH ORDER + TEMPLATES
+  // FETCH ORDER (single API call — no separate getTemplate calls)
   // ──────────────────────────────────────────────────────────────────────
   const fetchOrder = useCallback(async () => {
     setIsLoading(true);
@@ -160,111 +162,129 @@ export default function OrderEditForm({
       const orderData = await getOrder(companyId, orderId);
       setOrder(orderData);
 
-      if (orderData.templates && orderData.templates.length > 0) {
-        // Deduplicate getTemplate calls
-        const templateCache: Record<string, TemplateWithDetails> = {};
-        const uniqueTemplateIds = Array.from(
-          new Set(orderData.templates.map((t) => t.templateId))
-        );
-
-        const tmplPromises = uniqueTemplateIds.map(async (templateId) => {
-          const full = await getTemplate(
-            companyId,
-            orderData.productId,
-            templateId
-          );
-          templateCache[templateId] = full;
-        });
-        await Promise.all(tmplPromises);
-
-        // Build state keyed by orderTemplateId
-        const loadedEntries: OrderTemplateEntry[] = [];
-        const loadedValues: Record<string, TemplateValuesMap> = {};
-        const loadedExtraValues: Record<string, ExtraValuesMap> = {};
-        const valueIdMap: Record<string, Record<string, string>> = {};
-        const extraValueIdMap: Record<string, Record<string, string>> = {};
-        const discountMap: Record<
-          string,
-          { discountType: DiscountType; discountValue: string }
-        > = {};
-
-        const processTemplate = (
-          tmplData: OrderTemplateData,
-          parentOrderTemplateId: string | null
-        ) => {
-          const orderTemplateId = tmplData.id;
-          const fullTemplate = templateCache[tmplData.templateId];
-
-          if (!fullTemplate) return;
-
-          loadedEntries.push({
-            orderTemplateId,
-            templateId: tmplData.templateId,
-            parentOrderTemplateId,
-            template: fullTemplate
-          });
-
-          // Map main values
-          const valuesMap: TemplateValuesMap = {};
-          const vIdMap: Record<string, string> = {};
-          (tmplData.values || []).forEach((v) => {
-            if (!valuesMap[v.rowId]) {
-              valuesMap[v.rowId] = {};
-            }
-            valuesMap[v.rowId][v.columnId] = v.value ?? v.calculatedValue ?? '';
-            vIdMap[`${v.rowId}-${v.columnId}`] = v.id;
-          });
-          loadedValues[orderTemplateId] = valuesMap;
-          valueIdMap[orderTemplateId] = vIdMap;
-
-          // Map extra values
-          const extValMap: ExtraValuesMap = {};
-          const evIdMap: Record<string, string> = {};
-          (tmplData.extraValues || []).forEach((ev) => {
-            extValMap[ev.templateExtraFieldId] = {
-              value: ev.value,
-              orderExtraValueId: ev.id,
-              orderIndex: ev.orderIndex
-            };
-            evIdMap[ev.templateExtraFieldId] = ev.id;
-          });
-          loadedExtraValues[orderTemplateId] = extValMap;
-          extraValueIdMap[orderTemplateId] = evIdMap;
-
-          // Extract discount from summary
-          const rawSummary = tmplData.summary;
-          if (rawSummary) {
-            discountMap[orderTemplateId] = {
-              discountType:
-                (rawSummary.discountType as DiscountType) || 'PERCENT',
-              discountValue: rawSummary.discount ?? '0'
-            };
-          } else {
-            discountMap[orderTemplateId] = {
-              discountType: 'PERCENT',
-              discountValue: '0'
-            };
-          }
-
-          // Process children recursively
-          if (tmplData.children && tmplData.children.length > 0) {
-            tmplData.children.forEach((child) => {
-              processTemplate(child, orderTemplateId);
-            });
-          }
-        };
-
-        orderData.templates.forEach((tmplData: OrderTemplateData) => {
-          processTemplate(tmplData, null);
-        });
-
-        setEntries(loadedEntries);
-        setTemplateValues(loadedValues);
-        setExtraValues(loadedExtraValues);
-        setOriginalValueIds(valueIdMap);
-        setOriginalExtraValueIds(extraValueIdMap);
-        setTemplateDiscounts(discountMap);
+      // ── Build template cache from product.templates ────────────────
+      const templateCache: Record<string, TemplateWithDetails> = {};
+      const productTemplates = (orderData.product?.templates ||
+        []) as TemplateWithDetails[];
+      for (const tmpl of productTemplates) {
+        templateCache[tmpl.id] = tmpl;
       }
+
+      // ── State accumulators ─────────────────────────────────────────
+      const loadedEntries: OrderTemplateEntry[] = [];
+      const loadedValues: Record<string, TemplateValuesMap> = {};
+      const loadedExtraValues: Record<string, ExtraValuesMap> = {};
+      const valueIdMap: Record<string, Record<string, string>> = {};
+      const extraValueIdMap: Record<string, Record<string, string>> = {};
+      const discountMap: Record<
+        string,
+        { discountType: DiscountType; discountValue: string }
+      > = {};
+
+      /** Track which product templateIds already have order data */
+      const processedTemplateIds = new Set<string>();
+
+      // ── Recursive processor for order-template entries ─────────────
+      const processTemplate = (
+        tmplData: OrderTemplateData,
+        parentOrderTemplateId: string | null
+      ) => {
+        const orderTemplateId = tmplData.id;
+        const fullTemplate = templateCache[tmplData.templateId];
+        if (!fullTemplate) return;
+
+        processedTemplateIds.add(tmplData.templateId);
+
+        loadedEntries.push({
+          orderTemplateId,
+          templateId: tmplData.templateId,
+          parentOrderTemplateId,
+          template: fullTemplate
+        });
+
+        // Map main values
+        const valuesMap: TemplateValuesMap = {};
+        const vIdMap: Record<string, string> = {};
+        (tmplData.values || []).forEach((v) => {
+          if (!valuesMap[v.rowId]) {
+            valuesMap[v.rowId] = {};
+          }
+          valuesMap[v.rowId][v.columnId] = v.value ?? v.calculatedValue ?? '';
+          vIdMap[`${v.rowId}-${v.columnId}`] = v.id;
+        });
+        loadedValues[orderTemplateId] = valuesMap;
+        valueIdMap[orderTemplateId] = vIdMap;
+
+        // Map extra values
+        const extValMap: ExtraValuesMap = {};
+        const evIdMap: Record<string, string> = {};
+        (tmplData.extraValues || []).forEach((ev) => {
+          extValMap[ev.templateExtraFieldId] = {
+            value: ev.value,
+            orderExtraValueId: ev.id,
+            orderIndex: ev.orderIndex
+          };
+          evIdMap[ev.templateExtraFieldId] = ev.id;
+        });
+        loadedExtraValues[orderTemplateId] = extValMap;
+        extraValueIdMap[orderTemplateId] = evIdMap;
+
+        // Extract discount from summary
+        const rawSummary = tmplData.summary;
+        if (rawSummary) {
+          discountMap[orderTemplateId] = {
+            discountType:
+              (rawSummary.discountType as DiscountType) || 'PERCENT',
+            discountValue: rawSummary.discount ?? '0'
+          };
+        } else {
+          discountMap[orderTemplateId] = {
+            discountType: 'PERCENT',
+            discountValue: '0'
+          };
+        }
+
+        // Process children recursively
+        if (tmplData.children && tmplData.children.length > 0) {
+          tmplData.children.forEach((child) => {
+            processTemplate(child, orderTemplateId);
+          });
+        }
+      };
+
+      // ── Process existing order templates ───────────────────────────
+      (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
+        processTemplate(tmplData, null);
+      });
+
+      // ── Add entries for product templates without order data yet ───
+      for (const tmpl of productTemplates) {
+        if (!processedTemplateIds.has(tmpl.id)) {
+          const tempKey = `new_${tmpl.id}`;
+          loadedEntries.push({
+            orderTemplateId: tempKey,
+            templateId: tmpl.id,
+            parentOrderTemplateId: null,
+            template: tmpl,
+            isNew: true
+          });
+          loadedValues[tempKey] = {};
+          loadedExtraValues[tempKey] = {};
+          valueIdMap[tempKey] = {};
+          extraValueIdMap[tempKey] = {};
+          discountMap[tempKey] = {
+            discountType: 'PERCENT',
+            discountValue: '0'
+          };
+        }
+      }
+
+      setEntries(loadedEntries);
+      setTemplateValues(loadedValues);
+      setExtraValues(loadedExtraValues);
+      setOriginalValueIds(valueIdMap);
+      setOriginalExtraValueIds(extraValueIdMap);
+      setTemplateDiscounts(discountMap);
     } catch (err) {
       setError(getError(err));
     } finally {
@@ -453,13 +473,15 @@ export default function OrderEditForm({
           });
         });
 
-        // Find deleted values
+        // Find deleted values (only for existing entries)
         const deleteOrderValueIds: string[] = [];
-        Object.entries(origIds).forEach(([, valueId]) => {
-          if (!usedOriginalIds.has(valueId)) {
-            deleteOrderValueIds.push(valueId);
-          }
-        });
+        if (!entry.isNew) {
+          Object.entries(origIds).forEach(([, valueId]) => {
+            if (!usedOriginalIds.has(valueId)) {
+              deleteOrderValueIds.push(valueId);
+            }
+          });
+        }
 
         // ── Build extra values ───────────────────────────────────────
         const extravalues: OrderExtraValuePayload[] = [];
@@ -485,13 +507,15 @@ export default function OrderEditForm({
           }
         });
 
-        // Find deleted extra values
+        // Find deleted extra values (only for existing entries)
         const deleteOrderExtraValueIds: string[] = [];
-        Object.entries(origExIds).forEach(([, exValueId]) => {
-          if (!usedExtraIds.has(exValueId)) {
-            deleteOrderExtraValueIds.push(exValueId);
-          }
-        });
+        if (!entry.isNew) {
+          Object.entries(origExIds).forEach(([, exValueId]) => {
+            if (!usedExtraIds.has(exValueId)) {
+              deleteOrderExtraValueIds.push(exValueId);
+            }
+          });
+        }
 
         // ── Build summary ────────────────────────────────────────────
         const discount = templateDiscounts[entry.orderTemplateId] || {
@@ -512,7 +536,8 @@ export default function OrderEditForm({
 
         const payload: UpdateOrderValuesTemplatePayload = {
           templateId: entry.templateId,
-          orderTemplateId: entry.orderTemplateId,
+          // Only include orderTemplateId for existing entries
+          ...(entry.isNew ? {} : { orderTemplateId: entry.orderTemplateId }),
           parentOrderTemplateId: entry.parentOrderTemplateId,
           values,
           summary
@@ -673,6 +698,14 @@ export default function OrderEditForm({
         <CardContent>
           <div className='grid grid-cols-2 gap-4 text-sm md:grid-cols-4'>
             <div>
+              <span className='text-muted-foreground'>Product Name</span>
+              <p className='font-medium'>{order.product?.name ?? '-'}</p>
+            </div>
+            <div>
+              <span className='text-muted-foreground'>Customer Name</span>
+              <p className='font-medium'>{order.customer?.name ?? '-'}</p>
+            </div>
+            <div>
               <span className='text-muted-foreground'>Order No</span>
               <p className='font-medium'>{order.orderNo}</p>
             </div>
@@ -763,6 +796,13 @@ export default function OrderEditForm({
                           — {childEntries.length} child
                           {childEntries.length !== 1 ? 'ren' : ''}
                         </span>
+                      </Badge>
+                    )}
+
+                    {/* New template indicator */}
+                    {parent.isNew && (
+                      <Badge variant='secondary' className='text-xs'>
+                        New — no existing values
                       </Badge>
                     )}
 

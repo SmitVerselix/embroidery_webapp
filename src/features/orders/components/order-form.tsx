@@ -8,7 +8,6 @@ import * as z from 'zod';
 import {
   getProducts,
   getProduct,
-  getTemplate,
   createOrder,
   getOrders,
   getOrder,
@@ -323,6 +322,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   // ──────────────────────────────────────────────────────────────────────
   // FETCH TEMPLATES WHEN PRODUCT IS MANUALLY SELECTED
+  // Uses only getProduct — no separate getTemplate calls needed
   // ──────────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (isReferenceModeRef.current) return;
@@ -352,16 +352,15 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       try {
         const product = await getProduct(companyId, selectedProductId);
 
-        if (!product.templates || product.templates.length === 0) {
+        // product.templates already includes full details (rows, columns, extra, etc.)
+        const fullTemplates = (product.templates ||
+          []) as TemplateWithDetails[];
+
+        if (fullTemplates.length === 0) {
           setTemplates([]);
           setIsLoadingTemplates(false);
           return;
         }
-
-        const templatePromises = (product.templates as { id: string }[]).map(
-          (t) => getTemplate(companyId, selectedProductId, t.id)
-        );
-        const fullTemplates = await Promise.all(templatePromises);
 
         setTemplates(fullTemplates);
 
@@ -412,6 +411,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   // ──────────────────────────────────────────────────────────────────────
   // SELECT REFERENCE ORDER → fetch full data, load templates, pre-fill
+  // Uses only getProduct — no separate getTemplate calls needed
   // ──────────────────────────────────────────────────────────────────────
   const handleSelectReferenceOrder = useCallback(
     async (order: Order) => {
@@ -433,22 +433,16 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         setValue('productId', orderData.productId);
 
         // 3) Load full template definitions from the product
+        //    getProduct already returns templates with rows, columns, extra, etc.
         const product = await getProduct(companyId, orderData.productId);
         const templateCache: Record<string, TemplateWithDetails> = {};
+        const fullTemplates = (product.templates ||
+          []) as TemplateWithDetails[];
 
-        if (product.templates && product.templates.length > 0) {
-          const tmplPromises = (product.templates as { id: string }[]).map(
-            async (t) => {
-              const full = await getTemplate(
-                companyId,
-                orderData.productId,
-                t.id
-              );
-              templateCache[full.id] = full;
-              return full;
-            }
-          );
-          const fullTemplates = await Promise.all(tmplPromises);
+        if (fullTemplates.length > 0) {
+          fullTemplates.forEach((tmpl) => {
+            templateCache[tmpl.id] = tmpl;
+          });
           setTemplates(fullTemplates);
         } else {
           setTemplates([]);

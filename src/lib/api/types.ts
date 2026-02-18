@@ -780,3 +780,73 @@ export type UpdateCustomerData = {
   name?: string;
   referenceCode?: string;
 };
+
+// =============================================================================
+// MEMBER TYPES
+// =============================================================================
+
+export type MemberStatus = 'ACTIVE' | 'INVITED' | 'REMOVED';
+
+export const MEMBER_STATUSES: {
+  label: string;
+  value: MemberStatus;
+  color: string;
+}[] = [
+  { label: 'Active', value: 'ACTIVE', color: 'default' },
+  { label: 'Invited', value: 'INVITED', color: 'secondary' },
+  { label: 'Removed', value: 'REMOVED', color: 'destructive' }
+];
+
+export type MemberRole = 'owner' | 'admin' | 'member';
+
+export const MEMBER_ROLES: { label: string; value: MemberRole }[] = [
+  { label: 'Owner', value: 'owner' },
+  { label: 'Admin', value: 'admin' },
+  { label: 'Member', value: 'member' }
+];
+
+export type MemberUser = {
+  id: string;
+  name: string | null;
+  email: string;
+  profileImage: string | null;
+};
+
+export type Member = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  status: MemberStatus;
+  invitedAt: string | null;
+  joinedAt: string | null;
+  inviteExpiry: string | null;
+  createdAt: string;
+  updatedAt: string;
+  userId: string;
+  roleId: string;
+  invitedBy: string | null;
+  companyId: string;
+  user: MemberUser;
+  role: Role;
+};
+
+export type MemberListResponse = {
+  count: number;
+  rows: Member[];
+};
+
+export type MemberListParams = {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+};
+
+export type InviteMemberData = {
+  email: string;
+  role: MemberRole;
+};

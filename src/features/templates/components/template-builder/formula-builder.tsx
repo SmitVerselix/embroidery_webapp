@@ -1,21 +1,3 @@
-/**
- * Component: FormulaBuilder (ENHANCED)
- * Description: Visual formula builder with full operations, robust column selection, and validation
- *
- * Changes from original:
- * - Added modulo (%) and power (^) operators
- * - Added ROUND, ABS, CEIL, FLOOR, MIN, MAX modifier/function types
- * - Better column selection: validates on mount, highlights invalid refs
- * - Duplicate column detection in validation
- * - Division-by-zero warning
- * - Proper SelectValue rendering for selected columns
- * - Comprehensive validation for every edge case
- *
- * FIX: stringifyFormula now produces a human-readable formula string using column keys
- *      (e.g. "qty_0 × rate_0") instead of JSON.
- *      parseFormula updated to handle both old JSON format and new string format.
- */
-
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -27,7 +9,7 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
+  SelectValue
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -40,7 +22,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowUpDown,
-  Sigma,
+  Sigma
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { TemplateColumn } from '@/lib/api/types';
@@ -89,12 +71,12 @@ const OPERATORS: { label: string; value: Operator; symbol: string }[] = [
   { label: 'Multiply', value: '*', symbol: '×' },
   { label: 'Divide', value: '/', symbol: '÷' },
   { label: 'Modulo', value: '%', symbol: '%' },
-  { label: 'Power', value: '^', symbol: '^' },
+  { label: 'Power', value: '^', symbol: '^' }
 ];
 
 const MODIFIER_OPERATORS: { label: string; value: '+' | '-' }[] = [
   { label: 'Add', value: '+' },
-  { label: 'Subtract', value: '-' },
+  { label: 'Subtract', value: '-' }
 ];
 
 const MODIFIER_TYPES: {
@@ -122,7 +104,7 @@ const MODIFIER_TYPES: {
     valueMin: 0,
     valueMax: 1000,
     valueStep: 1,
-    defaultValue: 10,
+    defaultValue: 10
   },
   {
     value: 'fixed',
@@ -133,7 +115,7 @@ const MODIFIER_TYPES: {
     hasValue: true,
     valueLabel: 'Amount',
     valueStep: 0.01,
-    defaultValue: 100,
+    defaultValue: 100
   },
   {
     value: 'round',
@@ -147,7 +129,7 @@ const MODIFIER_TYPES: {
     valueMin: 0,
     valueMax: 10,
     valueStep: 1,
-    defaultValue: 2,
+    defaultValue: 2
   },
   {
     value: 'abs',
@@ -156,7 +138,7 @@ const MODIFIER_TYPES: {
     icon: Sigma,
     hasOperator: false,
     hasValue: false,
-    defaultValue: 0,
+    defaultValue: 0
   },
   {
     value: 'ceil',
@@ -165,7 +147,7 @@ const MODIFIER_TYPES: {
     icon: ArrowUpDown,
     hasOperator: false,
     hasValue: false,
-    defaultValue: 0,
+    defaultValue: 0
   },
   {
     value: 'floor',
@@ -174,7 +156,7 @@ const MODIFIER_TYPES: {
     icon: ArrowUpDown,
     hasOperator: false,
     hasValue: false,
-    defaultValue: 0,
+    defaultValue: 0
   },
   {
     value: 'min',
@@ -185,7 +167,7 @@ const MODIFIER_TYPES: {
     hasValue: true,
     valueLabel: 'Min value',
     valueStep: 0.01,
-    defaultValue: 0,
+    defaultValue: 0
   },
   {
     value: 'max',
@@ -196,8 +178,8 @@ const MODIFIER_TYPES: {
     hasValue: true,
     valueLabel: 'Max value',
     valueStep: 0.01,
-    defaultValue: 99999,
-  },
+    defaultValue: 99999
+  }
 ];
 
 // =============================================================================
@@ -219,7 +201,7 @@ const symbolToOperator = (symbol: string): Operator | null => {
     '×': '*',
     '÷': '/',
     '%': '%',
-    '^': '^',
+    '^': '^'
   };
   return map[symbol] ?? null;
 };
@@ -248,7 +230,9 @@ const getModifierConfig = (type: ModifierType) =>
  *   - Legacy JSON format: '{"steps":["qty_0"],"operators":["+"],"modifiers":[...]}'
  *   - New readable string format: "qty_0 × rate_0"
  */
-export const parseFormula = (formulaString: string | null): FormulaData | null => {
+export const parseFormula = (
+  formulaString: string | null
+): FormulaData | null => {
   if (!formulaString) return null;
 
   const trimmed = formulaString.trim();
@@ -262,15 +246,15 @@ export const parseFormula = (formulaString: string | null): FormulaData | null =
         return {
           steps: (parsed.steps as string[]).map((columnKey: string) => ({
             id: generateId(),
-            columnKey,
+            columnKey
           })),
           operators: parsed.operators || [],
           modifiers: (parsed.modifiers || []).map(
             (mod: Omit<FormulaModifier, 'id'>) => ({
               id: generateId(),
-              ...mod,
+              ...mod
             })
-          ),
+          )
         };
       }
     } catch {
@@ -313,7 +297,7 @@ function parseFormulaString(formula: string): FormulaData {
         id: generateId(),
         type: 'round',
         operator: '+',
-        value: parseInt(roundMatch[2], 10),
+        value: parseInt(roundMatch[2], 10)
       });
       expr = roundMatch[1].trim();
       changed = true;
@@ -327,7 +311,7 @@ function parseFormulaString(formula: string): FormulaData {
         id: generateId(),
         type: 'abs',
         operator: '+',
-        value: 0,
+        value: 0
       });
       expr = absMatch[1].trim();
       changed = true;
@@ -341,7 +325,7 @@ function parseFormulaString(formula: string): FormulaData {
         id: generateId(),
         type: 'ceil',
         operator: '+',
-        value: 0,
+        value: 0
       });
       expr = ceilMatch[1].trim();
       changed = true;
@@ -355,7 +339,7 @@ function parseFormulaString(formula: string): FormulaData {
         id: generateId(),
         type: 'floor',
         operator: '+',
-        value: 0,
+        value: 0
       });
       expr = floorMatch[1].trim();
       changed = true;
@@ -369,7 +353,7 @@ function parseFormulaString(formula: string): FormulaData {
         id: generateId(),
         type: 'min',
         operator: '+',
-        value: parseFloat(maxMatch[2]),
+        value: parseFloat(maxMatch[2])
       });
       expr = maxMatch[1].trim();
       changed = true;
@@ -383,7 +367,7 @@ function parseFormulaString(formula: string): FormulaData {
         id: generateId(),
         type: 'max',
         operator: '+',
-        value: parseFloat(minMatch[2]),
+        value: parseFloat(minMatch[2])
       });
       expr = minMatch[1].trim();
       changed = true;
@@ -405,7 +389,7 @@ function parseFormulaString(formula: string): FormulaData {
         id: generateId(),
         type: 'percentage',
         operator: pctMatch[2] === '+' ? '+' : '-',
-        value: parseFloat(pctMatch[3]),
+        value: parseFloat(pctMatch[3])
       });
       expr = pctMatch[1].trim();
       changed = true;
@@ -420,7 +404,7 @@ function parseFormulaString(formula: string): FormulaData {
         id: generateId(),
         type: 'fixed',
         operator: fixedMatch[2] === '+' ? '+' : '-',
-        value: parseFloat(fixedMatch[3]),
+        value: parseFloat(fixedMatch[3])
       });
       expr = fixedMatch[1].trim();
       changed = true;
@@ -463,7 +447,7 @@ function parseFormulaString(formula: string): FormulaData {
     } else if (token) {
       steps.push({
         id: generateId(),
-        columnKey: token,
+        columnKey: token
       });
     }
   }
@@ -619,7 +603,10 @@ export const validateFormula = (
   }
 
   // Check operators count matches steps
-  if (data.steps.length > 1 && data.operators.length !== data.steps.length - 1) {
+  if (
+    data.steps.length > 1 &&
+    data.operators.length !== data.steps.length - 1
+  ) {
     return 'Missing operators between columns';
   }
 
@@ -647,7 +634,10 @@ export const validateFormula = (
       if (mod.type === 'percentage' && (mod.value < 0 || mod.value > 1000)) {
         return 'Percentage must be between 0 and 1000';
       }
-      if (mod.type === 'round' && (mod.value < 0 || mod.value > 10 || !Number.isInteger(mod.value))) {
+      if (
+        mod.type === 'round' &&
+        (mod.value < 0 || mod.value > 10 || !Number.isInteger(mod.value))
+      ) {
         return 'Round decimals must be a whole number between 0 and 10';
       }
     }
@@ -701,7 +691,7 @@ const cleanFormulaData = (
   return {
     steps: validSteps,
     operators: newOperators,
-    modifiers: data.modifiers,
+    modifiers: data.modifiers
   };
 };
 
@@ -726,7 +716,7 @@ export default function FormulaBuilder({
   onChange,
   availableColumns,
   error,
-  disabled = false,
+  disabled = false
 }: FormulaBuilderProps) {
   const [hasShownInvalidWarning, setHasShownInvalidWarning] = useState(false);
   const [showModifierMenu, setShowModifierMenu] = useState(false);
@@ -774,7 +764,7 @@ export default function FormulaBuilder({
   const addStep = useCallback(() => {
     const newStep: FormulaStep = {
       id: generateId(),
-      columnKey: '',
+      columnKey: ''
     };
 
     const newOperators =
@@ -785,7 +775,7 @@ export default function FormulaBuilder({
     onChange({
       ...value,
       steps: [...value.steps, newStep],
-      operators: newOperators,
+      operators: newOperators
     });
   }, [value, onChange]);
 
@@ -795,7 +785,7 @@ export default function FormulaBuilder({
         ...value,
         steps: value.steps.map((step) =>
           step.id === stepId ? { ...step, columnKey } : step
-        ),
+        )
       });
     },
     [value, onChange]
@@ -818,7 +808,7 @@ export default function FormulaBuilder({
       onChange({
         ...value,
         steps: newSteps,
-        operators: newOperators,
+        operators: newOperators
       });
     },
     [value, onChange]
@@ -830,7 +820,7 @@ export default function FormulaBuilder({
       newOperators[index] = operator;
       onChange({
         ...value,
-        operators: newOperators,
+        operators: newOperators
       });
     },
     [value, onChange]
@@ -861,12 +851,12 @@ export default function FormulaBuilder({
         id: generateId(),
         type,
         operator: config.hasOperator ? '+' : '+',
-        value: config.defaultValue,
+        value: config.defaultValue
       };
 
       onChange({
         ...value,
-        modifiers: [...value.modifiers, newModifier],
+        modifiers: [...value.modifiers, newModifier]
       });
       setShowModifierMenu(false);
     },
@@ -879,7 +869,7 @@ export default function FormulaBuilder({
         ...value,
         modifiers: value.modifiers.map((mod) =>
           mod.id === modifierId ? { ...mod, ...updates } : mod
-        ),
+        )
       });
     },
     [value, onChange]
@@ -889,7 +879,7 @@ export default function FormulaBuilder({
     (modifierId: string) => {
       onChange({
         ...value,
-        modifiers: value.modifiers.filter((mod) => mod.id !== modifierId),
+        modifiers: value.modifiers.filter((mod) => mod.id !== modifierId)
       });
     },
     [value, onChange]
@@ -934,32 +924,47 @@ export default function FormulaBuilder({
     [value.modifiers]
   );
 
+  // Build a lookup map for quick blockIndex resolution
+  const columnBlockMap = useMemo(() => {
+    const map = new Map<string, number>();
+    numberColumns.forEach((col) => map.set(col.key, col.blockIndex));
+    return map;
+  }, [numberColumns]);
+
+  const getColumnBlock = useCallback(
+    (columnKey: string): number | null => {
+      return columnBlockMap.get(columnKey) ?? null;
+    },
+    [columnBlockMap]
+  );
+
   // ==========================================================================
   // RENDER
   // ==========================================================================
 
   return (
-    <div className="space-y-4">
+    <div className='space-y-4'>
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <Calculator className="h-4 w-4 text-muted-foreground" />
-        <Label className="text-sm font-medium">Formula Builder</Label>
+      <div className='flex items-center gap-2'>
+        <Calculator className='text-muted-foreground h-4 w-4' />
+        <Label className='text-sm font-medium'>Formula Builder</Label>
       </div>
 
       {/* Invalid columns warning */}
       {hasInvalidRefs && (
-        <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 rounded-md text-sm border border-amber-200 dark:border-amber-900">
-          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+        <div className='flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-400'>
+          <AlertTriangle className='h-4 w-4 flex-shrink-0' />
           <span>
-            Some column references are no longer available and have been removed.
+            Some column references are no longer available and have been
+            removed.
           </span>
         </div>
       )}
 
       {/* No NUMBER columns warning */}
       {numberColumns.length === 0 && (
-        <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 rounded-md text-sm border border-amber-200 dark:border-amber-900">
-          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+        <div className='flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-400'>
+          <AlertCircle className='h-4 w-4 flex-shrink-0' />
           <span>
             No number columns available. Create NUMBER type columns first to use
             in formulas.
@@ -970,32 +975,32 @@ export default function FormulaBuilder({
       {/* Formula Steps */}
       {numberColumns.length > 0 && (
         <Card>
-          <CardContent className="pt-4 space-y-4">
+          <CardContent className='space-y-4 pt-4'>
             {/* Step 1: Column Selection */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground uppercase tracking-wide">
+            <div className='space-y-3'>
+              <div className='flex items-center justify-between'>
+                <Label className='text-muted-foreground text-xs tracking-wide uppercase'>
                   Select Columns
                 </Label>
                 <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
+                  type='button'
+                  variant='outline'
+                  size='sm'
                   onClick={addStep}
                   disabled={disabled}
-                  className="h-7 text-xs"
+                  className='h-7 text-xs'
                 >
-                  <Plus className="mr-1 h-3 w-3" />
+                  <Plus className='mr-1 h-3 w-3' />
                   Add Column
                 </Button>
               </div>
 
               {value.steps.length === 0 ? (
-                <div className="text-center py-6 text-sm text-muted-foreground border-2 border-dashed rounded-md">
+                <div className='text-muted-foreground rounded-md border-2 border-dashed py-6 text-center text-sm'>
                   Click &quot;Add Column&quot; to start building your formula
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className='space-y-2'>
                   {value.steps.map((step, index) => {
                     const isInvalid =
                       step.columnKey && !isColumnKeyValid(step.columnKey);
@@ -1004,7 +1009,7 @@ export default function FormulaBuilder({
                       : null;
 
                     return (
-                      <div key={step.id} className="flex items-center gap-2">
+                      <div key={step.id} className='flex items-center gap-2'>
                         {/* Operator (not for first step) */}
                         {index > 0 && (
                           <Select
@@ -1014,17 +1019,17 @@ export default function FormulaBuilder({
                             }
                             disabled={disabled}
                           >
-                            <SelectTrigger className="w-[90px] h-9">
+                            <SelectTrigger className='h-9 w-[90px]'>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
                               {OPERATORS.map((op) => (
                                 <SelectItem key={op.value} value={op.value}>
-                                  <span className="flex items-center gap-2">
-                                    <span className="w-4 text-center font-mono">
+                                  <span className='flex items-center gap-2'>
+                                    <span className='w-4 text-center font-mono'>
                                       {op.symbol}
                                     </span>
-                                    <span className="text-muted-foreground text-xs">
+                                    <span className='text-muted-foreground text-xs'>
                                       {op.label}
                                     </span>
                                   </span>
@@ -1042,26 +1047,32 @@ export default function FormulaBuilder({
                         >
                           <SelectTrigger
                             className={cn(
-                              'flex-1 h-9',
+                              'h-9 flex-1',
                               !step.columnKey && 'text-muted-foreground',
                               isInvalid && 'border-destructive'
                             )}
                           >
-                            <SelectValue placeholder="Select column">
+                            <SelectValue placeholder='Select column'>
                               {step.columnKey ? (
                                 isInvalid ? (
-                                  <span className="flex items-center gap-2 text-destructive">
-                                    <AlertTriangle className="h-3 w-3" />
+                                  <span className='text-destructive flex items-center gap-2'>
+                                    <AlertTriangle className='h-3 w-3' />
                                     Invalid: {step.columnKey}
                                   </span>
                                 ) : (
-                                  <span className="flex items-center gap-2">
+                                  <span className='flex items-center gap-2'>
                                     <span>{selectedLabel}</span>
                                     <Badge
-                                      variant="outline"
-                                      className="text-[10px] px-1 py-0"
+                                      variant='outline'
+                                      className='px-1 py-0 text-[10px]'
                                     >
                                       {step.columnKey}
+                                    </Badge>
+                                    <Badge
+                                      variant='secondary'
+                                      className='px-1 py-0 text-[10px]'
+                                    >
+                                      B{getColumnBlock(step.columnKey)}
                                     </Badge>
                                   </span>
                                 )
@@ -1072,19 +1083,25 @@ export default function FormulaBuilder({
                           </SelectTrigger>
                           <SelectContent>
                             {numberColumns.length === 0 ? (
-                              <div className="px-2 py-3 text-sm text-muted-foreground text-center">
+                              <div className='text-muted-foreground px-2 py-3 text-center text-sm'>
                                 No columns available
                               </div>
                             ) : (
                               numberColumns.map((col) => (
                                 <SelectItem key={col.id} value={col.key}>
-                                  <span className="flex items-center gap-2">
+                                  <span className='flex items-center gap-2'>
                                     <span>{col.label}</span>
                                     <Badge
-                                      variant="outline"
-                                      className="text-[10px] px-1 py-0"
+                                      variant='outline'
+                                      className='px-1.5 py-0 text-[10px]'
                                     >
                                       {col.key}
+                                    </Badge>
+                                    <Badge
+                                      variant='secondary'
+                                      className='px-1.5 py-0 text-[10px]'
+                                    >
+                                      Block {col.blockIndex}
                                     </Badge>
                                   </span>
                                 </SelectItem>
@@ -1095,14 +1112,14 @@ export default function FormulaBuilder({
 
                         {/* Remove Button */}
                         <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
+                          type='button'
+                          variant='ghost'
+                          size='icon'
                           onClick={() => removeStep(step.id)}
                           disabled={disabled}
-                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                          className='text-muted-foreground hover:text-destructive h-9 w-9'
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className='h-4 w-4' />
                         </Button>
                       </div>
                     );
@@ -1113,21 +1130,21 @@ export default function FormulaBuilder({
 
             {/* Step 2: Modifiers */}
             {hasSteps && (
-              <div className="space-y-3 pt-3 border-t">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">
+              <div className='space-y-3 border-t pt-3'>
+                <div className='flex items-center justify-between'>
+                  <Label className='text-muted-foreground text-xs tracking-wide uppercase'>
                     Additional Operations (Optional)
                   </Label>
-                  <div className="relative">
+                  <div className='relative'>
                     <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
+                      type='button'
+                      variant='outline'
+                      size='sm'
                       onClick={() => setShowModifierMenu(!showModifierMenu)}
                       disabled={disabled}
-                      className="h-7 text-xs"
+                      className='h-7 text-xs'
                     >
-                      <Plus className="mr-1 h-3 w-3" />
+                      <Plus className='mr-1 h-3 w-3' />
                       Add Operation
                     </Button>
 
@@ -1136,17 +1153,17 @@ export default function FormulaBuilder({
                       <>
                         {/* Backdrop to close menu */}
                         <div
-                          className="fixed inset-0 z-40"
+                          className='fixed inset-0 z-40'
                           onClick={() => setShowModifierMenu(false)}
                         />
-                        <div className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-md shadow-md p-1 w-[240px]">
+                        <div className='bg-popover absolute top-full right-0 z-50 mt-1 w-[240px] rounded-md border p-1 shadow-md'>
                           {MODIFIER_TYPES.map((modType) => {
                             const isSingleUse = [
                               'abs',
                               'ceil',
                               'floor',
                               'min',
-                              'max',
+                              'max'
                             ].includes(modType.value);
                             const isUsed = usedModifierTypes.has(modType.value);
                             const isDisabled = isSingleUse && isUsed;
@@ -1154,21 +1171,21 @@ export default function FormulaBuilder({
                             return (
                               <button
                                 key={modType.value}
-                                type="button"
+                                type='button'
                                 className={cn(
-                                  'w-full text-left px-3 py-2 text-sm rounded-sm hover:bg-accent hover:text-accent-foreground',
+                                  'hover:bg-accent hover:text-accent-foreground w-full rounded-sm px-3 py-2 text-left text-sm',
                                   isDisabled &&
-                                    'opacity-50 cursor-not-allowed hover:bg-transparent hover:text-inherit'
+                                    'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-inherit'
                                 )}
                                 onClick={() => {
                                   if (!isDisabled) addModifier(modType.value);
                                 }}
                                 disabled={isDisabled}
                               >
-                                <div className="font-medium">
+                                <div className='font-medium'>
                                   {modType.label}
                                 </div>
-                                <div className="text-xs text-muted-foreground">
+                                <div className='text-muted-foreground text-xs'>
                                   {modType.description}
                                   {isDisabled && ' (already added)'}
                                 </div>
@@ -1182,7 +1199,7 @@ export default function FormulaBuilder({
                 </div>
 
                 {value.modifiers.length > 0 && (
-                  <div className="space-y-2">
+                  <div className='space-y-2'>
                     {value.modifiers.map((mod) => {
                       const config = getModifierConfig(mod.type);
                       if (!config) return null;
@@ -1190,12 +1207,12 @@ export default function FormulaBuilder({
                       return (
                         <div
                           key={mod.id}
-                          className="flex items-center gap-2 flex-wrap"
+                          className='flex flex-wrap items-center gap-2'
                         >
                           {/* Type Badge */}
                           <Badge
-                            variant="secondary"
-                            className="h-9 px-3 shrink-0"
+                            variant='secondary'
+                            className='h-9 shrink-0 px-3'
                           >
                             {config.label}
                           </Badge>
@@ -1206,12 +1223,12 @@ export default function FormulaBuilder({
                               value={mod.operator}
                               onValueChange={(val) =>
                                 updateModifier(mod.id, {
-                                  operator: val as '+' | '-',
+                                  operator: val as '+' | '-'
                                 })
                               }
                               disabled={disabled}
                             >
-                              <SelectTrigger className="w-[110px] h-9">
+                              <SelectTrigger className='h-9 w-[110px]'>
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -1228,24 +1245,24 @@ export default function FormulaBuilder({
 
                           {/* Value (if applicable) */}
                           {config.hasValue && (
-                            <div className="flex items-center gap-1">
+                            <div className='flex items-center gap-1'>
                               <Input
-                                type="number"
+                                type='number'
                                 value={mod.value}
                                 onChange={(e) =>
                                   updateModifier(mod.id, {
-                                    value: parseFloat(e.target.value) || 0,
+                                    value: parseFloat(e.target.value) || 0
                                   })
                                 }
                                 disabled={disabled}
-                                className="w-[100px] h-9"
+                                className='h-9 w-[100px]'
                                 min={config.valueMin}
                                 max={config.valueMax}
                                 step={config.valueStep}
                                 placeholder={config.valuePlaceholder}
                               />
                               {mod.type === 'percentage' && (
-                                <span className="text-sm text-muted-foreground">
+                                <span className='text-muted-foreground text-sm'>
                                   %
                                 </span>
                               )}
@@ -1254,14 +1271,14 @@ export default function FormulaBuilder({
 
                           {/* Remove Button */}
                           <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
+                            type='button'
+                            variant='ghost'
+                            size='icon'
                             onClick={() => removeModifier(mod.id)}
                             disabled={disabled}
-                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                            className='text-muted-foreground hover:text-destructive h-9 w-9'
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className='h-4 w-4' />
                           </Button>
                         </div>
                       );
@@ -1276,20 +1293,20 @@ export default function FormulaBuilder({
 
       {/* Formula Preview */}
       {preview && (
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">
+        <div className='space-y-1'>
+          <Label className='text-muted-foreground text-xs'>
             Formula Preview
           </Label>
-          <div className="p-3 bg-muted rounded-md font-mono text-sm break-all">
+          <div className='bg-muted rounded-md p-3 font-mono text-sm break-all'>
             {preview}
-          </div>  
+          </div>
         </div>
       )}
 
       {/* Error Display */}
       {displayError && (
-        <div className="flex items-center gap-2 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+        <div className='text-destructive flex items-center gap-2 text-sm'>
+          <AlertCircle className='h-4 w-4 flex-shrink-0' />
           <span>{displayError}</span>
         </div>
       )}
@@ -1304,5 +1321,5 @@ export default function FormulaBuilder({
 export const createEmptyFormula = (): FormulaData => ({
   steps: [],
   operators: [],
-  modifiers: [],
+  modifiers: []
 });

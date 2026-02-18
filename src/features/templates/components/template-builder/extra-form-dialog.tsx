@@ -1,8 +1,3 @@
-/**
- * Component: ExtraFormDialog
- * Description: Dialog for creating/editing template extras (header, footer, media fields)
- */
-
 'use client';
 
 import { useState, useEffect } from 'react';

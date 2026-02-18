@@ -114,6 +114,8 @@ type OrderTemplateEntry = {
   parentOrderTemplateId: string | null;
   isChild: boolean;
   summary: OrderTemplateSummary | null;
+  /** true when the product template has no corresponding order-template yet */
+  isNew?: boolean;
 };
 
 // =============================================================================
@@ -141,7 +143,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     Record<string, ExtraValuesMap>
   >({});
   const [isLoading, setIsLoading] = useState(true);
-  const [isDuplicating, setIsDuplicating] = useState(false);
+  /** Track which templateIds are currently being duplicated */
+  const [duplicatingIds, setDuplicatingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   // ── Zoom & Pan state ──────────────────────────────────────────────────
@@ -157,10 +160,14 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const lastPinchDist = useRef<number | null>(null);
 
   // ──────────────────────────────────────────────────────────────────────
-  // PROCESS TEMPLATE DATA (handles parent + children)
+  // PROCESS TEMPLATE DATA (handles parent + children + missing templates)
   // ──────────────────────────────────────────────────────────────────────
   const processOrderTemplates = useCallback((orderData: OrderWithDetails) => {
-    if (!orderData.templates || orderData.templates.length === 0) {
+    const productTemplates = (orderData.product?.templates ||
+      []) as TemplateWithDetails[];
+
+    // Nothing to show if the product itself has no templates
+    if (productTemplates.length === 0) {
       setEntries([]);
       setTemplateValues({});
       setExtraValues({});
@@ -168,8 +175,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     }
 
     const templateCache: Record<string, TemplateWithDetails> = {};
-    const productTemplates = (orderData.product?.templates ||
-      []) as TemplateWithDetails[];
     for (const tmpl of productTemplates) {
       templateCache[tmpl.id] = tmpl;
     }
@@ -177,6 +182,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     const loadedEntries: OrderTemplateEntry[] = [];
     const loadedValues: Record<string, TemplateValuesMap> = {};
     const loadedExtraValues: Record<string, ExtraValuesMap> = {};
+
+    /** Track which product templateIds already have order data */
+    const processedTemplateIds = new Set<string>();
 
     const processTemplate = (
       tmplData: OrderTemplateData,
@@ -186,6 +194,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       const orderTemplateId = tmplData.id;
       const fullTemplate = templateCache[tmplData.templateId];
       if (!fullTemplate) return;
+
+      processedTemplateIds.add(tmplData.templateId);
 
       // Extract summary
       const rawSummary = (tmplData as any).summary;
@@ -233,9 +243,28 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       }
     };
 
-    orderData.templates.forEach((tmplData: OrderTemplateData) => {
+    // Process existing order templates
+    (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
       processTemplate(tmplData, null, false);
     });
+
+    // Add entries for product templates that don't have order data yet
+    for (const tmpl of productTemplates) {
+      if (!processedTemplateIds.has(tmpl.id)) {
+        const tempKey = `new_${tmpl.id}`;
+        loadedEntries.push({
+          orderTemplateId: tempKey,
+          templateId: tmpl.id,
+          template: tmpl,
+          parentOrderTemplateId: null,
+          isChild: false,
+          summary: null,
+          isNew: true
+        });
+        loadedValues[tempKey] = {};
+        loadedExtraValues[tempKey] = {};
+      }
+    }
 
     setEntries(loadedEntries);
     setTemplateValues(loadedValues);
@@ -270,11 +299,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     async (entry: OrderTemplateEntry) => {
       if (!order) return;
 
-      const parentEntry = entries.find(
-        (e) => e.templateId === entry.templateId && !e.isChild
-      );
-      if (!parentEntry) return;
-
       const totalInstances = entries.filter(
         (e) => e.templateId === entry.templateId
       ).length;
@@ -284,47 +308,85 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         return;
       }
 
-      setIsDuplicating(true);
+      setDuplicatingIds((prev) => new Set(prev).add(entry.templateId));
 
       try {
         const sourceValues = templateValues[entry.orderTemplateId] || {};
         const template = entry.template;
-        const values: OrderValue[] = [];
 
         const nonFormulaColumns = (template.columns || []).filter(
           (col) => col.dataType !== 'FORMULA'
         );
 
-        for (const row of template.rows || []) {
-          for (const col of nonFormulaColumns) {
-            const val = sourceValues[row.id]?.[col.id];
-            if (val !== undefined && val !== '') {
-              values.push({
-                value: val,
-                rowId: row.id,
-                columnId: col.id
-              });
+        // Build values array from current template data
+        const buildValues = (src: TemplateValuesMap): OrderValue[] => {
+          const vals: OrderValue[] = [];
+          for (const row of template.rows || []) {
+            for (const col of nonFormulaColumns) {
+              const val = src[row.id]?.[col.id];
+              if (val !== undefined && val !== '') {
+                vals.push({ value: val, rowId: row.id, columnId: col.id });
+              }
             }
           }
-        }
-
-        const payload: UpdateOrderValuesData = {
-          templates: [
-            {
-              templateId: entry.templateId,
-              parentOrderTemplateId: parentEntry.orderTemplateId,
-              values: values,
-              extravalues: Object.entries(
-                extraValues[entry.orderTemplateId] || {}
-              ).map(([templateExtraFieldId, ev]) => ({
-                templateExtraFieldId,
-                value: ev.value,
-                orderExtraValueId: ev.orderExtraValueId,
-                orderIndex: ev.orderIndex ?? 0
-              }))
-            }
-          ]
+          return vals;
         };
+
+        // Build extra values array
+        const buildExtraValues = (src: ExtraValuesMap) => {
+          return Object.entries(src).map(([templateExtraFieldId, ev]) => ({
+            templateExtraFieldId,
+            value: ev.value,
+            orderExtraValueId: ev.orderExtraValueId,
+            orderIndex: ev.orderIndex ?? 0
+          }));
+        };
+
+        const values = buildValues(sourceValues);
+        const extValues = buildExtraValues(
+          extraValues[entry.orderTemplateId] || {}
+        );
+
+        let payload: UpdateOrderValuesData;
+
+        if (entry.isNew) {
+          // For templates without existing order data:
+          // Send parent + child together using the children array
+          payload = {
+            templates: [
+              {
+                templateId: entry.templateId,
+                values: values,
+                ...(extValues.length > 0 ? { extravalues: extValues } : {}),
+                children: [
+                  {
+                    templateId: entry.templateId,
+                    values: values,
+                    ...(extValues.length > 0 ? { extravalues: extValues } : {})
+                  }
+                ]
+              }
+            ]
+          };
+        } else {
+          // For templates with existing order data:
+          // Attach the duplicate as a child of the existing parent
+          const parentEntry = entries.find(
+            (e) => e.templateId === entry.templateId && !e.isChild
+          );
+          if (!parentEntry) return;
+
+          payload = {
+            templates: [
+              {
+                templateId: entry.templateId,
+                parentOrderTemplateId: parentEntry.orderTemplateId,
+                values: values,
+                ...(extValues.length > 0 ? { extravalues: extValues } : {})
+              }
+            ]
+          };
+        }
 
         await updateOrderValues(companyId, orderId, payload);
         toast.success('Template duplicated successfully');
@@ -335,10 +397,22 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       } catch (err) {
         toast.error(getError(err) || 'Failed to duplicate template');
       } finally {
-        setIsDuplicating(false);
+        setDuplicatingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(entry.templateId);
+          return next;
+        });
       }
     },
-    [order, entries, templateValues, companyId, orderId, processOrderTemplates]
+    [
+      order,
+      entries,
+      templateValues,
+      extraValues,
+      companyId,
+      orderId,
+      processOrderTemplates
+    ]
   );
 
   // ──────────────────────────────────────────────────────────────────────
@@ -674,10 +748,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
               <span className='text-muted-foreground'>Customer Name</span>
               <p className='font-medium'>{order.customer?.name ?? '-'}</p>
             </div>
-          </div>
-        </CardContent>
-        <CardContent>
-          <div className='grid grid-cols-2 gap-4 text-sm md:grid-cols-4'>
             <div>
               <span className='text-muted-foreground'>Order No</span>
               <p className='font-medium'>{order.orderNo}</p>
@@ -697,6 +767,12 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
               </p>
             </div>
           </div>
+          {order.referenceNo && (
+            <div className='mt-3 text-sm'>
+              <span className='text-muted-foreground'>Reference No</span>
+              <p className='font-medium'>{order.referenceNo}</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -804,12 +880,22 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                         {parentEntry && (
                           <div className='relative'>
                             <div className='mb-2 flex items-center justify-between'>
-                              <Badge
-                                variant='outline'
-                                className='text-xs font-normal'
-                              >
-                                Parent Template
-                              </Badge>
+                              <div className='flex items-center gap-2'>
+                                <Badge
+                                  variant='outline'
+                                  className='text-xs font-normal'
+                                >
+                                  Parent Template
+                                </Badge>
+                                {parentEntry.isNew && (
+                                  <Badge
+                                    variant='secondary'
+                                    className='text-xs font-normal'
+                                  >
+                                    No values yet
+                                  </Badge>
+                                )}
+                              </div>
                               <TooltipProvider delayDuration={200}>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -817,14 +903,15 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                                       variant='outline'
                                       size='sm'
                                       disabled={
-                                        !duplicateAllowed || isDuplicating
+                                        !duplicateAllowed ||
+                                        duplicatingIds.has(templateId)
                                       }
                                       onClick={() =>
                                         handleDuplicate(parentEntry)
                                       }
                                       className='gap-1.5'
                                     >
-                                      {isDuplicating ? (
+                                      {duplicatingIds.has(templateId) ? (
                                         <Loader2 className='h-3.5 w-3.5 animate-spin' />
                                       ) : (
                                         <Copy className='h-3.5 w-3.5' />
@@ -852,7 +939,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                                 extraValues[parentEntry.orderTemplateId] || {}
                               }
                               onExtraValuesChange={() => {}}
-                              summary={parentEntry.summary}
+                              summary={parentEntry.summary ?? {}}
                             />
                           </div>
                         )}
@@ -879,7 +966,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                                 extraValues[childEntry.orderTemplateId] || {}
                               }
                               onExtraValuesChange={() => {}}
-                              summary={childEntry.summary}
+                              summary={childEntry.summary ?? {}}
                             />
                           </div>
                         ))}

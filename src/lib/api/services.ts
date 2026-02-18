@@ -46,7 +46,11 @@ import type {
   CreateCustomerData,
   UpdateCustomerData,
   CustomerListParams,
-  CustomerListResponse
+  CustomerListResponse,
+  Member,
+  MemberListResponse,
+  MemberListParams,
+  InviteMemberData
 } from './types';
 
 // =============================================================================
@@ -702,4 +706,40 @@ export const deleteCustomer = async (
   await api.delete<ApiResponse<Record<string, never>>>(
     ENDPOINTS.CUSTOMER.DELETE(companyId, customerId)
   );
+};
+
+// =============================================================================
+// MEMBER SERVICES
+// =============================================================================
+
+export const getMembers = async (
+  companyId: string,
+  params?: MemberListParams
+): Promise<MemberListResponse> => {
+  const defaultParams: MemberListParams = {
+    page: 1,
+    limit: 10,
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  const res = await api.post<ApiResponse<MemberListResponse>>(
+    ENDPOINTS.MEMBER.LIST(companyId),
+    defaultParams
+  );
+
+  return res.data.payload;
+};
+
+export const inviteMember = async (
+  companyId: string,
+  data: InviteMemberData
+): Promise<{ message: string }> => {
+  const res = await api.post<ApiResponse<{ message: string }>>(
+    ENDPOINTS.MEMBER.INVITE(companyId),
+    data
+  );
+  return res.data.payload;
 };

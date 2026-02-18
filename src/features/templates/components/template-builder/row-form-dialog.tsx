@@ -1,8 +1,3 @@
-/**
- * Component: RowFormDialog
- * Description: Dialog for creating/editing template rows
- */
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -20,14 +15,14 @@ import {
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle,
+  DialogTitle
 } from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
+  SelectValue
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
 
@@ -41,8 +36,8 @@ const rowFormSchema = z.object({
     .min(1, 'Label is required')
     .min(2, 'Label must be at least 2 characters'),
   rowType: z.enum(['NORMAL', 'TOTAL'], {
-    message: 'Please select a row type',
-  }),
+    message: 'Please select a row type'
+  })
 });
 
 type RowFormData = z.infer<typeof rowFormSchema>;
@@ -74,7 +69,7 @@ export default function RowFormDialog({
   onSubmit,
   initialData,
   isLoading = false,
-  error,
+  error
 }: RowFormDialogProps) {
   const isEditing = !!initialData;
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -85,13 +80,13 @@ export default function RowFormDialog({
     reset,
     watch,
     setValue,
-    formState: { errors },
+    formState: { errors }
   } = useForm<RowFormData>({
     resolver: zodResolver(rowFormSchema),
     defaultValues: {
       label: initialData?.label || '',
-      rowType: initialData?.rowType || undefined,
-    },
+      rowType: initialData?.rowType || undefined
+    }
   });
 
   const selectedRowType = watch('rowType');
@@ -101,7 +96,7 @@ export default function RowFormDialog({
     if (open) {
       reset({
         label: initialData?.label || '',
-        rowType: initialData?.rowType || undefined,
+        rowType: initialData?.rowType || undefined
       });
       setSubmitError(null);
     }
@@ -118,7 +113,7 @@ export default function RowFormDialog({
       await onSubmit({
         label: data.label,
         rowType: data.rowType as RowType,
-        isCalculated,
+        isCalculated
       });
 
       onOpenChange(false);
@@ -131,11 +126,9 @@ export default function RowFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className='sm:max-w-[425px]'>
         <DialogHeader>
-          <DialogTitle>
-            {isEditing ? 'Edit Row' : 'Add Row'}
-          </DialogTitle>
+          <DialogTitle>{isEditing ? 'Edit Row' : 'Add Row'}</DialogTitle>
           <DialogDescription>
             {isEditing
               ? 'Update the row properties below.'
@@ -143,43 +136,45 @@ export default function RowFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
+        <form onSubmit={handleSubmit(handleFormSubmit)} className='space-y-4'>
           {/* Error Message */}
           {displayError && (
-            <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+            <div className='bg-destructive/15 text-destructive rounded-md p-3 text-sm'>
               {displayError}
             </div>
           )}
 
           {/* Label */}
-          <div className="space-y-2">
-            <Label htmlFor="label">
-              Label <span className="text-destructive">*</span>
+          <div className='space-y-2'>
+            <Label htmlFor='label'>
+              Label <span className='text-destructive'>*</span>
             </Label>
             <Input
-              id="label"
-              placeholder="e.g., Item, Material, Total"
+              id='label'
+              placeholder='e.g., Item, Material, Total'
               disabled={isLoading}
               {...register('label')}
               className={errors.label ? 'border-destructive' : ''}
             />
             {errors.label && (
-              <p className="text-sm text-destructive">{errors.label.message}</p>
+              <p className='text-destructive text-sm'>{errors.label.message}</p>
             )}
           </div>
 
           {/* Row Type */}
-          <div className="space-y-2">
-            <Label htmlFor="rowType">
-              Row Type <span className="text-destructive">*</span>
+          <div className='space-y-2'>
+            <Label htmlFor='rowType'>
+              Row Type <span className='text-destructive'>*</span>
             </Label>
             <Select
               value={selectedRowType}
               onValueChange={(value) => setValue('rowType', value as RowType)}
               disabled={isLoading}
             >
-              <SelectTrigger className={errors.rowType ? 'border-destructive' : ''}>
-                <SelectValue placeholder="Select row type" />
+              <SelectTrigger
+                className={errors.rowType ? 'border-destructive' : ''}
+              >
+                <SelectValue placeholder='Select row type' />
               </SelectTrigger>
               <SelectContent>
                 {ROW_TYPES.map((type) => (
@@ -190,9 +185,11 @@ export default function RowFormDialog({
               </SelectContent>
             </Select>
             {errors.rowType && (
-              <p className="text-sm text-destructive">{errors.rowType.message}</p>
+              <p className='text-destructive text-sm'>
+                {errors.rowType.message}
+              </p>
             )}
-            <p className="text-xs text-muted-foreground">
+            <p className='text-muted-foreground text-xs'>
               {selectedRowType === 'TOTAL'
                 ? 'Total rows are calculated automatically.'
                 : 'Normal rows contain regular data entries.'}
@@ -201,14 +198,20 @@ export default function RowFormDialog({
 
           {/* Info about isCalculated */}
           {selectedRowType && (
-            <div className="rounded-lg border p-3 bg-muted/50">
-              <p className="text-sm">
-                <span className="font-medium">Is Calculated:</span>{' '}
-                <span className={selectedRowType === 'TOTAL' ? 'text-green-600' : 'text-muted-foreground'}>
+            <div className='bg-muted/50 rounded-lg border p-3'>
+              <p className='text-sm'>
+                <span className='font-medium'>Is Calculated:</span>{' '}
+                <span
+                  className={
+                    selectedRowType === 'TOTAL'
+                      ? 'text-green-600'
+                      : 'text-muted-foreground'
+                  }
+                >
                   {selectedRowType === 'TOTAL' ? 'Yes' : 'No'}
                 </span>
               </p>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className='text-muted-foreground mt-1 text-xs'>
                 {selectedRowType === 'TOTAL'
                   ? 'This row will be calculated based on other rows.'
                   : 'This is a regular data row.'}
@@ -218,17 +221,17 @@ export default function RowFormDialog({
 
           <DialogFooter>
             <Button
-              type="button"
-              variant="outline"
+              type='button'
+              variant='outline'
               onClick={() => onOpenChange(false)}
               disabled={isLoading}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isLoading}>
+            <Button type='submit' disabled={isLoading}>
               {isLoading ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                   {isEditing ? 'Updating...' : 'Creating...'}
                 </>
               ) : isEditing ? (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   DndContext,
@@ -58,6 +58,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -97,12 +98,15 @@ import {
   Rows,
   Eye,
   GripVertical,
-  LayoutTemplate
+  LayoutTemplate,
+  Layers
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 
-import ColumnFormDialog from './template-builder/column-form-dialog';
+import ColumnFormDialog, {
+  type TemplateBlock
+} from './template-builder/column-form-dialog';
 import RowFormDialog from './template-builder/row-form-dialog';
 import ExtraFormDialog from './template-builder/extra-form-dialog';
 import TemplatePreview from './template-builder/template-preview';
@@ -110,6 +114,19 @@ import {
   parseFormula,
   stringifyFormula
 } from './template-builder/formula-builder';
+
+// =============================================================================
+// HELPER: Derive blocks from columns
+// =============================================================================
+
+function deriveBlocksFromColumns(columns: TemplateColumn[]): TemplateBlock[] {
+  const blockIndices = new Set<number>();
+  columns.forEach((col) => blockIndices.add(col.blockIndex));
+  if (blockIndices.size === 0) blockIndices.add(0);
+  return Array.from(blockIndices)
+    .sort((a, b) => a - b)
+    .map((index) => ({ index, label: `Block ${index}` }));
+}
 
 // =============================================================================
 // SORTABLE TEMPLATE ROW
@@ -243,10 +260,12 @@ function SortableTemplateRow({
 
 function SortableColumnItem({
   column,
+  blockLabel,
   onEdit,
   onDelete
 }: {
   column: TemplateColumn;
+  blockLabel?: string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -279,6 +298,11 @@ function SortableColumnItem({
       <TableCell className='py-2'>
         <Badge variant='outline' className='text-xs'>
           {column.dataType}
+        </Badge>
+      </TableCell>
+      <TableCell className='py-2'>
+        <Badge variant='secondary' className='text-[10px]'>
+          {blockLabel || `Block ${column.blockIndex}`}
         </Badge>
       </TableCell>
       <TableCell className='py-2'>
@@ -477,7 +501,6 @@ function SortableExtraItem({
 interface TemplateListingProps {
   companyId: string;
   productId: string;
-  /** Templates data from product/get API — no separate template API calls needed */
   initialTemplates: TemplateWithDetails[];
 }
 
@@ -486,10 +509,11 @@ interface ExpandedTemplateData {
   columns: TemplateColumn[];
   rows: TemplateRow[];
   extras: TemplateExtra[];
+  blocks: TemplateBlock[];
 }
 
 // =============================================================================
-// HELPER: Build expandedData map from TemplateWithDetails[]
+// HELPER: Build expandedData map
 // =============================================================================
 
 function buildExpandedDataMap(
@@ -497,12 +521,13 @@ function buildExpandedDataMap(
 ): Record<string, ExpandedTemplateData> {
   const map: Record<string, ExpandedTemplateData> = {};
   for (const t of templates) {
+    const cols = [...(t.columns || [])].sort((a, b) => a.orderNo - b.orderNo);
     map[t.id] = {
       template: t,
-      columns: [...(t.columns || [])].sort((a, b) => a.orderNo - b.orderNo),
+      columns: cols,
       rows: [...(t.rows || [])].sort((a, b) => a.orderNo - b.orderNo),
-      // API returns "extra" (singular)
-      extras: [...(t.extra || [])].sort((a, b) => a.orderNo - b.orderNo)
+      extras: [...(t.extra || [])].sort((a, b) => a.orderNo - b.orderNo),
+      blocks: deriveBlocksFromColumns(cols)
     };
   }
   return map;
@@ -519,21 +544,16 @@ export default function TemplateListing({
 }: TemplateListingProps) {
   const router = useRouter();
 
-  // Derive sorted templates list from initialTemplates
   const [templates, setTemplates] = useState<TemplateWithDetails[]>(() =>
     [...initialTemplates].sort((a, b) => a.orderNo - b.orderNo)
   );
 
   const [error, setError] = useState<string | null>(null);
-
-  // Client-side search (no API call)
   const [searchQuery, setSearchQuery] = useState('');
-
   const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(
     null
   );
 
-  // Pre-populate expanded data from product/get response — no template/get API needed
   const [expandedData, setExpandedData] = useState<
     Record<string, ExpandedTemplateData>
   >(() => buildExpandedDataMap(initialTemplates));
@@ -582,24 +602,86 @@ export default function TemplateListing({
   >(null);
   const [isDeletingItem, setIsDeletingItem] = useState(false);
 
+  // Block management per template
+  const [newBlockLabels, setNewBlockLabels] = useState<Record<string, string>>(
+    {}
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // ──────────────────────────────────────────────────────────────────────
-  // SYNC WITH PARENT when initialTemplates changes (e.g. product refetch)
-  // ──────────────────────────────────────────────────────────────────────
+  // Sync with parent
   useEffect(() => {
     setTemplates([...initialTemplates].sort((a, b) => a.orderNo - b.orderNo));
     setExpandedData(buildExpandedDataMap(initialTemplates));
   }, [initialTemplates]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // EXPAND / COLLAPSE — no API call, data already available
-  // ──────────────────────────────────────────────────────────────────────
   const handleToggleExpand = (templateId: string) => {
     setExpandedTemplateId((prev) => (prev === templateId ? null : templateId));
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // BLOCK HANDLERS (per template)
+  // ──────────────────────────────────────────────────────────────────────
+  const handleAddBlock = (tid: string) => {
+    const label = (newBlockLabels[tid] || '').trim();
+    if (!label) return;
+
+    setExpandedData((prev) => {
+      const td = prev[tid];
+      if (!td) return prev;
+      const maxIndex =
+        td.blocks.length > 0 ? Math.max(...td.blocks.map((b) => b.index)) : -1;
+      return {
+        ...prev,
+        [tid]: {
+          ...td,
+          blocks: [...td.blocks, { index: maxIndex + 1, label }]
+        }
+      };
+    });
+    setNewBlockLabels((prev) => ({ ...prev, [tid]: '' }));
+  };
+
+  const handleRemoveBlock = (tid: string, blockIndex: number) => {
+    const td = expandedData[tid];
+    if (!td) return;
+    const blockCols = td.columns.filter((c) => c.blockIndex === blockIndex);
+    if (blockCols.length > 0) {
+      setError(
+        'Cannot remove a block that has columns. Delete the columns first.'
+      );
+      return;
+    }
+    if (td.blocks.length <= 1) {
+      setError('Must have at least one block.');
+      return;
+    }
+    setExpandedData((prev) => ({
+      ...prev,
+      [tid]: {
+        ...prev[tid],
+        blocks: prev[tid].blocks.filter((b) => b.index !== blockIndex)
+      }
+    }));
+  };
+
+  const handleUpdateBlockLabel = (
+    tid: string,
+    blockIndex: number,
+    label: string
+  ) => {
+    setExpandedData((prev) => ({
+      ...prev,
+      [tid]: {
+        ...prev[tid],
+        blocks: prev[tid].blocks.map((b) =>
+          b.index === blockIndex ? { ...b, label } : b
+        )
+      }
+    }));
   };
 
   // ──────────────────────────────────────────────────────────────────────
@@ -1013,7 +1095,7 @@ export default function TemplateListing({
   };
 
   // ──────────────────────────────────────────────────────────────────────
-  // DELETE ITEM (column / row / extra)
+  // DELETE ITEM
   // ──────────────────────────────────────────────────────────────────────
   const handleDeleteItemClick = (
     type: 'column' | 'row' | 'extra',
@@ -1120,7 +1202,6 @@ export default function TemplateListing({
     }
   };
 
-  // Client-side search filter
   const filteredTemplates = templates.filter((t) =>
     t.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -1208,6 +1289,9 @@ export default function TemplateListing({
                   {filteredTemplates.map((tmpl) => {
                     const isExpanded = expandedTemplateId === tmpl.id;
                     const td = expandedData[tmpl.id];
+                    const blockLabelMap = new Map(
+                      (td?.blocks || []).map((b) => [b.index, b.label])
+                    );
 
                     return (
                       <SortableTemplateRow
@@ -1223,7 +1307,14 @@ export default function TemplateListing({
                             <TableCell colSpan={7} className='p-0'>
                               <div className='space-y-4 p-4'>
                                 <Tabs defaultValue='columns' className='w-full'>
-                                  <TabsList className='grid w-full max-w-lg grid-cols-4'>
+                                  <TabsList className='grid w-full max-w-2xl grid-cols-5'>
+                                    <TabsTrigger
+                                      value='blocks'
+                                      className='text-xs'
+                                    >
+                                      <Layers className='mr-1 h-3 w-3' />
+                                      Blocks ({td?.blocks?.length || 0})
+                                    </TabsTrigger>
                                     <TabsTrigger
                                       value='columns'
                                       className='text-xs'
@@ -1253,6 +1344,121 @@ export default function TemplateListing({
                                       Preview
                                     </TabsTrigger>
                                   </TabsList>
+
+                                  {/* Blocks */}
+                                  <TabsContent value='blocks' className='mt-4'>
+                                    <Card>
+                                      <CardHeader className='py-3'>
+                                        <CardTitle className='text-sm font-medium'>
+                                          Block Groups
+                                        </CardTitle>
+                                        <p className='text-muted-foreground mt-1 text-xs'>
+                                          Manage column groups for this template
+                                        </p>
+                                      </CardHeader>
+                                      <CardContent className='space-y-4 pt-0'>
+                                        {/* Add block */}
+                                        <div className='flex items-center gap-2'>
+                                          <Input
+                                            placeholder='New block name...'
+                                            value={
+                                              newBlockLabels[tmpl.id] || ''
+                                            }
+                                            onChange={(e) =>
+                                              setNewBlockLabels((p) => ({
+                                                ...p,
+                                                [tmpl.id]: e.target.value
+                                              }))
+                                            }
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                handleAddBlock(tmpl.id);
+                                              }
+                                            }}
+                                            className='h-8 text-sm'
+                                          />
+                                          <Button
+                                            size='sm'
+                                            className='h-8'
+                                            onClick={() =>
+                                              handleAddBlock(tmpl.id)
+                                            }
+                                            disabled={
+                                              !(
+                                                newBlockLabels[tmpl.id] || ''
+                                              ).trim()
+                                            }
+                                          >
+                                            <Plus className='mr-1 h-3 w-3' />
+                                            Add
+                                          </Button>
+                                        </div>
+
+                                        {/* Block list */}
+                                        <div className='space-y-2'>
+                                          {(td?.blocks || []).map((block) => {
+                                            const blockCols = (
+                                              td?.columns || []
+                                            ).filter(
+                                              (c) =>
+                                                c.blockIndex === block.index
+                                            );
+                                            return (
+                                              <div
+                                                key={block.index}
+                                                className='flex items-center gap-2 rounded-md border p-2'
+                                              >
+                                                <Badge
+                                                  variant='outline'
+                                                  className='shrink-0 font-mono text-xs'
+                                                >
+                                                  {block.index}
+                                                </Badge>
+                                                <Input
+                                                  value={block.label}
+                                                  onChange={(e) =>
+                                                    handleUpdateBlockLabel(
+                                                      tmpl.id,
+                                                      block.index,
+                                                      e.target.value
+                                                    )
+                                                  }
+                                                  className='h-7 flex-1 text-sm'
+                                                />
+                                                <Badge
+                                                  variant='secondary'
+                                                  className='shrink-0 text-[10px]'
+                                                >
+                                                  {blockCols.length} col
+                                                  {blockCols.length !== 1
+                                                    ? 's'
+                                                    : ''}
+                                                </Badge>
+                                                <Button
+                                                  variant='ghost'
+                                                  size='icon'
+                                                  className='text-destructive hover:text-destructive h-7 w-7 shrink-0'
+                                                  onClick={() =>
+                                                    handleRemoveBlock(
+                                                      tmpl.id,
+                                                      block.index
+                                                    )
+                                                  }
+                                                  disabled={
+                                                    (td?.blocks || []).length <=
+                                                    1
+                                                  }
+                                                >
+                                                  <Trash2 className='h-3 w-3' />
+                                                </Button>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </CardContent>
+                                    </Card>
+                                  </TabsContent>
 
                                   {/* Columns */}
                                   <TabsContent value='columns' className='mt-4'>
@@ -1305,6 +1511,9 @@ export default function TemplateListing({
                                                       Type
                                                     </TableHead>
                                                     <TableHead className='text-xs'>
+                                                      Block
+                                                    </TableHead>
+                                                    <TableHead className='text-xs'>
                                                       Required
                                                     </TableHead>
                                                     <TableHead className='w-[80px] text-xs'>
@@ -1325,6 +1534,12 @@ export default function TemplateListing({
                                                       <SortableColumnItem
                                                         key={col.id}
                                                         column={col}
+                                                        blockLabel={
+                                                          blockLabelMap.get(
+                                                            col.blockIndex
+                                                          ) ||
+                                                          `Block ${col.blockIndex}`
+                                                        }
                                                         onEdit={() =>
                                                           handleEditColumn(
                                                             tmpl.id,
@@ -1552,6 +1767,7 @@ export default function TemplateListing({
                                       columns={td?.columns || []}
                                       rows={td?.rows || []}
                                       extras={td?.extras || []}
+                                      blocks={td?.blocks || []}
                                     />
                                   </TabsContent>
                                 </Tabs>
@@ -1579,7 +1795,6 @@ export default function TemplateListing({
 
       {/* ══════════════ DIALOGS ══════════════ */}
 
-      {/* Delete Template */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1609,7 +1824,6 @@ export default function TemplateListing({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete Item */}
       <AlertDialog
         open={deleteItemDialogOpen}
         onOpenChange={setDeleteItemDialogOpen}
@@ -1661,6 +1875,9 @@ export default function TemplateListing({
         initialData={editingColumn}
         availableColumns={
           columnTemplateId ? expandedData[columnTemplateId]?.columns || [] : []
+        }
+        blocks={
+          columnTemplateId ? expandedData[columnTemplateId]?.blocks || [] : []
         }
         isLoading={isColumnLoading}
         error={columnError}
