@@ -176,7 +176,8 @@ export const ENDPOINTS = {
     LIST: (companyId: string) =>
       `${API_PREFIX}/user/company/${companyId}/members/list`,
     INVITE: (companyId: string) =>
-      `${API_PREFIX}/user/company/${companyId}/members/invite`
+      `${API_PREFIX}/user/company/${companyId}/members/invite`,
+    ACCEPT_INVITE: `${API_PREFIX}/user/company/members/accept-invite`
   }
 } as const;
 

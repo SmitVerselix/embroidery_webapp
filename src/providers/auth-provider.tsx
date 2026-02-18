@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import {
   createContext,
@@ -6,18 +6,22 @@ import {
   useEffect,
   useState,
   useCallback,
-  ReactNode,
-} from "react";
-import { useRouter, usePathname } from "next/navigation";
-import { login as apiLogin, register as apiRegister, logout as apiLogout } from "@/lib/api/services";
-import { getError } from "@/lib/api/axios";
-import type { User, AuthPayload, UserCompany } from "@/lib/api/types";
+  ReactNode
+} from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import {
+  login as apiLogin,
+  register as apiRegister,
+  logout as apiLogout
+} from '@/lib/api/services';
+import { getError } from '@/lib/api/axios';
+import type { User, AuthPayload, UserCompany } from '@/lib/api/types';
 
 // =============================================================================
 // TYPES
 // =============================================================================
 
-export type UserRole = "admin" | "user" | "owner";
+export type UserRole = 'admin' | 'user' | 'owner';
 
 interface AuthContextType {
   user: User | null;
@@ -27,7 +31,12 @@ interface AuthContextType {
   currentCompany: UserCompany | null;
   companies: UserCompany[];
   login: (email: string, password: string) => Promise<AuthPayload>;
-  register: (name: string, email: string, password: string, roleId?: string) => Promise<AuthPayload>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+    roleId?: string
+  ) => Promise<AuthPayload>;
   logout: () => Promise<void>;
   setCurrentCompany: (company: UserCompany | null) => void;
   setCompanies: (companies: UserCompany[]) => void;
@@ -53,14 +62,14 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // =============================================================================
 
 const setCookie = (name: string, value: string, days: number = 7) => {
-  if (typeof window === "undefined") return;
+  if (typeof window === 'undefined') return;
   const expires = new Date();
   expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
   document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/`;
 };
 
 const deleteCookie = (name: string) => {
-  if (typeof window === "undefined") return;
+  if (typeof window === 'undefined') return;
   document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
 };
 
@@ -69,9 +78,9 @@ const deleteCookie = (name: string) => {
 // =============================================================================
 
 export const getStoredUser = (): User | null => {
-  if (typeof window === "undefined") return null;
+  if (typeof window === 'undefined') return null;
   try {
-    const userStr = localStorage.getItem("user");
+    const userStr = localStorage.getItem('user');
     if (!userStr) return null;
     return JSON.parse(userStr);
   } catch {
@@ -80,14 +89,14 @@ export const getStoredUser = (): User | null => {
 };
 
 export const getStoredToken = (): string | null => {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("token");
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('token');
 };
 
 export const getStoredCompany = (): UserCompany | null => {
-  if (typeof window === "undefined") return null;
+  if (typeof window === 'undefined') return null;
   try {
-    const companyStr = localStorage.getItem("currentCompany");
+    const companyStr = localStorage.getItem('currentCompany');
     if (!companyStr) return null;
     return JSON.parse(companyStr);
   } catch {
@@ -96,9 +105,9 @@ export const getStoredCompany = (): UserCompany | null => {
 };
 
 export const getStoredCompanies = (): UserCompany[] => {
-  if (typeof window === "undefined") return [];
+  if (typeof window === 'undefined') return [];
   try {
-    const companiesStr = localStorage.getItem("companies");
+    const companiesStr = localStorage.getItem('companies');
     if (!companiesStr) return [];
     return JSON.parse(companiesStr);
   } catch {
@@ -110,21 +119,21 @@ export const getStoredCompanies = (): UserCompany[] => {
 // ROUTE HELPERS
 // =============================================================================
 
-const PUBLIC_ROUTES = ["/auth", "/terms", "/privacy"];
+const PUBLIC_ROUTES = ['/auth', '/invite', '/terms', '/privacy'];
 
 const isPublicRoute = (pathname: string): boolean => {
-  if (pathname === "/") return true;
+  if (pathname === '/') return true;
   return PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
 };
 
 const isSelectCompanyRoute = (pathname: string): boolean => {
-  return pathname.includes("/select-company");
+  return pathname.includes('/select-company');
 };
 
 const getCompanyIdFromPath = (pathname: string): string | null => {
   // Match /dashboard/[companyId]/...
   const match = pathname.match(/^\/dashboard\/([^\/]+)/);
-  if (match && match[1] !== "select-company") {
+  if (match && match[1] !== 'select-company') {
     return match[1];
   }
   return null;
@@ -144,7 +153,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [currentCompany, setCurrentCompanyState] = useState<UserCompany | null>(null);
+  const [currentCompany, setCurrentCompanyState] = useState<UserCompany | null>(
+    null
+  );
   const [companies, setCompaniesState] = useState<UserCompany[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -166,7 +177,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (storedUser && storedToken) {
         setUser(storedUser);
         setToken(storedToken);
-        setCookie("token", storedToken);
+        setCookie('token', storedToken);
 
         if (storedCompanies.length > 0) {
           setCompaniesState(storedCompanies);
@@ -195,18 +206,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     // If not authenticated and not on public route, redirect to sign-in
     if (!hasAuth && !isPublic) {
-      router.replace("/auth/sign-in");
+      router.replace('/auth/sign-in');
       return;
     }
 
     // If authenticated but no company selected and not on select-company page
     if (hasAuth && !currentCompany && !isOnSelectCompany && !isPublic) {
-      router.replace("/dashboard/select-company");
+      router.replace('/dashboard/select-company');
       return;
     }
 
     // If on a company route but company ID doesn't match current company
-    if (hasAuth && currentCompany && pathCompanyId && pathCompanyId !== currentCompany.company.id) {
+    if (
+      hasAuth &&
+      currentCompany &&
+      pathCompanyId &&
+      pathCompanyId !== currentCompany.company.id
+    ) {
       // Could either:
       // 1. Redirect to correct company URL
       // 2. Switch to the company in URL
@@ -223,23 +239,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const setCurrentCompany = useCallback((company: UserCompany | null) => {
     setCurrentCompanyState(company);
     if (company) {
-      localStorage.setItem("currentCompany", JSON.stringify(company));
+      localStorage.setItem('currentCompany', JSON.stringify(company));
       // Redirect to dashboard with company ID in URL
       window.location.href = `/dashboard/${company.company.id}/overview`;
     } else {
-      localStorage.removeItem("currentCompany");
+      localStorage.removeItem('currentCompany');
     }
   }, []);
 
   const clearCurrentCompany = useCallback(() => {
     setCurrentCompanyState(null);
-    localStorage.removeItem("currentCompany");
-    window.location.href = "/dashboard/select-company";
+    localStorage.removeItem('currentCompany');
+    window.location.href = '/dashboard/select-company';
   }, []);
 
   const setCompanies = useCallback((companiesList: UserCompany[]) => {
     setCompaniesState(companiesList);
-    localStorage.setItem("companies", JSON.stringify(companiesList));
+    localStorage.setItem('companies', JSON.stringify(companiesList));
   }, []);
 
   const login = useCallback(
@@ -249,15 +265,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       try {
         const payload = await apiLogin(email, password);
-        
+
         setUser(payload.user);
         setToken(payload.token);
-        setCookie("token", payload.token);
+        setCookie('token', payload.token);
 
         setIsLoading(false);
 
         // Redirect to company selection
-        window.location.href = "/dashboard/select-company";
+        window.location.href = '/dashboard/select-company';
 
         return payload;
       } catch (err) {
@@ -271,21 +287,26 @@ export function AuthProvider({ children }: AuthProviderProps) {
   );
 
   const register = useCallback(
-    async (name: string, email: string, password: string, roleId?: string): Promise<AuthPayload> => {
+    async (
+      name: string,
+      email: string,
+      password: string,
+      roleId?: string
+    ): Promise<AuthPayload> => {
       setIsLoading(true);
       setError(null);
 
       try {
         const payload = await apiRegister(name, email, password, roleId);
-        
+
         setUser(payload.user);
         setToken(payload.token);
-        setCookie("token", payload.token);
+        setCookie('token', payload.token);
 
         setIsLoading(false);
 
         // Redirect to company selection
-        window.location.href = "/dashboard/select-company";
+        window.location.href = '/dashboard/select-company';
 
         return payload;
       } catch (err) {
@@ -310,25 +331,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setToken(null);
       setCurrentCompanyState(null);
       setCompaniesState([]);
-      
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("currentCompany");
-      localStorage.removeItem("companies");
-      
-      deleteCookie("token");
-      
+
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('currentCompany');
+      localStorage.removeItem('companies');
+
+      deleteCookie('token');
+
       setIsLoading(false);
 
-      window.location.href = "/auth/sign-in";
+      window.location.href = '/auth/sign-in';
     }
   }, []);
 
   const hasPermission = useCallback(
     (permission: string): boolean => {
       if (!user) return false;
-      if (userRole === "admin" || userRole === "owner") return true;
-      if (currentCompany?.role?.name === "admin" || currentCompany?.role?.name === "owner") return true;
+      if (userRole === 'admin' || userRole === 'owner') return true;
+      if (
+        currentCompany?.role?.name === 'admin' ||
+        currentCompany?.role?.name === 'owner'
+      )
+        return true;
       return false;
     },
     [user, userRole, currentCompany]
@@ -345,11 +370,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
   );
 
   const isCompanyOwner = useCallback((): boolean => {
-    return hasRole("owner");
+    return hasRole('owner');
   }, [hasRole]);
 
   const isAdmin = useCallback((): boolean => {
-    return userRole === "admin" || hasRole("admin") || hasRole("owner");
+    return userRole === 'admin' || hasRole('admin') || hasRole('owner');
   }, [userRole, hasRole]);
 
   const value: AuthContextType = {
@@ -372,13 +397,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isCompanyOwner,
     isAdmin,
     userRole,
-    needsCompanySelection,
+    needsCompanySelection
   };
 
   if (!isInitialized) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      <div className='flex h-screen items-center justify-center'>
+        <div className='border-primary h-8 w-8 animate-spin rounded-full border-4 border-t-transparent' />
       </div>
     );
   }
@@ -394,7 +419,7 @@ export function useAuth() {
   const context = useContext(AuthContext);
 
   if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error('useAuth must be used within an AuthProvider');
   }
 
   return context;

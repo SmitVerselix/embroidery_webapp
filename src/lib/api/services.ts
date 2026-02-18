@@ -50,7 +50,10 @@ import type {
   Member,
   MemberListResponse,
   MemberListParams,
-  InviteMemberData
+  InviteMemberData,
+  InviteMemberResponse,
+  AcceptInviteData,
+  AcceptInvitePayload
 } from './types';
 
 // =============================================================================
@@ -641,9 +644,6 @@ export const uploadSingleFile = async (file: File): Promise<UploadResponse> => {
 
 // =============================================================================
 // CUSTOMER SERVICES
-// Add these to your existing services.ts file
-// Also add the imports: Customer, CustomerListResponse, CustomerListParams,
-//   CreateCustomerData, UpdateCustomerData to the import block from './types'
 // =============================================================================
 
 export const getCustomers = async (
@@ -736,9 +736,19 @@ export const getMembers = async (
 export const inviteMember = async (
   companyId: string,
   data: InviteMemberData
-): Promise<{ message: string }> => {
-  const res = await api.post<ApiResponse<{ message: string }>>(
+): Promise<InviteMemberResponse> => {
+  const res = await api.post<ApiResponse<InviteMemberResponse>>(
     ENDPOINTS.MEMBER.INVITE(companyId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const acceptInvite = async (
+  data: AcceptInviteData
+): Promise<AcceptInvitePayload> => {
+  const res = await api.post<ApiResponse<AcceptInvitePayload>>(
+    ENDPOINTS.MEMBER.ACCEPT_INVITE,
     data
   );
   return res.data.payload;

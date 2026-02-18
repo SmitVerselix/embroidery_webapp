@@ -850,3 +850,47 @@ export type InviteMemberData = {
   email: string;
   role: MemberRole;
 };
+
+export type InviteMemberResponse = {
+  message: string;
+  token: string;
+};
+
+// =============================================================================
+// ACCEPT INVITE TYPES
+// =============================================================================
+
+export type AcceptInviteData = {
+  token: string;
+};
+
+export type AcceptInviteMembershipUser = {
+  id: string;
+  email: string;
+  isRegistrationCompleted: boolean;
+};
+
+export type AcceptInviteMembership = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  status: MemberStatus;
+  invitedAt: string | null;
+  joinedAt: string | null;
+  inviteExpiry: string | null;
+  createdAt: string;
+  updatedAt: string;
+  userId: string;
+  roleId: string;
+  invitedBy: string | null;
+  companyId: string;
+  user: AcceptInviteMembershipUser;
+};
+
+export type AcceptInvitePayload = {
+  message: string;
+  membership: AcceptInviteMembership;
+};

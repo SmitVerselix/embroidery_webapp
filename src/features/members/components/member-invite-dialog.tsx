@@ -28,7 +28,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, UserPlus } from 'lucide-react';
+import { Loader2, UserPlus, Copy, Check, ExternalLink } from 'lucide-react';
 
 // =============================================================================
 // SCHEMA
@@ -72,6 +72,8 @@ export default function MemberInviteDialog({
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const {
     register,
@@ -90,6 +92,30 @@ export default function MemberInviteDialog({
 
   const selectedRole = watch('role');
 
+  // Build the invite URL
+  const inviteUrl = inviteToken
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/invite?token=${inviteToken}`
+    : '';
+
+  const handleCopyUrl = async () => {
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = inviteUrl;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   const onSubmit = async (data: InviteFormData) => {
     if (!companyId) {
       setError('No company selected');
@@ -100,12 +126,16 @@ export default function MemberInviteDialog({
     setError(null);
 
     try {
-      await inviteMember(companyId, {
+      const result = await inviteMember(companyId, {
         email: data.email,
         role: data.role
       });
-      reset();
-      setOpen(false);
+
+      // Store the token to show the invite URL
+      if (result && 'token' in result) {
+        setInviteToken((result as { token: string }).token);
+      }
+
       onSuccess?.();
     } catch (err) {
       setError(getError(err));
@@ -119,7 +149,16 @@ export default function MemberInviteDialog({
     if (!value) {
       reset();
       setError(null);
+      setInviteToken(null);
+      setCopied(false);
     }
+  };
+
+  const handleSendAnother = () => {
+    reset();
+    setError(null);
+    setInviteToken(null);
+    setCopied(false);
   };
 
   return (
@@ -131,95 +170,171 @@ export default function MemberInviteDialog({
         </Button>
       </DialogTrigger>
       <DialogContent className='sm:max-w-[425px]'>
-        <DialogHeader>
-          <DialogTitle>Invite Member</DialogTitle>
-          <DialogDescription>
-            Send an invitation to join your company. They&apos;ll receive an
-            email with instructions.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit(onSubmit)} className='space-y-4'>
-          {/* Error Message */}
-          {error && (
-            <div className='bg-destructive/15 text-destructive rounded-md p-3 text-sm'>
-              {error}
-            </div>
-          )}
+        {/* ---- SUCCESS: Show Invite URL ---- */}
+        {inviteToken ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Invitation Sent!</DialogTitle>
+              <DialogDescription>
+                The invitation has been sent. Since email delivery is not set up
+                yet, you can share the invite link below directly.
+              </DialogDescription>
+            </DialogHeader>
+            <div className='space-y-4'>
+              {/* Invite URL */}
+              <div className='space-y-2'>
+                <Label>Invite Link</Label>
+                <div className='flex gap-2'>
+                  <Input
+                    readOnly
+                    value={inviteUrl}
+                    className='font-mono text-xs'
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                  />
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='icon'
+                    className='shrink-0'
+                    onClick={handleCopyUrl}
+                  >
+                    {copied ? (
+                      <Check className='h-4 w-4 text-green-600' />
+                    ) : (
+                      <Copy className='h-4 w-4' />
+                    )}
+                  </Button>
+                </div>
+                <p className='text-muted-foreground text-xs'>
+                  Share this link with the invited user to accept the
+                  invitation.
+                </p>
+              </div>
 
-          {/* Email */}
-          <div className='space-y-2'>
-            <Label htmlFor='invite-email'>
-              Email Address <span className='text-destructive'>*</span>
-            </Label>
-            <Input
-              id='invite-email'
-              placeholder='colleague@example.com'
-              type='email'
-              autoComplete='off'
-              disabled={isSubmitting}
-              {...register('email')}
-              className={errors.email ? 'border-destructive' : ''}
-            />
-            {errors.email && (
-              <p className='text-destructive text-sm'>{errors.email.message}</p>
-            )}
-          </div>
-
-          {/* Role */}
-          <div className='space-y-2'>
-            <Label htmlFor='invite-role'>
-              Role <span className='text-destructive'>*</span>
-            </Label>
-            <Select
-              value={selectedRole}
-              onValueChange={(value) =>
-                setValue('role', value as 'admin' | 'member', {
-                  shouldValidate: true
-                })
-              }
-              disabled={isSubmitting}
-            >
-              <SelectTrigger
-                id='invite-role'
-                className={errors.role ? 'border-destructive' : ''}
+              {/* Open in new tab */}
+              <Button
+                type='button'
+                variant='outline'
+                className='w-full'
+                onClick={() => window.open(inviteUrl, '_blank')}
               >
-                <SelectValue placeholder='Select a role' />
-              </SelectTrigger>
-              <SelectContent>
-                {MEMBER_ROLES.filter((r) => r.value !== 'owner').map((role) => (
-                  <SelectItem key={role.value} value={role.value}>
-                    {role.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.role && (
-              <p className='text-destructive text-sm'>{errors.role.message}</p>
-            )}
-          </div>
-
-          {/* Footer */}
-          <DialogFooter>
-            <Button
-              type='button'
-              variant='outline'
-              onClick={() => handleOpenChange(false)}
-              disabled={isSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button type='submit' disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                  Sending...
-                </>
-              ) : (
-                'Send Invitation'
+                <ExternalLink className='mr-2 h-4 w-4' />
+                Open Invite Link
+              </Button>
+            </div>
+            <DialogFooter>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() => handleOpenChange(false)}
+              >
+                Close
+              </Button>
+              <Button type='button' onClick={handleSendAnother}>
+                Send Another
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          /* ---- FORM: Invite Member ---- */
+          <>
+            <DialogHeader>
+              <DialogTitle>Invite Member</DialogTitle>
+              <DialogDescription>
+                Send an invitation to join your company. They&apos;ll receive an
+                email with instructions.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSubmit(onSubmit)} className='space-y-4'>
+              {/* Error Message */}
+              {error && (
+                <div className='bg-destructive/15 text-destructive rounded-md p-3 text-sm'>
+                  {error}
+                </div>
               )}
-            </Button>
-          </DialogFooter>
-        </form>
+
+              {/* Email */}
+              <div className='space-y-2'>
+                <Label htmlFor='invite-email'>
+                  Email Address <span className='text-destructive'>*</span>
+                </Label>
+                <Input
+                  id='invite-email'
+                  placeholder='colleague@example.com'
+                  type='email'
+                  autoComplete='off'
+                  disabled={isSubmitting}
+                  {...register('email')}
+                  className={errors.email ? 'border-destructive' : ''}
+                />
+                {errors.email && (
+                  <p className='text-destructive text-sm'>
+                    {errors.email.message}
+                  </p>
+                )}
+              </div>
+
+              {/* Role */}
+              <div className='space-y-2'>
+                <Label htmlFor='invite-role'>
+                  Role <span className='text-destructive'>*</span>
+                </Label>
+                <Select
+                  value={selectedRole}
+                  onValueChange={(value) =>
+                    setValue('role', value as 'admin' | 'member', {
+                      shouldValidate: true
+                    })
+                  }
+                  disabled={isSubmitting}
+                >
+                  <SelectTrigger
+                    id='invite-role'
+                    className={errors.role ? 'border-destructive' : ''}
+                  >
+                    <SelectValue placeholder='Select a role' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MEMBER_ROLES.filter((r) => r.value !== 'owner').map(
+                      (role) => (
+                        <SelectItem key={role.value} value={role.value}>
+                          {role.label}
+                        </SelectItem>
+                      )
+                    )}
+                  </SelectContent>
+                </Select>
+                {errors.role && (
+                  <p className='text-destructive text-sm'>
+                    {errors.role.message}
+                  </p>
+                )}
+              </div>
+
+              {/* Footer */}
+              <DialogFooter>
+                <Button
+                  type='button'
+                  variant='outline'
+                  onClick={() => handleOpenChange(false)}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </Button>
+                <Button type='submit' disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                      Sending...
+                    </>
+                  ) : (
+                    'Send Invitation'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
