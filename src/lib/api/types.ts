@@ -894,3 +894,40 @@ export type AcceptInvitePayload = {
   message: string;
   membership: AcceptInviteMembership;
 };
+
+// =============================================================================
+// Login History Types
+// =============================================================================
+
+export type LoginHistoryItem = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  userId: string;
+  deviceId: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  type: 'login' | 'logout';
+  status: 'success' | 'failed';
+  reason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: { id: string; name: string; email: string };
+};
+
+export type LoginHistoryPagination = {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type LoginHistoryPayload = {
+  items: LoginHistoryItem[];
+  pagination: LoginHistoryPagination;
+};
+
+export type LoginHistoryParams = { page?: number; limit?: number };

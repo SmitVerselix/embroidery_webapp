@@ -178,6 +178,11 @@ export const ENDPOINTS = {
     INVITE: (companyId: string) =>
       `${API_PREFIX}/user/company/${companyId}/members/invite`,
     ACCEPT_INVITE: `${API_PREFIX}/user/company/members/accept-invite`
+  },
+
+  // Login history endpoints
+  LOGIN_HISTORY: {
+    LIST: `${API_PREFIX}/user/login-history`
   }
 } as const;
 
@@ -214,5 +219,6 @@ export const QUERY_KEYS = {
   CUSTOMERS: (companyId: string) => ['customers', companyId] as const,
   CUSTOMER: (companyId: string, customerId: string) =>
     ['customers', companyId, customerId] as const,
-  MEMBERS: (companyId: string) => ['members', companyId] as const
+  MEMBERS: (companyId: string) => ['members', companyId] as const,
+  LOGIN_HISTORY: ['login-history'] as const
 } as const;

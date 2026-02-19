@@ -53,7 +53,9 @@ import type {
   InviteMemberData,
   InviteMemberResponse,
   AcceptInviteData,
-  AcceptInvitePayload
+  AcceptInvitePayload,
+  LoginHistoryParams,
+  LoginHistoryPayload
 } from './types';
 
 // =============================================================================
@@ -750,6 +752,20 @@ export const acceptInvite = async (
   const res = await api.post<ApiResponse<AcceptInvitePayload>>(
     ENDPOINTS.MEMBER.ACCEPT_INVITE,
     data
+  );
+  return res.data.payload;
+};
+
+// =============================================================================
+// Login History Services
+// =============================================================================
+
+export const getLoginHistory = async (
+  params?: LoginHistoryParams
+): Promise<LoginHistoryPayload> => {
+  const res = await api.get<ApiResponse<LoginHistoryPayload>>(
+    ENDPOINTS.LOGIN_HISTORY.LIST,
+    { params: { page: params?.page || 1, limit: params?.limit || 10 } }
   );
   return res.data.payload;
 };

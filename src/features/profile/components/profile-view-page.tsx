@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/providers/auth-provider';
 import {
   Card,
@@ -29,9 +29,23 @@ import {
   AlertDialogTrigger
 } from '@/components/ui/alert-dialog';
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select';
+import {
   User,
   Mail,
-  Phone,
   Camera,
   Trash2,
   Shield,
@@ -40,9 +54,17 @@ import {
   EyeOff,
   CheckCircle2,
   AlertCircle,
-  Loader2
+  Loader2,
+  History,
+  LogIn,
+  LogOut,
+  ChevronLeft,
+  ChevronRight,
+  Globe
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getLoginHistory } from '@/lib/api/services';
+import { LoginHistoryItem, LoginHistoryPagination } from '@/lib/api/types';
 
 export default function ProfileViewPage() {
   const { user, isLoading } = useAuth();
@@ -64,6 +86,15 @@ export default function ProfileViewPage() {
   // Avatar state
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
+  // Login history state
+  const [loginHistory, setLoginHistory] = useState<LoginHistoryItem[]>([]);
+  const [loginHistoryPagination, setLoginHistoryPagination] =
+    useState<LoginHistoryPagination | null>(null);
+  const [loginHistoryPage, setLoginHistoryPage] = useState(1);
+  const [loginHistoryLimit, setLoginHistoryLimit] = useState(10);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+
   const initials = user?.name
     ? user.name
         .split(' ')
@@ -73,13 +104,35 @@ export default function ProfileViewPage() {
         .slice(0, 2)
     : user?.email?.[0]?.toUpperCase() || 'U';
 
+  const fetchLoginHistory = useCallback(async (page: number, limit: number) => {
+    setIsLoadingHistory(true);
+    try {
+      const data = await getLoginHistory({ page, limit });
+      setLoginHistory(data.items);
+      setLoginHistoryPagination(data.pagination);
+    } catch (error) {
+      toast.error('Failed to fetch login history');
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (historyLoaded) {
+      fetchLoginHistory(loginHistoryPage, loginHistoryLimit);
+    }
+  }, [loginHistoryPage, loginHistoryLimit, historyLoaded, fetchLoginHistory]);
+
+  const handleTabChange = (value: string) => {
+    if (value === 'login-history' && !historyLoaded) {
+      setHistoryLoaded(true);
+    }
+  };
+
   const handleSaveProfile = async () => {
     setIsSaving(true);
     try {
-      // TODO: Implement your API call
-      // await updateProfile({ name, phone, bio });
-
-      await new Promise((resolve) => setTimeout(resolve, 1000)); // Simulate API call
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       toast.success('Profile updated successfully');
     } catch (error) {
       toast.error('Failed to update profile');
@@ -101,10 +154,7 @@ export default function ProfileViewPage() {
 
     setIsChangingPassword(true);
     try {
-      // TODO: Implement your API call
-      // await changePassword({ currentPassword, newPassword });
-
-      await new Promise((resolve) => setTimeout(resolve, 1000)); // Simulate API call
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       toast.success('Password changed successfully');
       setCurrentPassword('');
       setNewPassword('');
@@ -120,7 +170,6 @@ export default function ProfileViewPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file
     if (!file.type.startsWith('image/')) {
       toast.error('Please upload an image file');
       return;
@@ -133,12 +182,7 @@ export default function ProfileViewPage() {
 
     setIsUploadingAvatar(true);
     try {
-      // TODO: Implement your API call
-      // const formData = new FormData();
-      // formData.append('avatar', file);
-      // await uploadAvatar(formData);
-
-      await new Promise((resolve) => setTimeout(resolve, 1500)); // Simulate API call
+      await new Promise((resolve) => setTimeout(resolve, 1500));
       toast.success('Avatar uploaded successfully');
     } catch (error) {
       toast.error('Failed to upload avatar');
@@ -149,26 +193,33 @@ export default function ProfileViewPage() {
 
   const handleDeleteAvatar = async () => {
     try {
-      // TODO: Implement your API call
-      // await deleteAvatar();
-
       toast.success('Avatar removed');
     } catch (error) {
       toast.error('Failed to remove avatar');
     }
   };
 
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   if (isLoading) {
     return (
       <div className='flex h-[400px] items-center justify-center'>
-        <Loader2 className='h-8 w-8 animate-spin text-muted-foreground' />
+        <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
       </div>
     );
   }
 
   return (
-    <div className='flex w-full flex-col p-4'>
-      <div className='mx-auto w-full max-w-4xl space-y-6'>
+    <div className='flex w-full flex-1 flex-col overflow-y-auto'>
+      <div className='mx-auto w-full max-w-4xl space-y-6 p-4 pb-8'>
         {/* Header */}
         <div>
           <h1 className='text-2xl font-bold tracking-tight'>Profile</h1>
@@ -177,14 +228,21 @@ export default function ProfileViewPage() {
           </p>
         </div>
 
-        <Tabs defaultValue='general' className='space-y-6'>
+        <Tabs
+          defaultValue='general'
+          className='space-y-6'
+          onValueChange={handleTabChange}
+        >
           <TabsList>
             <TabsTrigger value='general'>General</TabsTrigger>
             <TabsTrigger value='security'>Security</TabsTrigger>
+            <TabsTrigger value='login-history'>Login History</TabsTrigger>
           </TabsList>
 
-          {/* General Tab */}
-          <TabsContent value='general' className='space-y-6'>
+          {/* ================================================================
+              GENERAL TAB
+              ================================================================ */}
+          <TabsContent value='general' className='mt-6 space-y-6'>
             {/* Avatar Card */}
             <Card>
               <CardHeader>
@@ -198,7 +256,7 @@ export default function ProfileViewPage() {
               </CardHeader>
               <CardContent>
                 <div className='flex items-center gap-6'>
-                  <div className='relative'>
+                  <div className='relative shrink-0'>
                     <Avatar className='h-24 w-24'>
                       <AvatarImage src={user?.profileImage || undefined} />
                       <AvatarFallback className='text-2xl'>
@@ -212,7 +270,7 @@ export default function ProfileViewPage() {
                     )}
                   </div>
                   <div className='space-y-2'>
-                    <div className='flex gap-2'>
+                    <div className='flex flex-wrap gap-2'>
                       <Button variant='outline' size='sm' asChild>
                         <label className='cursor-pointer'>
                           <Camera className='mr-2 h-4 w-4' />
@@ -252,7 +310,7 @@ export default function ProfileViewPage() {
                         </AlertDialog>
                       )}
                     </div>
-                    <p className='text-xs text-muted-foreground'>
+                    <p className='text-muted-foreground text-xs'>
                       JPG, PNG or GIF. Max 5MB.
                     </p>
                   </div>
@@ -267,9 +325,7 @@ export default function ProfileViewPage() {
                   <User className='h-5 w-5' />
                   Personal Information
                 </CardTitle>
-                <CardDescription>
-                  Update your personal details
-                </CardDescription>
+                <CardDescription>Update your personal details</CardDescription>
               </CardHeader>
               <CardContent className='space-y-4'>
                 <div className='grid gap-4 sm:grid-cols-2'>
@@ -301,13 +357,16 @@ export default function ProfileViewPage() {
                     onChange={(e) => setBio(e.target.value)}
                     placeholder='Tell us about yourself...'
                     rows={3}
+                    maxLength={500}
                   />
-                  <p className='text-xs text-muted-foreground'>
+                  <p className='text-muted-foreground text-xs'>
                     {bio.length}/500 characters
                   </p>
                 </div>
                 <Button onClick={handleSaveProfile} disabled={isSaving}>
-                  {isSaving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
+                  {isSaving && (
+                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  )}
                   Save Changes
                 </Button>
               </CardContent>
@@ -332,7 +391,7 @@ export default function ProfileViewPage() {
                     {user?.isEmailVerified ? (
                       <Badge
                         variant='outline'
-                        className='gap-1 text-green-600'
+                        className='shrink-0 gap-1 text-green-600'
                       >
                         <CheckCircle2 className='h-3 w-3' />
                         Verified
@@ -340,7 +399,7 @@ export default function ProfileViewPage() {
                     ) : (
                       <Badge
                         variant='outline'
-                        className='gap-1 text-yellow-600'
+                        className='shrink-0 gap-1 text-yellow-600'
                       >
                         <AlertCircle className='h-3 w-3' />
                         Unverified
@@ -351,7 +410,7 @@ export default function ProfileViewPage() {
                 <Separator />
                 <div className='space-y-1'>
                   <p className='text-sm font-medium'>Member Since</p>
-                  <p className='text-sm text-muted-foreground'>
+                  <p className='text-muted-foreground text-sm'>
                     {user?.createdAt
                       ? new Date(user.createdAt).toLocaleDateString('en-US', {
                           year: 'numeric',
@@ -365,8 +424,10 @@ export default function ProfileViewPage() {
             </Card>
           </TabsContent>
 
-          {/* Security Tab */}
-          <TabsContent value='security' className='space-y-6'>
+          {/* ================================================================
+              SECURITY TAB
+              ================================================================ */}
+          <TabsContent value='security' className='mt-6 space-y-6'>
             {/* Change Password Card */}
             <Card>
               <CardHeader>
@@ -393,8 +454,10 @@ export default function ProfileViewPage() {
                       type='button'
                       variant='ghost'
                       size='icon'
-                      className='absolute right-0 top-0 h-full px-3'
-                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                      className='absolute top-0 right-0 h-full px-3'
+                      onClick={() =>
+                        setShowCurrentPassword(!showCurrentPassword)
+                      }
                     >
                       {showCurrentPassword ? (
                         <EyeOff className='h-4 w-4' />
@@ -418,7 +481,7 @@ export default function ProfileViewPage() {
                       type='button'
                       variant='ghost'
                       size='icon'
-                      className='absolute right-0 top-0 h-full px-3'
+                      className='absolute top-0 right-0 h-full px-3'
                       onClick={() => setShowNewPassword(!showNewPassword)}
                     >
                       {showNewPassword ? (
@@ -471,21 +534,25 @@ export default function ProfileViewPage() {
                 <div className='flex items-center justify-between'>
                   <div>
                     <p className='font-medium'>Two-Factor Authentication</p>
-                    <p className='text-sm text-muted-foreground'>
+                    <p className='text-muted-foreground text-sm'>
                       Add an extra layer of security to your account
                     </p>
                   </div>
-                  <Button variant='outline'>Enable 2FA</Button>
+                  <Button variant='outline' className='shrink-0'>
+                    Enable 2FA
+                  </Button>
                 </div>
                 <Separator />
                 <div className='flex items-center justify-between'>
                   <div>
                     <p className='font-medium'>Active Sessions</p>
-                    <p className='text-sm text-muted-foreground'>
-                      Manage devices where you're logged in
+                    <p className='text-muted-foreground text-sm'>
+                      Manage devices where you&apos;re logged in
                     </p>
                   </div>
-                  <Button variant='outline'>View Sessions</Button>
+                  <Button variant='outline' className='shrink-0'>
+                    View Sessions
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -519,6 +586,181 @@ export default function ProfileViewPage() {
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* ================================================================
+              LOGIN HISTORY TAB
+              ================================================================ */}
+          <TabsContent value='login-history' className='mt-6 space-y-6'>
+            <Card>
+              <CardHeader>
+                <CardTitle className='flex items-center gap-2'>
+                  <History className='h-5 w-5' />
+                  Login History
+                </CardTitle>
+                <CardDescription>
+                  View your recent login and logout activity
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoadingHistory && loginHistory.length === 0 ? (
+                  <div className='flex h-[200px] items-center justify-center'>
+                    <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
+                  </div>
+                ) : loginHistory.length === 0 ? (
+                  <div className='text-muted-foreground flex h-[200px] flex-col items-center justify-center'>
+                    <History className='mb-2 h-10 w-10' />
+                    <p>No login history found</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className='overflow-x-auto rounded-md border'>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className='whitespace-nowrap'>
+                              Type
+                            </TableHead>
+                            <TableHead className='whitespace-nowrap'>
+                              Status
+                            </TableHead>
+                            <TableHead className='whitespace-nowrap'>
+                              IP Address
+                            </TableHead>
+                            <TableHead className='whitespace-nowrap'>
+                              Reason
+                            </TableHead>
+                            <TableHead className='whitespace-nowrap'>
+                              Date &amp; Time
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {loginHistory.map((item) => (
+                            <TableRow key={item.id}>
+                              <TableCell>
+                                <div className='flex items-center gap-2'>
+                                  {item.type === 'login' ? (
+                                    <LogIn className='h-4 w-4 shrink-0 text-green-600' />
+                                  ) : (
+                                    <LogOut className='h-4 w-4 shrink-0 text-orange-500' />
+                                  )}
+                                  <span className='capitalize'>
+                                    {item.type}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={
+                                    item.status === 'success'
+                                      ? 'outline'
+                                      : 'destructive'
+                                  }
+                                  className={
+                                    item.status === 'success'
+                                      ? 'gap-1 text-green-600'
+                                      : 'gap-1'
+                                  }
+                                >
+                                  {item.status === 'success' ? (
+                                    <CheckCircle2 className='h-3 w-3' />
+                                  ) : (
+                                    <AlertCircle className='h-3 w-3' />
+                                  )}
+                                  <span className='capitalize'>
+                                    {item.status}
+                                  </span>
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <div className='flex items-center gap-2'>
+                                  <Globe className='text-muted-foreground h-3.5 w-3.5 shrink-0' />
+                                  <span className='text-sm'>
+                                    {item.ipAddress || '—'}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span className='text-muted-foreground text-sm'>
+                                  {item.reason || '—'}
+                                </span>
+                              </TableCell>
+                              <TableCell className='whitespace-nowrap'>
+                                <span className='text-sm'>
+                                  {formatDate(item.createdAt)}
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    {/* Pagination */}
+                    {loginHistoryPagination && (
+                      <div className='flex flex-col items-start justify-between gap-4 pt-4 sm:flex-row sm:items-center'>
+                        <div className='text-muted-foreground flex items-center gap-2 text-sm'>
+                          <span>Rows per page</span>
+                          <Select
+                            value={String(loginHistoryLimit)}
+                            onValueChange={(value) => {
+                              setLoginHistoryLimit(Number(value));
+                              setLoginHistoryPage(1);
+                            }}
+                          >
+                            <SelectTrigger className='h-8 w-[70px]'>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value='5'>5</SelectItem>
+                              <SelectItem value='10'>10</SelectItem>
+                              <SelectItem value='20'>20</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <span className='ml-2'>
+                            Page {loginHistoryPagination.page} of{' '}
+                            {loginHistoryPagination.totalPages} (
+                            {loginHistoryPagination.total} total)
+                          </span>
+                        </div>
+                        <div className='flex items-center gap-2'>
+                          <Button
+                            variant='outline'
+                            size='icon'
+                            className='h-8 w-8'
+                            disabled={
+                              loginHistoryPagination.page <= 1 ||
+                              isLoadingHistory
+                            }
+                            onClick={() =>
+                              setLoginHistoryPage((prev) => prev - 1)
+                            }
+                          >
+                            <ChevronLeft className='h-4 w-4' />
+                          </Button>
+                          <Button
+                            variant='outline'
+                            size='icon'
+                            className='h-8 w-8'
+                            disabled={
+                              loginHistoryPagination.page >=
+                                loginHistoryPagination.totalPages ||
+                              isLoadingHistory
+                            }
+                            onClick={() =>
+                              setLoginHistoryPage((prev) => prev + 1)
+                            }
+                          >
+                            <ChevronRight className='h-4 w-4' />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

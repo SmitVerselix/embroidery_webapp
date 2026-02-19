@@ -5,6 +5,7 @@ import {
   useEffect,
   useCallback,
   useRef,
+  useMemo,
   type MouseEvent as ReactMouseEvent,
   type WheelEvent as ReactWheelEvent,
   type TouchEvent as ReactTouchEvent
@@ -47,12 +48,25 @@ import {
   TooltipProvider,
   TooltipTrigger
 } from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
 import OrderTemplateValues, {
   type TemplateValuesMap
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
+import TemplateLayoutCanvas, {
+  type TemplateLayoutItem
+} from './template-layout-canvas';
 import { toast } from 'sonner';
 
 // =============================================================================
@@ -86,7 +100,7 @@ const getOrderTypeBadgeVariant = (type: string) => {
 };
 
 // =============================================================================
-// ZOOM / PAN CONSTANTS
+// ZOOM CONSTANTS
 // =============================================================================
 
 const MIN_ZOOM = 0.25;
@@ -114,7 +128,6 @@ type OrderTemplateEntry = {
   parentOrderTemplateId: string | null;
   isChild: boolean;
   summary: OrderTemplateSummary | null;
-  /** true when the product template has no corresponding order-template yet */
   isNew?: boolean;
 };
 
@@ -143,30 +156,37 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     Record<string, ExtraValuesMap>
   >({});
   const [isLoading, setIsLoading] = useState(true);
-  /** Track which templateIds are currently being duplicated */
   const [duplicatingIds, setDuplicatingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
-  // ── Zoom & Pan state ──────────────────────────────────────────────────
-  const [zoom, setZoom] = useState(1);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [isFitted, setIsFitted] = useState(true);
-  const [isCanvasFocused, setIsCanvasFocused] = useState(false);
+  // ── Duplicate confirmation dialog ───────────────────────────────────
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [pendingDuplicateEntry, setPendingDuplicateEntry] =
+    useState<OrderTemplateEntry | null>(null);
 
+  // ── Zoom state ──────────────────────────────────────────────────────
+  const [zoom, setZoom] = useState(1);
+  const [isCanvasFocused, setIsCanvasFocused] = useState(false);
+  const [isTemplateDragging, setIsTemplateDragging] = useState(false);
+
+  // ── Drag-to-scroll state ────────────────────────────────────────────
+  const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
-  const positionStart = useRef({ x: 0, y: 0 });
+  const scrollStart = useRef({ left: 0, top: 0 });
+
   const containerRef = useRef<HTMLDivElement>(null);
   const lastPinchDist = useRef<number | null>(null);
 
+  /** Layout toolbar portals into this div (sits outside the canvas). */
+  const toolbarPortalRef = useRef<HTMLDivElement>(null);
+
   // ──────────────────────────────────────────────────────────────────────
-  // PROCESS TEMPLATE DATA (handles parent + children + missing templates)
+  // PROCESS TEMPLATE DATA
   // ──────────────────────────────────────────────────────────────────────
   const processOrderTemplates = useCallback((orderData: OrderWithDetails) => {
     const productTemplates = (orderData.product?.templates ||
       []) as TemplateWithDetails[];
 
-    // Nothing to show if the product itself has no templates
     if (productTemplates.length === 0) {
       setEntries([]);
       setTemplateValues({});
@@ -175,15 +195,11 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     }
 
     const templateCache: Record<string, TemplateWithDetails> = {};
-    for (const tmpl of productTemplates) {
-      templateCache[tmpl.id] = tmpl;
-    }
+    for (const tmpl of productTemplates) templateCache[tmpl.id] = tmpl;
 
     const loadedEntries: OrderTemplateEntry[] = [];
     const loadedValues: Record<string, TemplateValuesMap> = {};
     const loadedExtraValues: Record<string, ExtraValuesMap> = {};
-
-    /** Track which product templateIds already have order data */
     const processedTemplateIds = new Set<string>();
 
     const processTemplate = (
@@ -197,7 +213,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
 
       processedTemplateIds.add(tmplData.templateId);
 
-      // Extract summary
       const rawSummary = (tmplData as any).summary;
       const summary: OrderTemplateSummary | null = rawSummary
         ? {
@@ -237,18 +252,16 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       loadedExtraValues[orderTemplateId] = extValMap;
 
       if (tmplData.children && tmplData.children.length > 0) {
-        tmplData.children.forEach((child) => {
-          processTemplate(child, orderTemplateId, true);
-        });
+        tmplData.children.forEach((child) =>
+          processTemplate(child, orderTemplateId, true)
+        );
       }
     };
 
-    // Process existing order templates
-    (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
-      processTemplate(tmplData, null, false);
-    });
+    (orderData.templates || []).forEach((tmplData: OrderTemplateData) =>
+      processTemplate(tmplData, null, false)
+    );
 
-    // Add entries for product templates that don't have order data yet
     for (const tmpl of productTemplates) {
       if (!processedTemplateIds.has(tmpl.id)) {
         const tempKey = `new_${tmpl.id}`;
@@ -271,9 +284,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     setExtraValues(loadedExtraValues);
   }, []);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // FETCH ORDER
-  // ──────────────────────────────────────────────────────────────────────
+  // ── FETCH ORDER ─────────────────────────────────────────────────────
   const fetchOrder = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -293,160 +304,150 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   }, [fetchOrder]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // DUPLICATE TEMPLATE
+  // DUPLICATE: confirm → execute
   // ──────────────────────────────────────────────────────────────────────
-  const handleDuplicate = useCallback(
-    async (entry: OrderTemplateEntry) => {
-      if (!order) return;
-
-      const totalInstances = entries.filter(
+  const requestDuplicate = useCallback(
+    (entry: OrderTemplateEntry) => {
+      const count = entries.filter(
         (e) => e.templateId === entry.templateId
       ).length;
-
-      if (totalInstances >= 2) {
+      if (count >= 2) {
         toast.error('Maximum 2 templates allowed. Cannot duplicate further.');
         return;
       }
-
-      setDuplicatingIds((prev) => new Set(prev).add(entry.templateId));
-
-      try {
-        const sourceValues = templateValues[entry.orderTemplateId] || {};
-        const template = entry.template;
-
-        const nonFormulaColumns = (template.columns || []).filter(
-          (col) => col.dataType !== 'FORMULA'
-        );
-
-        // Build values array from current template data
-        const buildValues = (src: TemplateValuesMap): OrderValue[] => {
-          const vals: OrderValue[] = [];
-          for (const row of template.rows || []) {
-            for (const col of nonFormulaColumns) {
-              const val = src[row.id]?.[col.id];
-              if (val !== undefined && val !== '') {
-                vals.push({ value: val, rowId: row.id, columnId: col.id });
-              }
-            }
-          }
-          return vals;
-        };
-
-        // Build extra values array
-        const buildExtraValues = (src: ExtraValuesMap) => {
-          return Object.entries(src).map(([templateExtraFieldId, ev]) => ({
-            templateExtraFieldId,
-            value: ev.value,
-            orderExtraValueId: ev.orderExtraValueId,
-            orderIndex: ev.orderIndex ?? 0
-          }));
-        };
-
-        const values = buildValues(sourceValues);
-        const extValues = buildExtraValues(
-          extraValues[entry.orderTemplateId] || {}
-        );
-
-        let payload: UpdateOrderValuesData;
-
-        if (entry.isNew) {
-          // For templates without existing order data:
-          // Send parent + child together using the children array
-          payload = {
-            templates: [
-              {
-                templateId: entry.templateId,
-                values: values,
-                ...(extValues.length > 0 ? { extravalues: extValues } : {}),
-                children: [
-                  {
-                    templateId: entry.templateId,
-                    values: values,
-                    ...(extValues.length > 0 ? { extravalues: extValues } : {})
-                  }
-                ]
-              }
-            ]
-          };
-        } else {
-          // For templates with existing order data:
-          // Attach the duplicate as a child of the existing parent
-          const parentEntry = entries.find(
-            (e) => e.templateId === entry.templateId && !e.isChild
-          );
-          if (!parentEntry) return;
-
-          payload = {
-            templates: [
-              {
-                templateId: entry.templateId,
-                parentOrderTemplateId: parentEntry.orderTemplateId,
-                values: values,
-                ...(extValues.length > 0 ? { extravalues: extValues } : {})
-              }
-            ]
-          };
-        }
-
-        await updateOrderValues(companyId, orderId, payload);
-        toast.success('Template duplicated successfully');
-
-        const orderData = await getOrder(companyId, orderId);
-        setOrder(orderData);
-        processOrderTemplates(orderData);
-      } catch (err) {
-        toast.error(getError(err) || 'Failed to duplicate template');
-      } finally {
-        setDuplicatingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(entry.templateId);
-          return next;
-        });
-      }
+      setPendingDuplicateEntry(entry);
+      setDuplicateDialogOpen(true);
     },
-    [
-      order,
-      entries,
-      templateValues,
-      extraValues,
-      companyId,
-      orderId,
-      processOrderTemplates
-    ]
+    [entries]
   );
+
+  const executeDuplicate = useCallback(async () => {
+    const entry = pendingDuplicateEntry;
+    if (!entry || !order) return;
+    setDuplicateDialogOpen(false);
+    setPendingDuplicateEntry(null);
+    setDuplicatingIds((prev) => new Set(prev).add(entry.templateId));
+
+    try {
+      const sourceValues = templateValues[entry.orderTemplateId] || {};
+      const template = entry.template;
+      const nonFormulaCols = (template.columns || []).filter(
+        (c) => c.dataType !== 'FORMULA'
+      );
+
+      const buildValues = (src: TemplateValuesMap): OrderValue[] => {
+        const vals: OrderValue[] = [];
+        for (const row of template.rows || [])
+          for (const col of nonFormulaCols) {
+            const v = src[row.id]?.[col.id];
+            if (v !== undefined && v !== '')
+              vals.push({ value: v, rowId: row.id, columnId: col.id });
+          }
+        return vals;
+      };
+
+      const buildExtra = (src: ExtraValuesMap) =>
+        Object.entries(src).map(([fid, ev]) => ({
+          templateExtraFieldId: fid,
+          value: ev.value,
+          orderExtraValueId: ev.orderExtraValueId,
+          orderIndex: ev.orderIndex ?? 0
+        }));
+
+      const values = buildValues(sourceValues);
+      const extValues = buildExtra(extraValues[entry.orderTemplateId] || {});
+
+      let payload: UpdateOrderValuesData;
+
+      if (entry.isNew) {
+        payload = {
+          templates: [
+            {
+              templateId: entry.templateId,
+              values,
+              ...(extValues.length > 0 ? { extravalues: extValues } : {}),
+              children: [
+                {
+                  templateId: entry.templateId,
+                  values,
+                  ...(extValues.length > 0 ? { extravalues: extValues } : {})
+                }
+              ]
+            }
+          ]
+        };
+      } else {
+        const parentEntry = entries.find(
+          (e) => e.templateId === entry.templateId && !e.isChild
+        );
+        if (!parentEntry) return;
+        payload = {
+          templates: [
+            {
+              templateId: entry.templateId,
+              parentOrderTemplateId: parentEntry.orderTemplateId,
+              values,
+              ...(extValues.length > 0 ? { extravalues: extValues } : {})
+            }
+          ]
+        };
+      }
+
+      await updateOrderValues(companyId, orderId, payload);
+      toast.success('Template duplicated successfully');
+      const orderData = await getOrder(companyId, orderId);
+      setOrder(orderData);
+      processOrderTemplates(orderData);
+    } catch (err) {
+      toast.error(getError(err) || 'Failed to duplicate template');
+    } finally {
+      setDuplicatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.templateId);
+        return next;
+      });
+    }
+  }, [
+    pendingDuplicateEntry,
+    order,
+    entries,
+    templateValues,
+    extraValues,
+    companyId,
+    orderId,
+    processOrderTemplates
+  ]);
+
+  const cancelDuplicate = useCallback(() => {
+    setDuplicateDialogOpen(false);
+    setPendingDuplicateEntry(null);
+  }, []);
 
   // ──────────────────────────────────────────────────────────────────────
   // ZOOM HELPERS
   // ──────────────────────────────────────────────────────────────────────
-  const clampZoom = useCallback((z: number) => {
-    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
-  }, []);
+  const clampZoom = useCallback(
+    (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)),
+    []
+  );
 
   const handleZoomIn = useCallback(() => {
     setZoom((z) => clampZoom(z + ZOOM_STEP));
-    setIsFitted(false);
   }, [clampZoom]);
 
   const handleZoomOut = useCallback(() => {
     setZoom((z) => clampZoom(z - ZOOM_STEP));
-    setIsFitted(false);
   }, [clampZoom]);
 
-  const handleToggleFit = useCallback(() => {
-    if (isFitted) {
-      setZoom(1);
-      setPosition({ x: 0, y: 0 });
-      setIsFitted(false);
-    } else {
-      setZoom(1);
-      setPosition({ x: 0, y: 0 });
-      setIsFitted(true);
+  const handleResetView = useCallback(() => {
+    setZoom(1);
+    if (containerRef.current) {
+      containerRef.current.scrollLeft = 0;
+      containerRef.current.scrollTop = 0;
     }
-  }, [isFitted]);
+  }, []);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // CTRL + SCROLL WHEEL ZOOM
-  // ──────────────────────────────────────────────────────────────────────
+  // ── CTRL + SCROLL WHEEL ZOOM (only inside the canvas) ──────────────
   const handleWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
       if (!e.ctrlKey && !e.metaKey) return;
@@ -454,11 +455,11 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       e.stopPropagation();
       const delta = -e.deltaY * SCROLL_ZOOM_FACTOR;
       setZoom((z) => clampZoom(z + delta * z));
-      setIsFitted(false);
     },
     [clampZoom]
   );
 
+  // Prevent browser's own zoom when Ctrl+scrolling inside the canvas
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -470,10 +471,11 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   }, [entries.length]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // MOUSE DRAG / PAN
+  // DRAG-TO-SCROLL (grab canvas and scroll)
   // ──────────────────────────────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (isTemplateDragging) return;
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
       if (
@@ -481,37 +483,35 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         target.closest('a') ||
         target.closest('input') ||
         target.closest('select') ||
-        target.closest('textarea')
+        target.closest('textarea') ||
+        target.closest('[data-drag-handle]')
       )
         return;
       e.preventDefault();
       setIsDragging(true);
       dragStart.current = { x: e.clientX, y: e.clientY };
-      positionStart.current = { ...position };
+      scrollStart.current = {
+        left: containerRef.current?.scrollLeft ?? 0,
+        top: containerRef.current?.scrollTop ?? 0
+      };
     },
-    [position]
+    [isTemplateDragging]
   );
 
   const handleMouseMove = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (!isDragging) return;
+      if (!isDragging || isTemplateDragging || !containerRef.current) return;
       const dx = e.clientX - dragStart.current.x;
       const dy = e.clientY - dragStart.current.y;
-      setPosition({
-        x: positionStart.current.x + dx,
-        y: positionStart.current.y + dy
-      });
+      containerRef.current.scrollLeft = scrollStart.current.left - dx;
+      containerRef.current.scrollTop = scrollStart.current.top - dy;
     },
-    [isDragging]
+    [isDragging, isTemplateDragging]
   );
 
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
+  const handleMouseUp = useCallback(() => setIsDragging(false), []);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // TOUCH DRAG + PINCH-TO-ZOOM
-  // ──────────────────────────────────────────────────────────────────────
+  // ── TOUCH PAN + PINCH-TO-ZOOM ──────────────────────────────────────
   const getTouchDist = (t1: React.Touch, t2: React.Touch): number => {
     const dx = t1.clientX - t2.clientX;
     const dy = t1.clientY - t2.clientY;
@@ -520,6 +520,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
 
   const handleTouchStart = useCallback(
     (e: ReactTouchEvent<HTMLDivElement>) => {
+      if (isTemplateDragging) return;
       if (e.touches.length === 1) {
         const target = e.target as HTMLElement;
         if (
@@ -527,7 +528,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           target.closest('a') ||
           target.closest('input') ||
           target.closest('select') ||
-          target.closest('textarea')
+          target.closest('textarea') ||
+          target.closest('[data-drag-handle]')
         )
           return;
         setIsDragging(true);
@@ -535,32 +537,33 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           x: e.touches[0].clientX,
           y: e.touches[0].clientY
         };
-        positionStart.current = { ...position };
+        scrollStart.current = {
+          left: containerRef.current?.scrollLeft ?? 0,
+          top: containerRef.current?.scrollTop ?? 0
+        };
       } else if (e.touches.length === 2) {
         lastPinchDist.current = getTouchDist(e.touches[0], e.touches[1]);
       }
     },
-    [position]
+    [isTemplateDragging]
   );
 
   const handleTouchMove = useCallback(
     (e: ReactTouchEvent<HTMLDivElement>) => {
-      if (e.touches.length === 1 && isDragging) {
+      if (isTemplateDragging) return;
+      if (e.touches.length === 1 && isDragging && containerRef.current) {
         const dx = e.touches[0].clientX - dragStart.current.x;
         const dy = e.touches[0].clientY - dragStart.current.y;
-        setPosition({
-          x: positionStart.current.x + dx,
-          y: positionStart.current.y + dy
-        });
+        containerRef.current.scrollLeft = scrollStart.current.left - dx;
+        containerRef.current.scrollTop = scrollStart.current.top - dy;
       } else if (e.touches.length === 2 && lastPinchDist.current !== null) {
         const newDist = getTouchDist(e.touches[0], e.touches[1]);
         const scale = newDist / lastPinchDist.current;
         lastPinchDist.current = newDist;
         setZoom((z) => clampZoom(z * scale));
-        setIsFitted(false);
       }
     },
-    [isDragging, clampZoom]
+    [isDragging, isTemplateDragging, clampZoom]
   );
 
   const handleTouchEnd = useCallback(() => {
@@ -568,9 +571,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     lastPinchDist.current = null;
   }, []);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // DOUBLE-CLICK TO TOGGLE ZOOM
-  // ──────────────────────────────────────────────────────────────────────
+  // ── DOUBLE-CLICK ZOOM TOGGLE ────────────────────────────────────────
   const handleDoubleClick = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
@@ -579,27 +580,19 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         target.closest('a') ||
         target.closest('input') ||
         target.closest('select') ||
-        target.closest('textarea')
+        target.closest('textarea') ||
+        target.closest('[data-drag-handle]')
       )
         return;
-      if (zoom > 1.1) {
-        setZoom(1);
-        setPosition({ x: 0, y: 0 });
-        setIsFitted(true);
-      } else {
-        setZoom(2.5);
-        setIsFitted(false);
-      }
+      setZoom((z) => (z > 1.1 ? 1 : 2.5));
     },
-    [zoom]
+    []
   );
 
-  // ──────────────────────────────────────────────────────────────────────
-  // KEYBOARD SHORTCUTS (+/= zoom in, -/_ zoom out, 0 toggle fit)
-  // ──────────────────────────────────────────────────────────────────────
+  // ── KEYBOARD SHORTCUTS ──────────────────────────────────────────────
   useEffect(() => {
     if (!isCanvasFocused) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       switch (e.key) {
@@ -615,23 +608,135 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           break;
         case '0':
           e.preventDefault();
-          handleToggleFit();
+          handleResetView();
           break;
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCanvasFocused, handleZoomIn, handleZoomOut, handleToggleFit]);
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isCanvasFocused, handleZoomIn, handleZoomOut, handleResetView]);
 
   // ──────────────────────────────────────────────────────────────────────
   // HELPERS
   // ──────────────────────────────────────────────────────────────────────
   const canDuplicate = useCallback(
-    (templateId: string) => {
-      const count = entries.filter((e) => e.templateId === templateId).length;
-      return count < 2;
-    },
+    (templateId: string) =>
+      entries.filter((e) => e.templateId === templateId).length < 2,
     [entries]
+  );
+
+  const groupedByTemplate = useMemo(() => {
+    const grouped: Record<string, OrderTemplateEntry[]> = {};
+    entries.forEach((entry) => {
+      if (!grouped[entry.templateId]) grouped[entry.templateId] = [];
+      grouped[entry.templateId].push(entry);
+    });
+    return grouped;
+  }, [entries]);
+
+  const layoutItems: TemplateLayoutItem[] = useMemo(
+    () =>
+      Object.entries(groupedByTemplate).map(([templateId, templateEntries]) => {
+        const parentEntry = templateEntries.find((e) => !e.isChild);
+        const childEntries = templateEntries.filter((e) => e.isChild);
+        const duplicateAllowed = canDuplicate(templateId);
+        const templateName =
+          parentEntry?.template?.name ||
+          childEntries[0]?.template?.name ||
+          templateId;
+
+        return {
+          id: templateId,
+          label: templateName,
+          children: (
+            <div className='space-y-4'>
+              {parentEntry && (
+                <div className='relative'>
+                  <div className='mb-2 flex items-center justify-between'>
+                    <div className='flex items-center gap-2'>
+                      <Badge variant='outline' className='text-xs font-normal'>
+                        Parent Template
+                      </Badge>
+                      {parentEntry.isNew && (
+                        <Badge
+                          variant='secondary'
+                          className='text-xs font-normal'
+                        >
+                          No values yet
+                        </Badge>
+                      )}
+                    </div>
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            disabled={
+                              !duplicateAllowed ||
+                              duplicatingIds.has(templateId)
+                            }
+                            onClick={() => requestDuplicate(parentEntry)}
+                            className='gap-1.5'
+                          >
+                            {duplicatingIds.has(templateId) ? (
+                              <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                            ) : (
+                              <Copy className='h-3.5 w-3.5' />
+                            )}
+                            Duplicate
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side='left'>
+                          {duplicateAllowed
+                            ? 'Duplicate this template with copied values'
+                            : 'Maximum 2 templates reached'}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <OrderTemplateValues
+                    template={parentEntry.template}
+                    values={templateValues[parentEntry.orderTemplateId] || {}}
+                    onChange={() => {}}
+                    readOnly
+                    extraValues={extraValues[parentEntry.orderTemplateId] || {}}
+                    onExtraValuesChange={() => {}}
+                    summary={parentEntry.summary ?? {}}
+                  />
+                </div>
+              )}
+
+              {childEntries.map((childEntry, idx) => (
+                <div key={childEntry.orderTemplateId}>
+                  <div className='mb-2 flex items-center gap-2'>
+                    <Badge variant='secondary' className='text-xs font-normal'>
+                      Duplicate #{idx + 1}
+                    </Badge>
+                  </div>
+                  <OrderTemplateValues
+                    template={childEntry.template}
+                    values={templateValues[childEntry.orderTemplateId] || {}}
+                    onChange={() => {}}
+                    readOnly
+                    extraValues={extraValues[childEntry.orderTemplateId] || {}}
+                    onExtraValuesChange={() => {}}
+                    summary={childEntry.summary ?? {}}
+                  />
+                </div>
+              ))}
+            </div>
+          )
+        };
+      }),
+    [
+      groupedByTemplate,
+      canDuplicate,
+      duplicatingIds,
+      templateValues,
+      extraValues,
+      requestDuplicate
+    ]
   );
 
   const backUrl = `/dashboard/${companyId}/orders`;
@@ -691,20 +796,39 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     );
   }
 
-  // Group entries by templateId
-  const groupedByTemplate: Record<string, OrderTemplateEntry[]> = {};
-  entries.forEach((entry) => {
-    if (!groupedByTemplate[entry.templateId]) {
-      groupedByTemplate[entry.templateId] = [];
-    }
-    groupedByTemplate[entry.templateId].push(entry);
-  });
-
   // ──────────────────────────────────────────────────────────────────────
   // RENDER
   // ──────────────────────────────────────────────────────────────────────
   return (
     <div className='space-y-6'>
+      {/* ── Duplicate Confirmation Dialog ─────────────────────────── */}
+      <AlertDialog
+        open={duplicateDialogOpen}
+        onOpenChange={setDuplicateDialogOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Duplicate Template?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to duplicate the template
+              {pendingDuplicateEntry?.template?.name
+                ? ` "${pendingDuplicateEntry.template.name}"`
+                : ''}
+              ? This will create a copy with the same values.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={cancelDuplicate}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={executeDuplicate}>
+              <Copy className='mr-2 h-4 w-4' />
+              Yes, Duplicate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Back */}
       <Link
         href={backUrl}
@@ -777,13 +901,13 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       </Card>
 
       {/* ────────────────────────────────────────────────────────────────
-          TEMPLATE VALUES — Zoomable / Pannable Canvas
+          TEMPLATE VALUES SECTION
       ──────────────────────────────────────────────────────────────── */}
       {entries.length > 0 && (
         <>
           <Separator />
 
-          {/* ── Top toolbar ───────────────────────────────────────── */}
+          {/* ── Top toolbar: zoom controls ─────────────────────────── */}
           <div className='bg-muted/60 flex items-center justify-between rounded-lg border px-4 py-2.5'>
             <div className='flex min-w-0 items-center gap-3'>
               <h2 className='truncate text-sm font-semibold'>
@@ -818,162 +942,82 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
               <div className='bg-border mx-0.5 h-4 w-px' />
 
               <CanvasToolbarButton
-                onClick={handleToggleFit}
-                title={isFitted ? 'Actual size' : 'Fit to screen (0)'}
+                onClick={handleResetView}
+                title='Reset view (0)'
               >
-                {isFitted ? (
-                  <Maximize2 className='h-3.5 w-3.5' />
-                ) : (
-                  <Minimize2 className='h-3.5 w-3.5' />
-                )}
+                <Maximize2 className='h-3.5 w-3.5' />
               </CanvasToolbarButton>
             </div>
 
             <div className='w-20' />
           </div>
 
-          {/* ── Canvas container ──────────────────────────────────── */}
+          {/* ── Layout toolbar portal (OUTSIDE the canvas) ─────────── */}
           <div
-            ref={containerRef}
-            tabIndex={0}
-            className={cn(
-              'bg-muted/30 relative overflow-auto rounded-xl border outline-none',
-              'focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2',
-              isDragging ? 'cursor-grabbing' : 'cursor-grab'
-            )}
-            style={{ minHeight: '500px' }}
-            onFocus={() => setIsCanvasFocused(true)}
-            onBlur={() => setIsCanvasFocused(false)}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onWheel={handleWheel}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            onDoubleClick={handleDoubleClick}
-            onContextMenu={(e) => e.preventDefault()}
+            ref={toolbarPortalRef}
+            className='bg-muted/40 rounded-lg border px-4 py-2.5'
+          />
+
+          {/* ──────────────────────────────────────────────────────────
+              CANVAS: 3-layer containment
+              ─────────────────────────────────────────────────────────
+              1. BOUNDARY — overflow:hidden, fixed size, isolation.
+                 Its size comes from its own CSS, never from children.
+                 Nothing can push the page wider or taller.
+
+              2. SCROLL AREA — absolute inset:0, overflow:auto.
+                 Fills the boundary exactly. Native scrollbars appear
+                 when zoomed content exceeds the viewport.
+
+              3. ZOOMER — CSS "zoom" property (not transform:scale).
+                 Unlike transform, CSS zoom AFFECTS LAYOUT: content
+                 physically takes up zoom × natural size. Scroll area
+                 sees the real zoomed dimensions and scrolls correctly.
+                 No sizer div needed. No bounds callbacks.
+          ────────────────────────────────────────────────────────── */}
+          <div
+            className='bg-muted/30 relative isolate overflow-hidden rounded-xl border'
+            style={{ height: '70vh', minHeight: '400px', maxHeight: '80vh' }}
           >
             <div
+              ref={containerRef}
+              tabIndex={0}
               className={cn(
-                'origin-top-left p-6',
-                !isDragging && 'transition-transform duration-150 ease-out'
+                'absolute inset-0 overflow-auto outline-none',
+                isTemplateDragging
+                  ? 'cursor-default'
+                  : isDragging
+                    ? 'cursor-grabbing'
+                    : 'cursor-grab'
               )}
-              style={{
-                transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
-                transformOrigin: 'top left'
-              }}
+              onFocus={() => setIsCanvasFocused(true)}
+              onBlur={() => setIsCanvasFocused(false)}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              onWheel={handleWheel}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              onDoubleClick={handleDoubleClick}
+              onContextMenu={(e) => e.preventDefault()}
             >
-              <div className='space-y-6'>
-                {Object.entries(groupedByTemplate).map(
-                  ([templateId, templateEntries]) => {
-                    const parentEntry = templateEntries.find((e) => !e.isChild);
-                    const childEntries = templateEntries.filter(
-                      (e) => e.isChild
-                    );
-                    const duplicateAllowed = canDuplicate(templateId);
-
-                    return (
-                      <div key={templateId} className='space-y-4'>
-                        {/* Parent Template */}
-                        {parentEntry && (
-                          <div className='relative'>
-                            <div className='mb-2 flex items-center justify-between'>
-                              <div className='flex items-center gap-2'>
-                                <Badge
-                                  variant='outline'
-                                  className='text-xs font-normal'
-                                >
-                                  Parent Template
-                                </Badge>
-                                {parentEntry.isNew && (
-                                  <Badge
-                                    variant='secondary'
-                                    className='text-xs font-normal'
-                                  >
-                                    No values yet
-                                  </Badge>
-                                )}
-                              </div>
-                              <TooltipProvider delayDuration={200}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      variant='outline'
-                                      size='sm'
-                                      disabled={
-                                        !duplicateAllowed ||
-                                        duplicatingIds.has(templateId)
-                                      }
-                                      onClick={() =>
-                                        handleDuplicate(parentEntry)
-                                      }
-                                      className='gap-1.5'
-                                    >
-                                      {duplicatingIds.has(templateId) ? (
-                                        <Loader2 className='h-3.5 w-3.5 animate-spin' />
-                                      ) : (
-                                        <Copy className='h-3.5 w-3.5' />
-                                      )}
-                                      Duplicate
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side='left'>
-                                    {duplicateAllowed
-                                      ? 'Duplicate this template with copied values'
-                                      : 'Maximum 2 templates reached'}
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            <OrderTemplateValues
-                              template={parentEntry.template}
-                              values={
-                                templateValues[parentEntry.orderTemplateId] ||
-                                {}
-                              }
-                              onChange={() => {}}
-                              readOnly
-                              extraValues={
-                                extraValues[parentEntry.orderTemplateId] || {}
-                              }
-                              onExtraValuesChange={() => {}}
-                              summary={parentEntry.summary ?? {}}
-                            />
-                          </div>
-                        )}
-
-                        {/* Child Templates (duplicates) */}
-                        {childEntries.map((childEntry, idx) => (
-                          <div key={childEntry.orderTemplateId}>
-                            <div className='mb-2 flex items-center gap-2'>
-                              <Badge
-                                variant='secondary'
-                                className='text-xs font-normal'
-                              >
-                                Duplicate #{idx + 1}
-                              </Badge>
-                            </div>
-                            <OrderTemplateValues
-                              template={childEntry.template}
-                              values={
-                                templateValues[childEntry.orderTemplateId] || {}
-                              }
-                              onChange={() => {}}
-                              readOnly
-                              extraValues={
-                                extraValues[childEntry.orderTemplateId] || {}
-                              }
-                              onExtraValuesChange={() => {}}
-                              summary={childEntry.summary ?? {}}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  }
-                )}
+              {/* Zoomer: CSS zoom property scales content AND layout.
+                  Content physically occupies zoom × natural size.
+                  The scroll area sees the real dimensions. */}
+              <div
+                className='origin-top-left p-6'
+                style={{ zoom: zoom } as React.CSSProperties}
+              >
+                <TemplateLayoutCanvas
+                  items={layoutItems}
+                  persistKey={orderId}
+                  zoom={zoom}
+                  onTemplateDragStart={() => setIsTemplateDragging(true)}
+                  onTemplateDragEnd={() => setIsTemplateDragging(false)}
+                  toolbarPortalTarget={toolbarPortalRef}
+                />
               </div>
             </div>
           </div>
@@ -981,8 +1025,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           {/* ── Bottom hint bar ───────────────────────────────────── */}
           <div className='bg-muted/40 flex items-center justify-center rounded-lg border px-4 py-2'>
             <p className='text-muted-foreground text-[11px] select-none'>
-              Drag to pan · Double-click to toggle zoom · Pinch to zoom on touch
-              ·{' '}
+              Scroll or drag to pan · Drag handle to reposition templates ·
+              Double-click to toggle zoom · Pinch to zoom on touch ·{' '}
               <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
                 Ctrl
               </kbd>
