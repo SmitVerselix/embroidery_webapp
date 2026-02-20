@@ -11,7 +11,11 @@ import {
   type TouchEvent as ReactTouchEvent
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { getOrder, updateOrderValues } from '@/lib/api/services';
+import {
+  getOrder,
+  updateOrderValues,
+  recalculateOrder
+} from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
   OrderWithDetails,
@@ -31,6 +35,14 @@ import {
   CardTitle
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select';
 import {
   ArrowLeft,
   AlertCircle,
@@ -39,8 +51,10 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Minimize2,
-  Loader2
+  Loader2,
+  RotateCw,
+  Check,
+  X
 } from 'lucide-react';
 import {
   Tooltip,
@@ -64,10 +78,13 @@ import OrderTemplateValues, {
   type TemplateValuesMap
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
+import OrderTemplatePDF, { type FinalCalcData } from './order-template-pdf';
 import TemplateLayoutCanvas, {
   type TemplateLayoutItem
 } from './template-layout-canvas';
 import { toast } from 'sonner';
+import api from '@/lib/api/axios';
+import { ENDPOINTS } from '@/lib/api/endpoints';
 
 // =============================================================================
 // HELPERS
@@ -99,6 +116,14 @@ const getOrderTypeBadgeVariant = (type: string) => {
   }
 };
 
+/** Format a numeric string to 2 decimal places for display */
+const formatAmount = (value: string | null | undefined): string => {
+  if (!value) return '0.00';
+  const num = parseFloat(value);
+  if (isNaN(num)) return '0.00';
+  return num.toFixed(2);
+};
+
 // =============================================================================
 // ZOOM CONSTANTS
 // =============================================================================
@@ -119,6 +144,7 @@ type OrderTemplateSummary = {
   discountAmount: string;
   discountType: string | null;
   finalPayableAmount: string;
+  notes: string | null;
 };
 
 type OrderTemplateEntry = {
@@ -131,6 +157,31 @@ type OrderTemplateEntry = {
   isNew?: boolean;
 };
 
+type DiscountType = 'AMOUNT' | 'PERCENT';
+
+// =============================================================================
+// UPDATE FINAL CALCULATION API
+// =============================================================================
+
+type UpdateFinalCalculationPayload = {
+  notes: { orderTemplateId: string; notes: string }[];
+  discount: number;
+  discountType: DiscountType;
+  marginDiscount: number;
+  marginType: DiscountType;
+};
+
+const updateFinalCalculation = async (
+  companyId: string,
+  orderId: string,
+  data: UpdateFinalCalculationPayload
+): Promise<void> => {
+  await api.put(
+    `/api/v1/web/user/${companyId}/order/update-final-calculation/${orderId}`,
+    data
+  );
+};
+
 // =============================================================================
 // PROPS
 // =============================================================================
@@ -138,6 +189,311 @@ type OrderTemplateEntry = {
 interface OrderDetailProps {
   companyId: string;
   orderId: string;
+}
+
+// =============================================================================
+// FINAL CALCULATION TABLE — TYPES
+// =============================================================================
+
+type FinalCalcTemplateRow = {
+  label: string;
+  orderTemplateId: string;
+  total: string;
+  childTotal: string | null;
+  notes: string | null;
+};
+
+// =============================================================================
+// FINAL CALCULATION TABLE COMPONENT
+// =============================================================================
+
+interface FinalCalculationTableProps {
+  templateRows: FinalCalcTemplateRow[];
+  discount: string;
+  marginDiscount: string;
+  finalPayableAmount: string;
+  hasAnyChildren: boolean;
+  companyId: string;
+  orderId: string;
+  onSaved: () => Promise<void>;
+}
+
+function FinalCalculationTable({
+  templateRows,
+  discount,
+  marginDiscount,
+  finalPayableAmount,
+  hasAnyChildren,
+  companyId,
+  orderId,
+  onSaved
+}: FinalCalculationTableProps) {
+  // ── Edit mode state ────────────────────────────────────────────────
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Form values
+  const [formDiscount, setFormDiscount] = useState(discount);
+  const [formDiscountType, setFormDiscountType] =
+    useState<DiscountType>('AMOUNT');
+  const [formMarginDiscount, setFormMarginDiscount] = useState(marginDiscount);
+  const [formMarginType, setFormMarginType] = useState<DiscountType>('AMOUNT');
+  const [formNotes, setFormNotes] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
+    )
+  );
+
+  // Sync form values when external data changes (e.g. after save)
+  useEffect(() => {
+    if (!isEditing) {
+      setFormDiscount(discount);
+      setFormMarginDiscount(marginDiscount);
+    }
+  }, [discount, marginDiscount, isEditing]);
+
+  const handleEdit = () => {
+    setFormDiscount(discount);
+    setFormMarginDiscount(marginDiscount);
+    setFormNotes(
+      Object.fromEntries(
+        templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
+      )
+    );
+    setIsEditing(true);
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+  };
+
+  const handleSubmit = async () => {
+    setIsSaving(true);
+    try {
+      const notes = templateRows
+        .map((r) => ({
+          orderTemplateId: r.orderTemplateId,
+          notes: formNotes[r.orderTemplateId] ?? ''
+        }))
+        .filter((n) => n.notes.trim() !== '');
+
+      await updateFinalCalculation(companyId, orderId, {
+        notes,
+        discount: parseFloat(formDiscount) || 0,
+        discountType: formDiscountType,
+        marginDiscount: parseFloat(formMarginDiscount) || 0,
+        marginType: formMarginType
+      });
+
+      toast.success('Final calculation updated successfully');
+      setIsEditing(false);
+      await onSaved();
+    } catch (err) {
+      toast.error(getError(err) || 'Failed to update final calculation');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // ── Handle Enter key on inputs ─────────────────────────────────────
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  return (
+    <div className='w-full min-w-[520px]'>
+      {/* Header row */}
+      <div className='my-2 flex items-center justify-between px-4'>
+        <h3 className='text-sm font-semibold'>Final Calculation</h3>
+        {!isEditing ? (
+          <Button
+            variant='outline'
+            size='sm'
+            className='gap-1.5'
+            onClick={handleEdit}
+          >
+            <Pencil className='h-3.5 w-3.5' />
+            Edit
+          </Button>
+        ) : (
+          <div className='flex items-center gap-2'>
+            <Button
+              variant='outline'
+              size='sm'
+              className='gap-1.5'
+              onClick={handleCancel}
+              disabled={isSaving}
+            >
+              <X className='h-3.5 w-3.5' />
+              Cancel
+            </Button>
+            <Button
+              size='sm'
+              className='gap-1.5'
+              onClick={handleSubmit}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <Loader2 className='h-3.5 w-3.5 animate-spin' />
+              ) : (
+                <Check className='h-3.5 w-3.5' />
+              )}
+              Submit
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className='overflow-hidden rounded-md border'>
+        <table className='w-full text-sm'>
+          <thead>
+            <tr className='bg-muted/50 border-b'>
+              <th className='px-4 py-2.5 text-left font-medium' />
+              <th className='px-4 py-2.5 text-left font-medium'>Total</th>
+              {hasAnyChildren && (
+                <th className='px-4 py-2.5 text-left font-medium'>
+                  Child Total
+                </th>
+              )}
+              {/* Notes column — always visible */}
+              <th className='px-4 py-2.5 text-left font-medium'>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* ── Template rows ──────────────────────────────────────── */}
+            {templateRows.map((row) => (
+              <tr key={row.orderTemplateId} className='border-b'>
+                <td className='px-4 py-2 font-medium'>{row.label}</td>
+                <td className='px-4 py-2 font-mono tabular-nums'>
+                  {row.total}
+                </td>
+                {hasAnyChildren && (
+                  <td className='text-muted-foreground px-4 py-2 font-mono tabular-nums'>
+                    {row.childTotal ?? '—'}
+                  </td>
+                )}
+                {/* Notes cell */}
+                <td className='px-4 py-2'>
+                  {isEditing ? (
+                    <Input
+                      className='h-7 min-w-[160px] text-xs'
+                      placeholder='Add notes…'
+                      value={formNotes[row.orderTemplateId] ?? ''}
+                      onChange={(e) =>
+                        setFormNotes((prev) => ({
+                          ...prev,
+                          [row.orderTemplateId]: e.target.value
+                        }))
+                      }
+                      onKeyDown={handleKeyDown}
+                    />
+                  ) : row.notes ? (
+                    <span className='text-foreground text-xs'>{row.notes}</span>
+                  ) : (
+                    <span className='text-muted-foreground text-xs'>—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+
+            {/* ── Discount ───────────────────────────────────────────── */}
+            <tr className='border-b'>
+              <td className='px-4 py-2 font-medium'>Discount</td>
+              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
+                {isEditing ? (
+                  <div className='flex items-center gap-2'>
+                    <Input
+                      className='h-7 w-28 font-mono text-xs tabular-nums'
+                      type='number'
+                      min='0'
+                      step='0.01'
+                      value={formDiscount}
+                      onChange={(e) => setFormDiscount(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                    />
+                    <Select
+                      value={formDiscountType}
+                      onValueChange={(v) =>
+                        setFormDiscountType(v as DiscountType)
+                      }
+                    >
+                      <SelectTrigger className='h-7 w-28 text-xs'>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='AMOUNT'>Amount (₹)</SelectItem>
+                        <SelectItem value='PERCENT'>Percent (%)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <span className='font-mono tabular-nums'>{discount}</span>
+                )}
+              </td>
+              {/* Empty notes cell */}
+              <td className='px-4 py-2' />
+            </tr>
+
+            {/* ── Margin Discount ────────────────────────────────────── */}
+            <tr className='border-b'>
+              <td className='px-4 py-2 font-medium'>Margin Discount</td>
+              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
+                {isEditing ? (
+                  <div className='flex items-center gap-2'>
+                    <Input
+                      className='h-7 w-28 font-mono text-xs tabular-nums'
+                      type='number'
+                      min='0'
+                      step='0.01'
+                      value={formMarginDiscount}
+                      onChange={(e) => setFormMarginDiscount(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                    />
+                    <Select
+                      value={formMarginType}
+                      onValueChange={(v) =>
+                        setFormMarginType(v as DiscountType)
+                      }
+                    >
+                      <SelectTrigger className='h-7 w-28 text-xs'>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='AMOUNT'>Amount (₹)</SelectItem>
+                        <SelectItem value='PERCENT'>Percent (%)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <span className='font-mono tabular-nums'>
+                    {marginDiscount}
+                  </span>
+                )}
+              </td>
+              {/* Empty notes cell */}
+              <td className='px-4 py-2' />
+            </tr>
+
+            {/* ── Final Payable Amount ───────────────────────────────── */}
+            <tr className='border-t-2 font-semibold'>
+              <td className='px-4 py-2'>Final Payable Amount</td>
+              <td
+                className='px-4 py-2 font-mono tabular-nums'
+                colSpan={hasAnyChildren ? 2 : 1}
+              >
+                {finalPayableAmount}
+              </td>
+              {/* Empty notes cell */}
+              <td className='px-4 py-2' />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 // =============================================================================
@@ -158,6 +514,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [duplicatingIds, setDuplicatingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+
+  // ── Recalculate state ───────────────────────────────────────────────
+  const [isRecalculating, setIsRecalculating] = useState(false);
 
   // ── Duplicate confirmation dialog ───────────────────────────────────
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
@@ -221,7 +580,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
             discount: rawSummary.discount ?? null,
             discountAmount: rawSummary.discountAmount ?? '0.0000',
             discountType: rawSummary.discountType ?? null,
-            finalPayableAmount: rawSummary.finalPayableAmount ?? '0.0000'
+            finalPayableAmount: rawSummary.finalPayableAmount ?? '0.0000',
+            notes: rawSummary.notes ?? null
           }
         : null;
 
@@ -302,6 +662,35 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   useEffect(() => {
     fetchOrder();
   }, [fetchOrder]);
+
+  // ── Refresh order (used after saving final calculation) ─────────────
+  const refreshOrder = useCallback(async () => {
+    try {
+      const orderData = await getOrder(companyId, orderId);
+      setOrder(orderData);
+      processOrderTemplates(orderData);
+    } catch (err) {
+      toast.error(getError(err) || 'Failed to refresh order');
+    }
+  }, [companyId, orderId, processOrderTemplates]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // RECALCULATE ORDER
+  // ──────────────────────────────────────────────────────────────────────
+  const handleRecalculate = useCallback(async () => {
+    setIsRecalculating(true);
+    try {
+      await recalculateOrder(companyId, orderId);
+      toast.success('Order recalculated successfully');
+      const orderData = await getOrder(companyId, orderId);
+      setOrder(orderData);
+      processOrderTemplates(orderData);
+    } catch (err) {
+      toast.error(getError(err) || 'Failed to recalculate order');
+    } finally {
+      setIsRecalculating(false);
+    }
+  }, [companyId, orderId, processOrderTemplates]);
 
   // ──────────────────────────────────────────────────────────────────────
   // DUPLICATE: confirm → execute
@@ -447,7 +836,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     }
   }, []);
 
-  // ── CTRL + SCROLL WHEEL ZOOM (only inside the canvas) ──────────────
+  // ── CTRL + SCROLL WHEEL ZOOM ────────────────────────────────────────
   const handleWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
       if (!e.ctrlKey && !e.metaKey) return;
@@ -459,7 +848,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     [clampZoom]
   );
 
-  // Prevent browser's own zoom when Ctrl+scrolling inside the canvas
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -471,7 +859,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   }, [entries.length]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // DRAG-TO-SCROLL (grab canvas and scroll)
+  // DRAG-TO-SCROLL
   // ──────────────────────────────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
@@ -634,7 +1022,64 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     return grouped;
   }, [entries]);
 
-  const layoutItems: TemplateLayoutItem[] = useMemo(
+  // ──────────────────────────────────────────────────────────────────────
+  // FINAL CALC DATA — passed to PDF component
+  // ──────────────────────────────────────────────────────────────────────
+  const finalCalcData: FinalCalcData | undefined = useMemo(() => {
+    if (!order || entries.length === 0) return undefined;
+
+    const hasAnyChildren = Object.values(groupedByTemplate).some(
+      (templateEntries) => templateEntries.some((e) => e.isChild)
+    );
+
+    const templateRows = Object.entries(groupedByTemplate).map(
+      ([templateId, templateEntries]) => {
+        const parentEntry = templateEntries.find((e) => !e.isChild);
+        const childEntries = templateEntries.filter((e) => e.isChild);
+        const templateName =
+          parentEntry?.template?.name ||
+          childEntries[0]?.template?.name ||
+          templateId;
+
+        const parentTotal =
+          parentEntry?.summary?.finalPayableAmount ?? '0.0000';
+
+        let childTotal: string | null = null;
+        if (childEntries.length > 0) {
+          const sum = childEntries.reduce(
+            (acc, child) =>
+              acc + parseFloat(child.summary?.finalPayableAmount || '0'),
+            0
+          );
+          childTotal = formatAmount(String(sum));
+        }
+
+        return {
+          label: templateName,
+          orderTemplateId:
+            parentEntry && !parentEntry.isNew
+              ? parentEntry.orderTemplateId
+              : (childEntries[0]?.orderTemplateId ?? templateId),
+          total: formatAmount(parentTotal),
+          childTotal,
+          notes: parentEntry?.summary?.notes ?? null
+        };
+      }
+    );
+
+    return {
+      templateRows,
+      discount: formatAmount(order.discount),
+      marginDiscount: formatAmount(order.marginDiscount),
+      finalPayableAmount: formatAmount(order.finalPayableAmount),
+      hasAnyChildren
+    };
+  }, [order, entries, groupedByTemplate]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // TEMPLATE LAYOUT ITEMS
+  // ──────────────────────────────────────────────────────────────────────
+  const templateLayoutItems: TemplateLayoutItem[] = useMemo(
     () =>
       Object.entries(groupedByTemplate).map(([templateId, templateEntries]) => {
         const parentEntry = templateEntries.find((e) => !e.isChild);
@@ -738,6 +1183,77 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       requestDuplicate
     ]
   );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // FINAL CALCULATION LAYOUT ITEM
+  // ──────────────────────────────────────────────────────────────────────
+  const finalCalcLayoutItem: TemplateLayoutItem | null = useMemo(() => {
+    if (!order || entries.length === 0) return null;
+
+    const hasAnyChildren = Object.values(groupedByTemplate).some(
+      (templateEntries) => templateEntries.some((e) => e.isChild)
+    );
+
+    // Build per-template rows — now include orderTemplateId for notes
+    const templateRows: FinalCalcTemplateRow[] = Object.entries(
+      groupedByTemplate
+    ).map(([templateId, templateEntries]) => {
+      const parentEntry = templateEntries.find((e) => !e.isChild);
+      const childEntries = templateEntries.filter((e) => e.isChild);
+      const templateName =
+        parentEntry?.template?.name ||
+        childEntries[0]?.template?.name ||
+        templateId;
+
+      const parentTotal = parentEntry?.summary?.finalPayableAmount ?? '0.0000';
+
+      let childTotal: string | null = null;
+      if (childEntries.length > 0) {
+        const sum = childEntries.reduce((acc, child) => {
+          return acc + parseFloat(child.summary?.finalPayableAmount || '0');
+        }, 0);
+        childTotal = formatAmount(String(sum));
+      }
+
+      return {
+        label: templateName,
+        // Use parent's orderTemplateId; fall back to child's if parent is "new"
+        orderTemplateId:
+          parentEntry && !parentEntry.isNew
+            ? parentEntry.orderTemplateId
+            : (childEntries[0]?.orderTemplateId ?? templateId),
+        total: formatAmount(parentTotal),
+        childTotal,
+        notes: parentEntry?.summary?.notes ?? null
+      };
+    });
+
+    return {
+      id: '__final_calculation__',
+      label: 'Final Calculation',
+      children: (
+        <FinalCalculationTable
+          templateRows={templateRows}
+          discount={formatAmount(order.discount)}
+          marginDiscount={formatAmount(order.marginDiscount)}
+          finalPayableAmount={formatAmount(order.finalPayableAmount)}
+          hasAnyChildren={hasAnyChildren}
+          companyId={companyId}
+          orderId={orderId}
+          onSaved={refreshOrder}
+        />
+      )
+    };
+  }, [order, entries, groupedByTemplate, companyId, orderId, refreshOrder]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // COMBINED LAYOUT ITEMS
+  // ──────────────────────────────────────────────────────────────────────
+  const layoutItems: TemplateLayoutItem[] = useMemo(() => {
+    const items = [...templateLayoutItems];
+    if (finalCalcLayoutItem) items.push(finalCalcLayoutItem);
+    return items;
+  }, [templateLayoutItems, finalCalcLayoutItem]);
 
   const backUrl = `/dashboard/${companyId}/orders`;
   const editUrl = `/dashboard/${companyId}/orders/${orderId}/edit`;
@@ -856,10 +1372,31 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 <CardDescription>{order.description}</CardDescription>
               )}
             </div>
-            <Button variant='outline' onClick={() => router.push(editUrl)}>
-              <Pencil className='mr-2 h-4 w-4' />
-              Edit Order
-            </Button>
+            <div className='flex items-center gap-2'>
+              <Button
+                variant='outline'
+                onClick={handleRecalculate}
+                disabled={isRecalculating}
+              >
+                {isRecalculating ? (
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                ) : (
+                  <RotateCw className='mr-2 h-4 w-4' />
+                )}
+                Recalculate
+              </Button>
+              <OrderTemplatePDF
+                order={order}
+                entries={entries}
+                templateValues={templateValues}
+                extraValues={extraValues}
+                finalCalc={finalCalcData}
+              />
+              <Button variant='outline' onClick={() => router.push(editUrl)}>
+                <Pencil className='mr-2 h-4 w-4' />
+                Edit Order
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -958,23 +1495,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
             className='bg-muted/40 rounded-lg border px-4 py-2.5'
           />
 
-          {/* ──────────────────────────────────────────────────────────
-              CANVAS: 3-layer containment
-              ─────────────────────────────────────────────────────────
-              1. BOUNDARY — overflow:hidden, fixed size, isolation.
-                 Its size comes from its own CSS, never from children.
-                 Nothing can push the page wider or taller.
-
-              2. SCROLL AREA — absolute inset:0, overflow:auto.
-                 Fills the boundary exactly. Native scrollbars appear
-                 when zoomed content exceeds the viewport.
-
-              3. ZOOMER — CSS "zoom" property (not transform:scale).
-                 Unlike transform, CSS zoom AFFECTS LAYOUT: content
-                 physically takes up zoom × natural size. Scroll area
-                 sees the real zoomed dimensions and scrolls correctly.
-                 No sizer div needed. No bounds callbacks.
-          ────────────────────────────────────────────────────────── */}
           <div
             className='bg-muted/30 relative isolate overflow-hidden rounded-xl border'
             style={{ height: '70vh', minHeight: '400px', maxHeight: '80vh' }}
@@ -1003,9 +1523,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
               onDoubleClick={handleDoubleClick}
               onContextMenu={(e) => e.preventDefault()}
             >
-              {/* Zoomer: CSS zoom property scales content AND layout.
-                  Content physically occupies zoom × natural size.
-                  The scroll area sees the real dimensions. */}
               <div
                 className='origin-top-left p-6'
                 style={{ zoom: zoom } as React.CSSProperties}

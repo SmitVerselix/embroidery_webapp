@@ -55,7 +55,8 @@ import type {
   AcceptInviteData,
   AcceptInvitePayload,
   LoginHistoryParams,
-  LoginHistoryPayload
+  LoginHistoryPayload,
+  UpdateFinalCalculationData
 } from './types';
 
 // =============================================================================
@@ -620,6 +621,26 @@ export const updateOrderExtraValues = async (
 ): Promise<void> => {
   await api.put<ApiResponse<void>>(
     ENDPOINTS.ORDER.UPDATE_EXTRA_VALUES(companyId, orderId),
+    data
+  );
+};
+
+export const recalculateOrder = async (
+  companyId: string,
+  orderId: string
+): Promise<void> => {
+  await api.put<ApiResponse<null>>(
+    ENDPOINTS.ORDER.RECALCULATE(companyId, orderId)
+  );
+};
+
+export const updateFinalCalculation = async (
+  companyId: string,
+  orderId: string,
+  data: UpdateFinalCalculationData
+): Promise<void> => {
+  await api.put<ApiResponse<null>>(
+    ENDPOINTS.ORDER.UPDATE_FINAL_CALCULATION(companyId, orderId),
     data
   );
 };

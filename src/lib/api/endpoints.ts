@@ -149,7 +149,11 @@ export const ENDPOINTS = {
     UPDATE_VALUES: (companyId: string, orderId: string) =>
       `${API_PREFIX}/user/${companyId}/order/update-values/${orderId}`,
     UPDATE_EXTRA_VALUES: (companyId: string, orderId: string) =>
-      `${API_PREFIX}/user/${companyId}/order/update-extra-values/${orderId}`
+      `${API_PREFIX}/user/${companyId}/order/update-extra-values/${orderId}`,
+    RECALCULATE: (companyId: string, orderId: string) =>
+      `${API_PREFIX}/user/${companyId}/order/recalculate/${orderId}`,
+    UPDATE_FINAL_CALCULATION: (companyId: string, orderId: string) =>
+      `${API_PREFIX}/user/${companyId}/order/update-final-calculation/${orderId}`
   },
 
   // Upload endpoints

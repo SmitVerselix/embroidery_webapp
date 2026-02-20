@@ -35,6 +35,8 @@ export function InfoSidebar({
   ...props
 }: React.ComponentProps<typeof Infobar>) {
   const { content } = useInfobar();
+  if (!content) return null;
+
   const data = content || defaultData;
 
   return (

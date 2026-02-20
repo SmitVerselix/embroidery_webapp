@@ -631,6 +631,15 @@ export type Order = {
   customerId: string | null;
   referenceNo: string | null;
   status: OrderStatus | null;
+  // ── Financial summary fields (computed by backend) ──────────────────
+  total: string | null;
+  discount: string | null;
+  discountType: string | null;
+  finalPayableAmount: string | null;
+  marginDiscount: string | null;
+  marginType: string | null;
+  marginTotal: string | null;
+  // ───────────────────────────────────────────────────────────────────
   createdBy: string;
   updatedBy: string | null;
   deletedBy: string | null;
@@ -725,6 +734,14 @@ export type UpdateOrderExtraValuesTemplatePayload = {
 
 export type UpdateOrderExtraValuesData = {
   templates: UpdateOrderExtraValuesTemplatePayload[];
+};
+
+export type UpdateFinalCalculationData = {
+  notes: { orderTemplateId: string; notes: string }[];
+  discount: number;
+  discountType: 'AMOUNT' | 'PERCENT';
+  marginDiscount: number;
+  marginType: 'AMOUNT' | 'PERCENT';
 };
 
 // =============================================================================
