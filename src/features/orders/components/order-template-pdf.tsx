@@ -1,20 +1,5 @@
 'use client';
 
-/**
- * OrderTemplatePDF — reusable multi-select PDF download component.
- *
- * Install peer deps (once, in your project):
- *   npm install jspdf jspdf-autotable
- *
- * Usage:
- *   <OrderTemplatePDF
- *     order={order}
- *     entries={entries}
- *     templateValues={templateValues}
- *     extraValues={extraValues}
- *   />
- */
-
 import { useState, useCallback, useMemo } from 'react';
 import {
   Download,
@@ -78,14 +63,24 @@ export type FinalCalcRow = {
 
 export type FinalCalcData = {
   templateRows: FinalCalcRow[];
+  total: string;
   discount: string;
+  discountType: string | null;
   marginDiscount: string;
+  marginType: string | null;
+  marginTotal: string;
   finalPayableAmount: string;
   hasAnyChildren: boolean;
 };
 
 /** Sentinel ID used to represent the Final Calculation page in selectedIds */
 const FINAL_CALC_ID = '__final_calculation__';
+
+/** Options that control which rows appear on the Final Calculation PDF page */
+type FinalCalcPDFOptions = {
+  includeMarginDiscount: boolean;
+  includeMarginTotal: boolean;
+};
 
 interface OrderTemplatePDFProps {
   order: OrderWithDetails;
@@ -115,6 +110,71 @@ const fmtDate = (d: string) =>
   });
 
 // =============================================================================
+// BLOCK HELPERS (shared by preview + PDF)
+// =============================================================================
+
+type ColumnBlock = {
+  index: number;
+  columns: any[];
+};
+
+function deriveBlockColumns(columns: any[]): ColumnBlock[] {
+  const sorted = [...columns].sort((a: any, b: any) => {
+    if (a.blockIndex !== b.blockIndex) return a.blockIndex - b.blockIndex;
+    return a.orderNo - b.orderNo;
+  });
+  const blockIndices = Array.from(
+    new Set(sorted.map((c: any) => c.blockIndex))
+  ).sort((a, b) => a - b);
+  return blockIndices.map((idx) => ({
+    index: idx,
+    columns: sorted.filter((c: any) => c.blockIndex === idx)
+  }));
+}
+
+// =============================================================================
+// IMAGE UTILITIES — fetch remote images for PDF embedding
+// =============================================================================
+
+async function fetchImageAsDataURL(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url, { mode: 'cors' });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function getImageDimensions(
+  dataUrl: string
+): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => resolve({ w: 200, h: 200 });
+    img.src = dataUrl;
+  });
+}
+
+/** Scale dimensions to fit inside a bounding box while keeping aspect ratio */
+function fitImage(
+  srcW: number,
+  srcH: number,
+  maxW: number,
+  maxH: number
+): { w: number; h: number } {
+  const ratio = Math.min(maxW / srcW, maxH / srcH, 1);
+  return { w: srcW * ratio, h: srcH * ratio };
+}
+
+// =============================================================================
 // PREVIEW TABLE — mirrors the on-screen table exactly
 // =============================================================================
 
@@ -131,6 +191,20 @@ function PreviewTable({ entry, values, extras }: PreviewTableProps) {
   const extraFields = template.extra ?? [];
   const headerExtras = extraFields.filter((f) => f.sectionType === 'HEADER');
   const footerExtras = extraFields.filter((f) => f.sectionType === 'FOOTER');
+
+  const blockGroups = deriveBlockColumns(columns);
+  const flatColumns = blockGroups.flatMap((bg) => bg.columns);
+  const hasMultipleBlocks = blockGroups.length > 1;
+
+  // Block header colour classes (same palette as order-template-values)
+  const blockColorClasses = [
+    'bg-blue-100 text-blue-800',
+    'bg-green-100 text-green-800',
+    'bg-purple-100 text-purple-800',
+    'bg-amber-100 text-amber-800',
+    'bg-pink-100 text-pink-800',
+    'bg-teal-100 text-teal-800'
+  ];
 
   return (
     <div className='space-y-2.5 text-xs'>
@@ -149,15 +223,38 @@ function PreviewTable({ entry, values, extras }: PreviewTableProps) {
       )}
 
       {/* Main values table */}
-      {columns.length > 0 && rows.length > 0 && (
+      {flatColumns.length > 0 && rows.length > 0 && (
         <div className='overflow-x-auto rounded-md border'>
           <table className='w-full text-xs'>
             <thead>
+              {/* Block group header row (only when multiple blocks) */}
+              {hasMultipleBlocks && (
+                <tr className='bg-muted/30 border-b-2'>
+                  <th className='px-3 py-2 text-left font-semibold' rowSpan={2}>
+                    Description
+                  </th>
+                  {blockGroups.map((bg, idx) => (
+                    <th
+                      key={bg.index}
+                      colSpan={bg.columns.length}
+                      className={cn(
+                        'px-3 py-1.5 text-center font-bold',
+                        blockColorClasses[idx % blockColorClasses.length]
+                      )}
+                    >
+                      Block {bg.index}
+                    </th>
+                  ))}
+                </tr>
+              )}
+              {/* Column header row */}
               <tr className='bg-muted/60 border-b'>
-                <th className='px-3 py-2 text-left font-semibold'>
-                  Description
-                </th>
-                {columns.map((col) => (
+                {!hasMultipleBlocks && (
+                  <th className='px-3 py-2 text-left font-semibold'>
+                    Description
+                  </th>
+                )}
+                {flatColumns.map((col: any) => (
                   <th
                     key={col.id}
                     className='px-3 py-2 text-right font-semibold'
@@ -181,7 +278,7 @@ function PreviewTable({ entry, values, extras }: PreviewTableProps) {
                     )}
                   >
                     <td className='px-3 py-1.5'>{row.label}</td>
-                    {columns.map((col) => (
+                    {flatColumns.map((col: any) => (
                       <td
                         key={col.id}
                         className='px-3 py-1.5 text-right font-mono tabular-nums'
@@ -257,11 +354,21 @@ function PreviewTable({ entry, values, extras }: PreviewTableProps) {
 // FINAL CALC PREVIEW — shown in dialog when Final Calculation is expanded
 // =============================================================================
 
-function FinalCalcPreview({ data }: { data: FinalCalcData }) {
+function FinalCalcPreview({
+  data,
+  options
+}: {
+  data: FinalCalcData;
+  options: FinalCalcPDFOptions;
+}) {
   const {
     templateRows,
+    total,
     discount,
+    discountType,
     marginDiscount,
+    marginType,
+    marginTotal,
     finalPayableAmount,
     hasAnyChildren
   } = data;
@@ -311,14 +418,34 @@ function FinalCalcPreview({ data }: { data: FinalCalcData }) {
       {/* Summary rows */}
       <div className='flex justify-end'>
         <div className='w-64 overflow-hidden rounded-md border text-xs'>
+          <div className='flex justify-between border-b px-3 py-1.5 font-semibold'>
+            <span>Total</span>
+            <span className='font-mono tabular-nums'>{total}</span>
+          </div>
           <div className='flex justify-between border-b px-3 py-1.5'>
-            <span className='text-muted-foreground'>Discount</span>
+            <span className='text-muted-foreground'>
+              Discount
+              {discountType
+                ? ` (${discountType === 'PERCENT' ? '%' : '₹'})`
+                : ''}
+            </span>
             <span className='font-mono tabular-nums'>{discount}</span>
           </div>
-          <div className='flex justify-between border-b px-3 py-1.5'>
-            <span className='text-muted-foreground'>Margin Discount</span>
-            <span className='font-mono tabular-nums'>{marginDiscount}</span>
-          </div>
+          {options.includeMarginDiscount && (
+            <div className='flex justify-between border-b px-3 py-1.5'>
+              <span className='text-muted-foreground'>
+                Margin Discount
+                {marginType ? ` (${marginType === 'PERCENT' ? '%' : '₹'})` : ''}
+              </span>
+              <span className='font-mono tabular-nums'>{marginDiscount}</span>
+            </div>
+          )}
+          {options.includeMarginTotal && (
+            <div className='flex justify-between border-b px-3 py-1.5'>
+              <span className='text-muted-foreground'>Margin Total</span>
+              <span className='font-mono tabular-nums'>{marginTotal}</span>
+            </div>
+          )}
           <div className='flex justify-between bg-indigo-50 px-3 py-2 font-semibold text-indigo-700'>
             <span>Final Payable Amount</span>
             <span className='font-mono tabular-nums'>{finalPayableAmount}</span>
@@ -338,12 +465,17 @@ async function generateMultiPDF(
   templateValues: Record<string, TemplateValuesMap>,
   extraValues: Record<string, ExtraValuesMap>,
   finalCalc: FinalCalcData | null,
-  includeFinalCalc: boolean
+  includeFinalCalc: boolean,
+  finalCalcOptions: FinalCalcPDFOptions
 ): Promise<void> {
   const { default: jsPDF } = await import('jspdf');
   const { default: autoTable } = await import('jspdf-autotable');
 
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'pt',
+    format: 'a4'
+  });
   const PAGE_W = doc.internal.pageSize.getWidth();
   const PAGE_H = doc.internal.pageSize.getHeight();
   const MARGIN = 36;
@@ -360,6 +492,111 @@ async function generateMultiPDF(
     rowAlt: [248, 250, 252] as [number, number, number],
     totalRow: [241, 245, 249] as [number, number, number]
   } as const;
+
+  // Block header colours (matching the UI palette)
+  const BLOCK_COLORS: [number, number, number][] = [
+    [37, 99, 235], // blue-600
+    [22, 163, 74], // green-600
+    [147, 51, 234], // purple-600
+    [217, 119, 6], // amber-600
+    [219, 39, 119], // pink-600
+    [13, 148, 136] // teal-600
+  ];
+
+  // Section label colours (header=green, media=purple, footer=green)
+  const SEC = {
+    header: {
+      bg: [220, 252, 231] as [number, number, number],
+      fg: [22, 101, 52] as [number, number, number],
+      badge: [34, 197, 94] as [number, number, number]
+    },
+    media: {
+      bg: [243, 232, 255] as [number, number, number],
+      fg: [107, 33, 168] as [number, number, number],
+      badge: [168, 85, 247] as [number, number, number]
+    },
+    footer: {
+      bg: [220, 252, 231] as [number, number, number],
+      fg: [22, 101, 52] as [number, number, number],
+      badge: [34, 197, 94] as [number, number, number]
+    }
+  } as const;
+
+  // ── Pre-fetch all media images ──────────────────────────────────────
+  const mediaImageCache: Record<
+    string,
+    { dataUrl: string; w: number; h: number }
+  > = {};
+
+  for (const entry of selectedEntries) {
+    const extras = entry.template.extra ?? [];
+    const extVals = extraValues[entry.orderTemplateId] ?? {};
+    const mediaExtras = extras.filter(
+      (f) => f.sectionType === 'MEDIA' && f.valueType === 'IMAGE'
+    );
+    for (const mf of mediaExtras) {
+      const url = extVals[mf.id]?.value;
+      if (url && typeof url === 'string' && url.startsWith('http')) {
+        const cacheKey = `${entry.orderTemplateId}_${mf.id}`;
+        try {
+          const dataUrl = await fetchImageAsDataURL(url);
+          if (dataUrl) {
+            const dims = await getImageDimensions(dataUrl);
+            mediaImageCache[cacheKey] = { dataUrl, ...dims };
+          }
+        } catch {
+          /* skip failed images */
+        }
+      }
+    }
+  }
+
+  // ── Draw section label pill (like the UI badges) ────────────────────
+  function drawSectionLabel(
+    label: string,
+    count: number,
+    color: {
+      bg: [number, number, number];
+      fg: [number, number, number];
+      badge: [number, number, number];
+    },
+    y: number
+  ): number {
+    const labelW = doc.getTextWidth(label) * 1.15 + 12;
+    const badgeText = `${count} field${count !== 1 ? 's' : ''}`;
+    const badgeW = 38;
+    const pillW = labelW + badgeW + 16;
+    const pillH = 18;
+
+    // Pill background
+    doc.setFillColor(...color.bg);
+    doc.roundedRect(MARGIN, y, pillW, pillH, 4, 4, 'F');
+
+    // Section icon placeholder (small square)
+    doc.setFillColor(...color.badge);
+    doc.roundedRect(MARGIN + 6, y + 4, 10, 10, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6);
+    doc.setTextColor(...C.white);
+    doc.text('⊞', MARGIN + 8.5, y + 11.5);
+
+    // Label text
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(...color.fg);
+    doc.text(label, MARGIN + 20, y + 12);
+
+    // Field count badge
+    const badgeX = MARGIN + labelW + 4;
+    doc.setFillColor(...color.badge);
+    doc.roundedRect(badgeX, y + 3, badgeW, 12, 3, 3, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...C.white);
+    doc.text(badgeText, badgeX + badgeW / 2, y + 11, { align: 'center' });
+
+    return y + pillH + 8;
+  }
 
   // ── Draw top banner ─────────────────────────────────────────────────
   function drawBanner(
@@ -454,6 +691,15 @@ async function generateMultiPDF(
     });
 
     return y + H + 16;
+  }
+
+  // ── Helper: check remaining page space ──────────────────────────────
+  function ensureSpace(y: number, needed: number): number {
+    if (y + needed > PAGE_H - 40) {
+      doc.addPage();
+      return 30;
+    }
+    return y;
   }
 
   // ── Helper: render the Final Calculation page ────────────────────────
@@ -563,7 +809,10 @@ async function generateMultiPDF(
           styles: { halign: 'right' as const, textColor: C.muted }
         });
       }
-      cells.push({ content: row.notes ?? '—', styles: { textColor: C.muted } });
+      cells.push({
+        content: row.notes ?? '—',
+        styles: { textColor: C.muted }
+      });
       return cells;
     });
 
@@ -599,11 +848,26 @@ async function generateMultiPDF(
     const summaryW = 260;
     const summaryX = PAGE_W - MARGIN - summaryW;
 
+    // Build summary rows dynamically based on options
     const sRows: [string, string, boolean][] = [
-      ['Discount', discount, false],
-      ['Margin Discount', marginDiscount, false],
-      ['Final Payable Amount', finalPayableAmount, true]
+      ['Total', fc.total, false],
+      [
+        `Discount${fc.discountType ? ` (${fc.discountType === 'PERCENT' ? '%' : '₹'})` : ''}`,
+        discount,
+        false
+      ]
     ];
+    if (finalCalcOptions.includeMarginDiscount) {
+      sRows.push([
+        `Margin Discount${fc.marginType ? ` (${fc.marginType === 'PERCENT' ? '%' : '₹'})` : ''}`,
+        marginDiscount,
+        false
+      ]);
+    }
+    if (finalCalcOptions.includeMarginTotal) {
+      sRows.push(['Margin Total', fc.marginTotal, false]);
+    }
+    sRows.push(['Final Payable Amount', finalPayableAmount, true]);
 
     autoTable(doc, {
       startY: y,
@@ -654,7 +918,8 @@ async function generateMultiPDF(
     selectedEntries.length + (includeFinalCalc && finalCalc ? 1 : 0);
 
   // ── Render every selected entry ─────────────────────────────────────
-  selectedEntries.forEach((entry, entryIdx) => {
+  for (let entryIdx = 0; entryIdx < selectedEntries.length; entryIdx++) {
+    const entry = selectedEntries[entryIdx];
     if (entryIdx > 0) doc.addPage();
 
     const { template, summary } = entry;
@@ -664,15 +929,20 @@ async function generateMultiPDF(
     const vals = templateValues[entry.orderTemplateId] ?? {};
     const extVals = extraValues[entry.orderTemplateId] ?? {};
 
+    const headerExtras = extra.filter((f) => f.sectionType === 'HEADER');
+    const footerExtras = extra.filter((f) => f.sectionType === 'FOOTER');
+    const mediaExtras = extra.filter((f) => f.sectionType === 'MEDIA');
+
     drawBanner(template.name ?? 'Template', entry.isChild, entryIdx + 1);
     let y = 90;
 
     // Info card
     y = drawInfoCard(y, template.name ?? '—');
 
-    // Header extras
-    const headerExtras = extra.filter((f) => f.sectionType === 'HEADER');
+    // ── HEADER FIELDS ─────────────────────────────────────────────────
     if (headerExtras.length > 0) {
+      y = drawSectionLabel('Header Fields', headerExtras.length, SEC.header, y);
+
       autoTable(doc, {
         startY: y,
         margin: { left: MARGIN, right: MARGIN },
@@ -680,8 +950,8 @@ async function generateMultiPDF(
         body: headerExtras.map((f) => [f.label, extVals[f.id]?.value ?? '—']),
         theme: 'plain',
         headStyles: {
-          fillColor: C.accentSoft,
-          textColor: C.accent,
+          fillColor: SEC.header.bg,
+          textColor: SEC.header.fg,
           fontStyle: 'bold',
           fontSize: 7,
           cellPadding: { top: 4, bottom: 4, left: 8, right: 8 }
@@ -689,7 +959,7 @@ async function generateMultiPDF(
         bodyStyles: {
           fontSize: 8,
           textColor: C.primary,
-          cellPadding: { top: 4, bottom: 4, left: 8, right: 8 }
+          cellPadding: { top: 5, bottom: 5, left: 8, right: 8 }
         },
         alternateRowStyles: { fillColor: C.rowAlt },
         tableLineColor: C.border,
@@ -701,7 +971,7 @@ async function generateMultiPDF(
       y = (doc as any).lastAutoTable.finalY + 12;
     }
 
-    // Section label
+    // ── TEMPLATE VALUES ───────────────────────────────────────────────
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(...C.accent);
@@ -712,18 +982,54 @@ async function generateMultiPDF(
     doc.setLineWidth(0.5);
     y += 16;
 
-    // Main values table
+    // ── Main values table (block-aware) ───────────────────────────────
     if (columns.length > 0 && rows.length > 0) {
+      const blockGroups = deriveBlockColumns(columns);
+      const flatCols = blockGroups.flatMap((bg) => bg.columns);
+      const hasMultipleBlocks = blockGroups.length > 1;
+
       const usableW = PAGE_W - MARGIN * 2;
       const descW = Math.min(180, usableW * 0.28);
-      const colW = (usableW - descW) / columns.length;
+      const colW = (usableW - descW) / flatCols.length;
 
-      const head = [['Description', ...columns.map((c) => c.label)]];
+      let head: any[][];
+      if (hasMultipleBlocks) {
+        const headerRow1: any[] = [
+          {
+            content: 'Description',
+            rowSpan: 2,
+            styles: { valign: 'middle' as const, halign: 'left' as const }
+          }
+        ];
+        blockGroups.forEach((bg, idx) => {
+          headerRow1.push({
+            content: `Block ${bg.index}`,
+            colSpan: bg.columns.length,
+            styles: {
+              halign: 'center' as const,
+              fillColor: BLOCK_COLORS[idx % BLOCK_COLORS.length],
+              textColor: C.white,
+              fontStyle: 'bold' as const,
+              fontSize: 9
+            }
+          });
+        });
+        const headerRow2: any[] = blockGroups.flatMap((bg) =>
+          bg.columns.map((col: any) => ({
+            content: col.label,
+            styles: { halign: 'center' as const }
+          }))
+        );
+        head = [headerRow1, headerRow2];
+      } else {
+        head = [['Description', ...flatCols.map((c: any) => c.label)]];
+      }
+
       const body = rows.map((row) => {
         const isTotal = row.rowType === 'TOTAL';
         return [
           row.label,
-          ...columns.map((col) => vals[row.id]?.[col.id] ?? '')
+          ...flatCols.map((col: any) => vals[row.id]?.[col.id] ?? '')
         ].map((cell, ci) => ({
           content: cell,
           styles: {
@@ -760,7 +1066,7 @@ async function generateMultiPDF(
         columnStyles: {
           0: { cellWidth: descW, fontStyle: 'bold', halign: 'left' },
           ...Object.fromEntries(
-            columns.map((_, i) => [
+            flatCols.map((_: any, i: number) => [
               i + 1,
               { cellWidth: colW, halign: 'right' as const, font: 'courier' }
             ])
@@ -770,21 +1076,18 @@ async function generateMultiPDF(
       y = (doc as any).lastAutoTable.finalY + 16;
     }
 
-    // Summary card (right-aligned)
+    // ── SUMMARY CARD (all fields, right-aligned) ──────────────────────
     if (summary) {
-      const summaryW = 220;
+      const summaryW = 240;
       const summaryX = PAGE_W - MARGIN - summaryW;
 
       const sRows: [string, string, boolean][] = [
-        ['Subtotal', fmt(summary.total), false]
+        ['Total', fmt(summary.total), false],
+        ['Discount', summary.discount ?? '—', false],
+        ['Discount Type', summary.discountType ?? '—', false],
+        ['Discount Amount', fmt(summary.discountAmount), false],
+        ['Final Payable Amount', fmt(summary.finalPayableAmount), true]
       ];
-      if (summary.discountAmount && parseFloat(summary.discountAmount) > 0) {
-        const dl =
-          summary.discountType === 'PERCENT' ? 'Discount (%)' : 'Discount (₹)';
-        sRows.push([dl, `- ${fmt(summary.discountAmount)}`, false]);
-      }
-      sRows.push(['Total Payable', fmt(summary.finalPayableAmount), true]);
-      if (summary.notes) sRows.push(['Notes', summary.notes, false]);
 
       autoTable(doc, {
         startY: y,
@@ -816,8 +1119,8 @@ async function generateMultiPDF(
         tableLineColor: C.border,
         tableLineWidth: 0.5,
         columnStyles: {
-          0: { textColor: C.muted, cellWidth: 110 },
-          1: { halign: 'right', font: 'courier', cellWidth: 110 }
+          0: { textColor: C.muted, cellWidth: 120 },
+          1: { halign: 'right', font: 'courier', cellWidth: 120 }
         },
         didParseCell(data) {
           if (sRows[data.row.index]?.[2]) {
@@ -831,14 +1134,126 @@ async function generateMultiPDF(
       y = (doc as any).lastAutoTable.finalY + 14;
     }
 
-    // Footer extras
-    const footerExtras = extra.filter((f) => f.sectionType === 'FOOTER');
+    // ── MEDIA FIELDS ──────────────────────────────────────────────────
+    if (mediaExtras.length > 0) {
+      const mediaWithImages = mediaExtras.filter((mf) => {
+        const cacheKey = `${entry.orderTemplateId}_${mf.id}`;
+        return (
+          mediaImageCache[cacheKey] ||
+          (extVals[mf.id]?.value && mf.valueType !== 'IMAGE')
+        );
+      });
+
+      // Only render section if there's actual content
+      const hasAnyMedia =
+        mediaWithImages.length > 0 ||
+        mediaExtras.some(
+          (mf) => mf.valueType !== 'IMAGE' && extVals[mf.id]?.value
+        );
+
+      if (hasAnyMedia || mediaExtras.length > 0) {
+        y = ensureSpace(y, 100);
+        y = drawSectionLabel('Media Fields', mediaExtras.length, SEC.media, y);
+
+        // Render each media extra field
+        for (const mf of mediaExtras) {
+          const cacheKey = `${entry.orderTemplateId}_${mf.id}`;
+          const cached = mediaImageCache[cacheKey];
+
+          if (cached) {
+            // Draw image label
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(7.5);
+            doc.setTextColor(...C.muted);
+            doc.text(mf.label, MARGIN, y + 4);
+            y += 10;
+
+            // Draw image with border — INCREASED SIZE
+            const MAX_IMG_W = 320;
+            const MAX_IMG_H = 240;
+            const fit = fitImage(cached.w, cached.h, MAX_IMG_W, MAX_IMG_H);
+
+            y = ensureSpace(y, fit.h + 16);
+
+            // Image border/frame
+            doc.setDrawColor(...SEC.media.badge);
+            doc.setLineWidth(1);
+            doc.roundedRect(MARGIN, y, fit.w + 8, fit.h + 8, 3, 3, 'D');
+            doc.setLineWidth(0.5);
+
+            // Determine image format from dataUrl
+            const isJpeg =
+              cached.dataUrl.includes('image/jpeg') ||
+              cached.dataUrl.includes('image/jpg');
+            const imgFormat = isJpeg ? 'JPEG' : 'PNG';
+
+            try {
+              doc.addImage(
+                cached.dataUrl,
+                imgFormat,
+                MARGIN + 4,
+                y + 4,
+                fit.w,
+                fit.h
+              );
+            } catch {
+              // If addImage fails, draw a placeholder
+              doc.setFillColor(...C.rowAlt);
+              doc.rect(MARGIN + 4, y + 4, fit.w, fit.h, 'F');
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(7);
+              doc.setTextColor(...C.muted);
+              doc.text(
+                'Image could not be loaded',
+                MARGIN + 8,
+                y + fit.h / 2 + 4
+              );
+            }
+
+            y += fit.h + 16;
+          } else if (mf.valueType !== 'IMAGE' && extVals[mf.id]?.value) {
+            // Non-image media field (text etc.)
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(7.5);
+            doc.setTextColor(...C.muted);
+            doc.text(`${mf.label}:`, MARGIN, y + 4);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(8);
+            doc.setTextColor(...C.primary);
+            doc.text(extVals[mf.id].value, MARGIN + 60, y + 4);
+            y += 14;
+          } else {
+            // Image field but image couldn't be loaded — show URL
+            const url = extVals[mf.id]?.value;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(7.5);
+            doc.setTextColor(...C.muted);
+            doc.text(`${mf.label}:`, MARGIN, y + 4);
+            if (url) {
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(7);
+              doc.setTextColor(...C.accent);
+              const truncUrl =
+                url.length > 80 ? url.substring(0, 77) + '...' : url;
+              doc.text(truncUrl, MARGIN + 60, y + 4);
+            } else {
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(8);
+              doc.setTextColor(...C.muted);
+              doc.text('—', MARGIN + 60, y + 4);
+            }
+            y += 14;
+          }
+        }
+
+        y += 4;
+      }
+    }
+
+    // ── FOOTER FIELDS ─────────────────────────────────────────────────
     if (footerExtras.length > 0) {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(...C.muted);
-      doc.text('ADDITIONAL INFORMATION', MARGIN, y + 4);
-      y += 12;
+      y = ensureSpace(y, 60);
+      y = drawSectionLabel('Footer Fields', footerExtras.length, SEC.footer, y);
 
       autoTable(doc, {
         startY: y,
@@ -847,15 +1262,16 @@ async function generateMultiPDF(
         body: footerExtras.map((f) => [f.label, extVals[f.id]?.value ?? '—']),
         theme: 'plain',
         headStyles: {
-          fillColor: C.primaryLight,
-          textColor: C.muted,
+          fillColor: SEC.footer.bg,
+          textColor: SEC.footer.fg,
           fontStyle: 'bold',
           fontSize: 7,
           cellPadding: { top: 4, bottom: 4, left: 8, right: 8 }
         },
         bodyStyles: {
           fontSize: 8,
-          cellPadding: { top: 4, bottom: 4, left: 8, right: 8 }
+          textColor: C.primary,
+          cellPadding: { top: 5, bottom: 5, left: 8, right: 8 }
         },
         alternateRowStyles: { fillColor: C.rowAlt },
         tableLineColor: C.border,
@@ -865,11 +1281,13 @@ async function generateMultiPDF(
         }
       });
     }
-  });
+  }
 
   // ── Render Final Calculation page (if selected) ─────────────────────
   if (includeFinalCalc && finalCalc) {
-    doc.addPage();
+    if (selectedEntries.length > 0) {
+      doc.addPage();
+    }
     renderFinalCalcPage(finalCalc, totalPageCount, totalPageCount);
   }
 
@@ -880,7 +1298,6 @@ async function generateMultiPDF(
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
     const fy = PAGE_H - 20;
-    // Last page is Final Calc if included; otherwise use template name
     const isFinalCalcPage = includeFinalCalc && finalCalc && p === totalPages;
     const tName = isFinalCalcPage
       ? 'Final Calculation'
@@ -942,6 +1359,8 @@ export default function OrderTemplatePDF({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isGenerating, setIsGenerating] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [includeMarginDiscount, setIncludeMarginDiscount] = useState(true);
+  const [includeMarginTotal, setIncludeMarginTotal] = useState(true);
 
   const labelledEntries = useMemo(
     () => buildLabelledEntries(entries),
@@ -998,7 +1417,11 @@ export default function OrderTemplatePDF({
         templateValues,
         extraValues,
         finalCalc ?? null,
-        includeFinalCalc
+        includeFinalCalc,
+        {
+          includeMarginDiscount,
+          includeMarginTotal
+        }
       );
       setDialogOpen(false);
     } catch (err) {
@@ -1012,7 +1435,9 @@ export default function OrderTemplatePDF({
     order,
     templateValues,
     extraValues,
-    finalCalc
+    finalCalc,
+    includeMarginDiscount,
+    includeMarginTotal
   ]);
 
   if (labelledEntries.length === 0) return null;
@@ -1165,6 +1590,37 @@ export default function OrderTemplatePDF({
                 );
               })}
 
+              {/* ── Final Calc PDF Options ──────────────────────── */}
+              {finalCalc && selectedIds.has(FINAL_CALC_ID) && (
+                <div className='rounded-lg border border-indigo-200 bg-indigo-50/40 p-3'>
+                  <p className='mb-2.5 text-xs font-semibold text-indigo-700'>
+                    Final Calculation — PDF Options
+                  </p>
+                  <div className='flex flex-wrap gap-x-6 gap-y-2'>
+                    <label className='flex cursor-pointer items-center gap-2 text-xs'>
+                      <Checkbox
+                        checked={includeMarginDiscount}
+                        onCheckedChange={(v) =>
+                          setIncludeMarginDiscount(v === true)
+                        }
+                        className='h-3.5 w-3.5 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600'
+                      />
+                      <span>Include Margin Discount</span>
+                    </label>
+                    <label className='flex cursor-pointer items-center gap-2 text-xs'>
+                      <Checkbox
+                        checked={includeMarginTotal}
+                        onCheckedChange={(v) =>
+                          setIncludeMarginTotal(v === true)
+                        }
+                        className='h-3.5 w-3.5 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600'
+                      />
+                      <span>Include Margin Total</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {/* ── Final Calculation row ───────────────────────── */}
               {finalCalc &&
                 (() => {
@@ -1225,7 +1681,13 @@ export default function OrderTemplatePDF({
                           <>
                             <Separator />
                             <div className='px-4 py-3'>
-                              <FinalCalcPreview data={finalCalc} />
+                              <FinalCalcPreview
+                                data={finalCalc}
+                                options={{
+                                  includeMarginDiscount,
+                                  includeMarginTotal
+                                }}
+                              />
                             </div>
                           </>
                         )}

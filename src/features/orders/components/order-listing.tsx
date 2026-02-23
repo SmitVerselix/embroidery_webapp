@@ -11,7 +11,7 @@ import {
   TableCell,
   TableHead,
   TableHeader,
-  TableRow,
+  TableRow
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,14 +22,14 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
+  SelectValue
 } from '@/components/ui/select';
 import {
   Search,
@@ -40,7 +40,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight,
+  ChevronsRight
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { format } from 'date-fns';
@@ -124,7 +124,7 @@ export default function OrderListing({ companyId }: OrderListingProps) {
         limit,
         search: debouncedSearch,
         sortBy: 'createdAt',
-        sortOrder: 'DESC',
+        sortOrder: 'DESC'
       };
       const res = await getOrders(companyId, params);
       setOrders(res.rows);
@@ -163,60 +163,62 @@ export default function OrderListing({ companyId }: OrderListingProps) {
   // RENDER
   // ──────────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col gap-4">
+    <div className='flex flex-col gap-4'>
       {/* Search */}
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+      <div className='flex items-center gap-4'>
+        <div className='relative max-w-sm flex-1'>
+          <Search className='text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2' />
           <Input
-            placeholder="Search orders..."
+            placeholder='Search orders...'
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
+            className='pl-10'
           />
         </div>
       </div>
 
       {/* Error */}
       {error && (
-        <div className="bg-destructive/15 text-destructive flex items-center justify-between rounded-md p-4">
+        <div className='bg-destructive/15 text-destructive flex items-center justify-between rounded-md p-4'>
           <span>{error}</span>
-          <Button variant="ghost" size="sm" onClick={() => setError(null)}>
+          <Button variant='ghost' size='sm' onClick={() => setError(null)}>
             Dismiss
           </Button>
         </div>
       )}
 
       {/* Table */}
-      <div className="rounded-md border">
+      <div className='rounded-md border'>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Order No</TableHead>
+              <TableHead>Customer Name</TableHead>
+              <TableHead>Product</TableHead>
               <TableHead>Order Type</TableHead>
               <TableHead>Description</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created At</TableHead>
-              <TableHead className="w-[80px]">Actions</TableHead>
+              <TableHead className='w-[80px]'>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 6 }).map((__, j) => (
+                  {Array.from({ length: 8 }).map((__, j) => (
                     <TableCell key={j}>
-                      <Skeleton className="h-5 w-20" />
+                      <Skeleton className='h-5 w-20' />
                     </TableCell>
                   ))}
                 </TableRow>
               ))
             ) : orders.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <FileText className="text-muted-foreground h-8 w-8" />
-                    <p className="text-muted-foreground">
+                <TableCell colSpan={6} className='h-32 text-center'>
+                  <div className='flex flex-col items-center gap-2'>
+                    <FileText className='text-muted-foreground h-8 w-8' />
+                    <p className='text-muted-foreground'>
                       {searchQuery ? 'No orders found' : 'No orders yet'}
                     </p>
                   </div>
@@ -226,20 +228,24 @@ export default function OrderListing({ companyId }: OrderListingProps) {
               orders.map((order) => (
                 <TableRow
                   key={order.id}
-                  className="hover:bg-muted/50 cursor-pointer"
+                  className='hover:bg-muted/50 cursor-pointer'
                   onClick={() => handleViewOrder(order.id)}
                 >
-                  <TableCell className="font-medium">
+                  <TableCell className='font-medium'>
                     #{order.orderNo}
                   </TableCell>
+                  <TableCell className='font-medium'>
+                    {order.customer?.name || '—'}
+                  </TableCell>
+                  <TableCell className='font-medium'>
+                    {order.product?.name || '—'}
+                  </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={getOrderTypeBadgeVariant(order.orderType)}
-                    >
+                    <Badge variant={getOrderTypeBadgeVariant(order.orderType)}>
                       {order.orderType}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground max-w-[200px] truncate">
+                  <TableCell className='text-muted-foreground max-w-[200px] truncate'>
                     {order.description || '—'}
                   </TableCell>
                   <TableCell>
@@ -247,29 +253,29 @@ export default function OrderListing({ companyId }: OrderListingProps) {
                       {order.status || 'DRAFT'}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
+                  <TableCell className='text-muted-foreground'>
                     {formatDate(order.createdAt)}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
+                          variant='ghost'
+                          size='icon'
+                          className='h-8 w-8'
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <MoreHorizontal className="h-4 w-4" />
+                          <MoreHorizontal className='h-4 w-4' />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
+                      <DropdownMenuContent align='end'>
                         <DropdownMenuItem
                           onClick={(e) => {
                             e.stopPropagation();
                             handleViewOrder(order.id);
                           }}
                         >
-                          <Eye className="mr-2 h-4 w-4" />
+                          <Eye className='mr-2 h-4 w-4' />
                           View Details
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
@@ -279,7 +285,7 @@ export default function OrderListing({ companyId }: OrderListingProps) {
                             handleEditOrder(order.id);
                           }}
                         >
-                          <Pencil className="mr-2 h-4 w-4" />
+                          <Pencil className='mr-2 h-4 w-4' />
                           Edit Order
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -294,14 +300,14 @@ export default function OrderListing({ companyId }: OrderListingProps) {
 
       {/* Pagination */}
       {!isLoading && orders.length > 0 && (
-        <div className="flex items-center justify-between px-2">
-          <div className="text-muted-foreground flex-1 text-sm">
+        <div className='flex items-center justify-between px-2'>
+          <div className='text-muted-foreground flex-1 text-sm'>
             Showing {(page - 1) * limit + 1} to{' '}
             {Math.min(page * limit, totalCount)} of {totalCount} orders
           </div>
-          <div className="flex items-center space-x-6 lg:space-x-8">
-            <div className="flex items-center space-x-2">
-              <p className="text-sm font-medium">Rows per page</p>
+          <div className='flex items-center space-x-6 lg:space-x-8'>
+            <div className='flex items-center space-x-2'>
+              <p className='text-sm font-medium'>Rows per page</p>
               <Select
                 value={`${limit}`}
                 onValueChange={(value) => {
@@ -309,10 +315,10 @@ export default function OrderListing({ companyId }: OrderListingProps) {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="h-8 w-[70px]">
+                <SelectTrigger className='h-8 w-[70px]'>
                   <SelectValue placeholder={limit} />
                 </SelectTrigger>
-                <SelectContent side="top">
+                <SelectContent side='top'>
                   {[10, 20, 30, 50].map((pageSize) => (
                     <SelectItem key={pageSize} value={`${pageSize}`}>
                       {pageSize}
@@ -321,45 +327,45 @@ export default function OrderListing({ companyId }: OrderListingProps) {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex w-[100px] items-center justify-center text-sm font-medium">
+            <div className='flex w-[100px] items-center justify-center text-sm font-medium'>
               Page {page} of {totalPages}
             </div>
-            <div className="flex items-center space-x-2">
+            <div className='flex items-center space-x-2'>
               <Button
-                variant="outline"
-                className="hidden h-8 w-8 p-0 lg:flex"
+                variant='outline'
+                className='hidden h-8 w-8 p-0 lg:flex'
                 onClick={() => setPage(1)}
                 disabled={!canGoPrevious}
               >
-                <span className="sr-only">Go to first page</span>
-                <ChevronsLeft className="h-4 w-4" />
+                <span className='sr-only'>Go to first page</span>
+                <ChevronsLeft className='h-4 w-4' />
               </Button>
               <Button
-                variant="outline"
-                className="h-8 w-8 p-0"
+                variant='outline'
+                className='h-8 w-8 p-0'
                 onClick={() => setPage((p) => p - 1)}
                 disabled={!canGoPrevious}
               >
-                <span className="sr-only">Go to previous page</span>
-                <ChevronLeft className="h-4 w-4" />
+                <span className='sr-only'>Go to previous page</span>
+                <ChevronLeft className='h-4 w-4' />
               </Button>
               <Button
-                variant="outline"
-                className="h-8 w-8 p-0"
+                variant='outline'
+                className='h-8 w-8 p-0'
                 onClick={() => setPage((p) => p + 1)}
                 disabled={!canGoNext}
               >
-                <span className="sr-only">Go to next page</span>
-                <ChevronRight className="h-4 w-4" />
+                <span className='sr-only'>Go to next page</span>
+                <ChevronRight className='h-4 w-4' />
               </Button>
               <Button
-                variant="outline"
-                className="hidden h-8 w-8 p-0 lg:flex"
+                variant='outline'
+                className='hidden h-8 w-8 p-0 lg:flex'
                 onClick={() => setPage(totalPages)}
                 disabled={!canGoNext}
               >
-                <span className="sr-only">Go to last page</span>
-                <ChevronsRight className="h-4 w-4" />
+                <span className='sr-only'>Go to last page</span>
+                <ChevronsRight className='h-4 w-4' />
               </Button>
             </div>
           </div>

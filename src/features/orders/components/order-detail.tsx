@@ -84,7 +84,6 @@ import TemplateLayoutCanvas, {
 } from './template-layout-canvas';
 import { toast } from 'sonner';
 import api from '@/lib/api/axios';
-import { ENDPOINTS } from '@/lib/api/endpoints';
 
 // =============================================================================
 // HELPERS
@@ -209,8 +208,12 @@ type FinalCalcTemplateRow = {
 
 interface FinalCalculationTableProps {
   templateRows: FinalCalcTemplateRow[];
+  total: string;
   discount: string;
+  discountType: string | null;
   marginDiscount: string;
+  marginType: string | null;
+  marginTotal: string;
   finalPayableAmount: string;
   hasAnyChildren: boolean;
   companyId: string;
@@ -220,8 +223,12 @@ interface FinalCalculationTableProps {
 
 function FinalCalculationTable({
   templateRows,
+  total,
   discount,
+  discountType: orderDiscountType,
   marginDiscount,
+  marginType: orderMarginType,
+  marginTotal,
   finalPayableAmount,
   hasAnyChildren,
   companyId,
@@ -234,10 +241,13 @@ function FinalCalculationTable({
 
   // Form values
   const [formDiscount, setFormDiscount] = useState(discount);
-  const [formDiscountType, setFormDiscountType] =
-    useState<DiscountType>('AMOUNT');
+  const [formDiscountType, setFormDiscountType] = useState<DiscountType>(
+    (orderDiscountType as DiscountType) || 'AMOUNT'
+  );
   const [formMarginDiscount, setFormMarginDiscount] = useState(marginDiscount);
-  const [formMarginType, setFormMarginType] = useState<DiscountType>('AMOUNT');
+  const [formMarginType, setFormMarginType] = useState<DiscountType>(
+    (orderMarginType as DiscountType) || 'AMOUNT'
+  );
   const [formNotes, setFormNotes] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
@@ -254,7 +264,9 @@ function FinalCalculationTable({
 
   const handleEdit = () => {
     setFormDiscount(discount);
+    setFormDiscountType((orderDiscountType as DiscountType) || 'AMOUNT');
     setFormMarginDiscount(marginDiscount);
+    setFormMarginType((orderMarginType as DiscountType) || 'AMOUNT');
     setFormNotes(
       Object.fromEntries(
         templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
@@ -399,6 +411,19 @@ function FinalCalculationTable({
               </tr>
             ))}
 
+            {/* ── Total ──────────────────────────────────────────── */}
+            <tr className='border-t-2 border-b font-semibold'>
+              <td className='px-4 py-2'>Total</td>
+              <td
+                className='px-4 py-2 font-mono tabular-nums'
+                colSpan={hasAnyChildren ? 2 : 1}
+              >
+                {total}
+              </td>
+              {/* Empty notes cell */}
+              <td className='px-4 py-2' />
+            </tr>
+
             {/* ── Discount ───────────────────────────────────────────── */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Discount</td>
@@ -430,7 +455,9 @@ function FinalCalculationTable({
                     </Select>
                   </div>
                 ) : (
-                  <span className='font-mono tabular-nums'>{discount}</span>
+                  <span className='font-mono tabular-nums'>
+                    {discount} {orderDiscountType === 'PERCENT' ? '%' : '₹'}
+                  </span>
                 )}
               </td>
               {/* Empty notes cell */}
@@ -469,9 +496,22 @@ function FinalCalculationTable({
                   </div>
                 ) : (
                   <span className='font-mono tabular-nums'>
-                    {marginDiscount}
+                    {marginDiscount} {orderMarginType === 'PERCENT' ? '%' : '₹'}
                   </span>
                 )}
+              </td>
+              {/* Empty notes cell */}
+              <td className='px-4 py-2' />
+            </tr>
+
+            {/* ── Margin Total ───────────────────────────────────── */}
+            <tr className='border-b'>
+              <td className='px-4 py-2 font-medium'>Margin Total</td>
+              <td
+                className='px-4 py-2 font-mono tabular-nums'
+                colSpan={hasAnyChildren ? 2 : 1}
+              >
+                {marginTotal}
               </td>
               {/* Empty notes cell */}
               <td className='px-4 py-2' />
@@ -1069,8 +1109,12 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
 
     return {
       templateRows,
+      total: formatAmount((order as any).total),
       discount: formatAmount(order.discount),
+      discountType: (order as any).discountType ?? null,
       marginDiscount: formatAmount(order.marginDiscount),
+      marginType: (order as any).marginType ?? null,
+      marginTotal: formatAmount((order as any).marginTotal),
       finalPayableAmount: formatAmount(order.finalPayableAmount),
       hasAnyChildren
     };
@@ -1234,8 +1278,12 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       children: (
         <FinalCalculationTable
           templateRows={templateRows}
+          total={formatAmount(order.total)}
           discount={formatAmount(order.discount)}
+          discountType={(order as any).discountType ?? null}
           marginDiscount={formatAmount(order.marginDiscount)}
+          marginType={(order as any).marginType ?? null}
+          marginTotal={formatAmount((order as any).marginTotal)}
           finalPayableAmount={formatAmount(order.finalPayableAmount)}
           hasAnyChildren={hasAnyChildren}
           companyId={companyId}
