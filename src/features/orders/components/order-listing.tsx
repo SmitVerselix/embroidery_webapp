@@ -40,7 +40,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  History
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { format } from 'date-fns';
@@ -153,6 +154,10 @@ export default function OrderListing({ companyId }: OrderListingProps) {
 
   const handleEditOrder = (orderId: string) => {
     router.push(`/dashboard/${companyId}/orders/${orderId}/edit`);
+  };
+
+  const handleViewHistory = (orderId: string) => {
+    router.push(`/dashboard/${companyId}/orders/${orderId}/history`);
   };
 
   // Pagination helpers
@@ -277,6 +282,16 @@ export default function OrderListing({ companyId }: OrderListingProps) {
                         >
                           <Eye className='mr-2 h-4 w-4' />
                           View Details
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleViewHistory(order.id);
+                          }}
+                        >
+                          <History className='mr-2 h-4 w-4' />
+                          View History
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem

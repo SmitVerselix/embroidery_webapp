@@ -56,7 +56,9 @@ import type {
   AcceptInvitePayload,
   LoginHistoryParams,
   LoginHistoryPayload,
-  UpdateFinalCalculationData
+  UpdateFinalCalculationData,
+  OrderHistoryParams,
+  OrderHistoryListResponse
 } from './types';
 
 // =============================================================================
@@ -643,6 +645,38 @@ export const updateFinalCalculation = async (
     ENDPOINTS.ORDER.UPDATE_FINAL_CALCULATION(companyId, orderId),
     data
   );
+};
+
+// =============================================================================
+// ORDER HISTORY SERVICES
+// =============================================================================
+
+export const getOrderHistory = async (
+  companyId: string,
+  orderId: string,
+  params?: OrderHistoryParams
+): Promise<OrderHistoryListResponse> => {
+  const defaultParams: OrderHistoryParams = {
+    page: 1,
+    limit: 10,
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  // Remove empty action so backend doesn't filter by empty string
+  const payload: Record<string, unknown> = { ...defaultParams };
+  if (!payload.action) {
+    delete payload.action;
+  }
+
+  const res = await api.post<ApiResponse<OrderHistoryListResponse>>(
+    ENDPOINTS.ORDER.HISTORY(companyId, orderId),
+    payload
+  );
+
+  return res.data.payload;
 };
 
 // =============================================================================

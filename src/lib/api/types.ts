@@ -948,3 +948,126 @@ export type LoginHistoryPayload = {
 };
 
 export type LoginHistoryParams = { page?: number; limit?: number };
+
+// =============================================================================
+// ORDER HISTORY TYPES
+// =============================================================================
+
+export type OrderHistoryAction =
+  | 'CREATE_ORDER'
+  | 'ADD_TEMPLATE_VALUE'
+  | 'UPDATE_TEMPLATE_VALUE'
+  | 'DELETE_TEMPLATE_VALUE'
+  | 'UPDATE_TEMPLATE_SUMMARY'
+  | 'ADD_TEMPLATE_EXTRA_VALUE'
+  | 'UPDATE_TEMPLATE_EXTRA_VALUE'
+  | 'DELETE_TEMPLATE_EXTRA_VALUE'
+  | 'CALCULATE_ORDER'
+  | 'UPDATE_FINAL_COSTING';
+
+export const ORDER_HISTORY_ACTIONS: {
+  label: string;
+  value: OrderHistoryAction;
+  color: string;
+  icon: string;
+}[] = [
+  {
+    label: 'Create Order',
+    value: 'CREATE_ORDER',
+    color: 'emerald',
+    icon: 'plus-circle'
+  },
+  {
+    label: 'Add Template Value',
+    value: 'ADD_TEMPLATE_VALUE',
+    color: 'blue',
+    icon: 'plus'
+  },
+  {
+    label: 'Update Template Value',
+    value: 'UPDATE_TEMPLATE_VALUE',
+    color: 'amber',
+    icon: 'pencil'
+  },
+  {
+    label: 'Delete Template Value',
+    value: 'DELETE_TEMPLATE_VALUE',
+    color: 'red',
+    icon: 'trash'
+  },
+  {
+    label: 'Update Template Summary',
+    value: 'UPDATE_TEMPLATE_SUMMARY',
+    color: 'violet',
+    icon: 'file-text'
+  },
+  {
+    label: 'Add Extra Value',
+    value: 'ADD_TEMPLATE_EXTRA_VALUE',
+    color: 'cyan',
+    icon: 'plus-square'
+  },
+  {
+    label: 'Update Extra Value',
+    value: 'UPDATE_TEMPLATE_EXTRA_VALUE',
+    color: 'orange',
+    icon: 'edit'
+  },
+  {
+    label: 'Delete Extra Value',
+    value: 'DELETE_TEMPLATE_EXTRA_VALUE',
+    color: 'rose',
+    icon: 'minus-square'
+  },
+  {
+    label: 'Calculate Order',
+    value: 'CALCULATE_ORDER',
+    color: 'indigo',
+    icon: 'calculator'
+  },
+  {
+    label: 'Update Final Costing',
+    value: 'UPDATE_FINAL_COSTING',
+    color: 'teal',
+    icon: 'dollar-sign'
+  }
+];
+
+export type OrderHistoryUser = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+export type OrderHistoryItem = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  orderId: string;
+  userId: string;
+  action: OrderHistoryAction;
+  field: string;
+  oldValue: Record<string, unknown> | null;
+  newValue: Record<string, unknown> | null;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  user: OrderHistoryUser;
+};
+
+export type OrderHistoryListResponse = {
+  count: number;
+  rows: OrderHistoryItem[];
+};
+
+export type OrderHistoryParams = {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+  action?: OrderHistoryAction | '';
+};

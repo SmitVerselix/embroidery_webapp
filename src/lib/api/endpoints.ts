@@ -153,7 +153,9 @@ export const ENDPOINTS = {
     RECALCULATE: (companyId: string, orderId: string) =>
       `${API_PREFIX}/user/${companyId}/order/recalculate/${orderId}`,
     UPDATE_FINAL_CALCULATION: (companyId: string, orderId: string) =>
-      `${API_PREFIX}/user/${companyId}/order/update-final-calculation/${orderId}`
+      `${API_PREFIX}/user/${companyId}/order/update-final-calculation/${orderId}`,
+    HISTORY: (companyId: string, orderId: string) =>
+      `${API_PREFIX}/user/${companyId}/order/${orderId}/history`
   },
 
   // Upload endpoints
@@ -220,6 +222,8 @@ export const QUERY_KEYS = {
   ORDERS: (companyId: string) => ['orders', companyId] as const,
   ORDER: (companyId: string, orderId: string) =>
     ['orders', companyId, orderId] as const,
+  ORDER_HISTORY: (companyId: string, orderId: string) =>
+    ['orders', companyId, orderId, 'history'] as const,
   CUSTOMERS: (companyId: string) => ['customers', companyId] as const,
   CUSTOMER: (companyId: string, customerId: string) =>
     ['customers', companyId, customerId] as const,

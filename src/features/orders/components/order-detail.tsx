@@ -54,7 +54,8 @@ import {
   Loader2,
   RotateCw,
   Check,
-  X
+  X,
+  History
 } from 'lucide-react';
 import {
   Tooltip,
@@ -1420,19 +1421,22 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 <CardDescription>{order.description}</CardDescription>
               )}
             </div>
-            <div className='flex items-center gap-2'>
+            <div className='flex flex-wrap items-center gap-2'>
               <Button
                 variant='outline'
+                size='sm'
                 onClick={handleRecalculate}
                 disabled={isRecalculating}
+                className='gap-1.5'
               >
                 {isRecalculating ? (
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  <Loader2 className='h-4 w-4 animate-spin' />
                 ) : (
-                  <RotateCw className='mr-2 h-4 w-4' />
+                  <RotateCw className='h-4 w-4' />
                 )}
                 Recalculate
               </Button>
+
               <OrderTemplatePDF
                 order={order}
                 entries={entries}
@@ -1440,9 +1444,29 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 extraValues={extraValues}
                 finalCalc={finalCalcData}
               />
-              <Button variant='outline' onClick={() => router.push(editUrl)}>
-                <Pencil className='mr-2 h-4 w-4' />
+
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => router.push(editUrl)}
+                className='gap-1.5'
+              >
+                <Pencil className='h-4 w-4' />
                 Edit Order
+              </Button>
+
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() =>
+                  router.push(
+                    `/dashboard/${companyId}/orders/${orderId}/history`
+                  )
+                }
+                className='gap-1.5'
+              >
+                <History className='h-4 w-4' />
+                History
               </Button>
             </div>
           </div>

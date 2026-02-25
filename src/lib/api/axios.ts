@@ -1,18 +1,18 @@
-import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
 
-// const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://192.168.1.89:6565";
-const API_BASE_URL = "https://embroidery-backend-zkey.onrender.com";
+// const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://192.168.1.72:6565";
+const API_BASE_URL = 'https://embroidery-backend-zkey.onrender.com';
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
   headers: {
-    "Content-Type": "application/json",
-  },
+    'Content-Type': 'application/json'
+  }
 });
 
 // =============================================================================
@@ -22,8 +22,8 @@ export const api = axios.create({
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     // Add token to headers
-    if (typeof window !== "undefined") {
-      const token = localStorage.getItem("token");
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('token');
       if (token && config.headers) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -43,29 +43,29 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    if (typeof window !== "undefined") {
+    if (typeof window !== 'undefined') {
       // Handle 401 Unauthorized
       if (error.response?.status === 401) {
         // Clear auth data
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        localStorage.removeItem("currentCompany");
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('currentCompany');
 
         // Redirect to sign-in (avoid if already on auth pages)
-        const isAuthPage = window.location.pathname.includes("/auth/");
+        const isAuthPage = window.location.pathname.includes('/auth/');
         if (!isAuthPage) {
-          window.location.href = "/auth/sign-in";
+          window.location.href = '/auth/sign-in';
         }
       }
 
       // Handle 403 Forbidden
       if (error.response?.status === 403) {
-        console.error("Access denied:", error.response.data);
+        console.error('Access denied:', error.response.data);
       }
 
       // Handle 500+ Server errors
       if (error.response && error.response.status >= 500) {
-        console.error("Server error:", error.response.data);
+        console.error('Server error:', error.response.data);
       }
     }
 
@@ -109,7 +109,7 @@ export const getError = (error: unknown): string => {
     return error.message;
   }
 
-  return "Something went wrong. Please try again.";
+  return 'Something went wrong. Please try again.';
 };
 
 // =============================================================================
@@ -132,11 +132,11 @@ export const getValidationErrors = (
 
 export const getClientIP = async (): Promise<string> => {
   try {
-    const response = await fetch("https://api.ipify.org?format=json");
+    const response = await fetch('https://api.ipify.org?format=json');
     const data = await response.json();
     return data.ip;
   } catch {
-    return "0.0.0.0";
+    return '0.0.0.0';
   }
 };
 
@@ -153,7 +153,7 @@ export const createFormData = (
   // Add regular data
   Object.entries(data).forEach(([key, value]) => {
     if (value !== undefined && value !== null) {
-      if (typeof value === "object" && !(value instanceof File)) {
+      if (typeof value === 'object' && !(value instanceof File)) {
         formData.append(key, JSON.stringify(value));
       } else {
         formData.append(key, value as string);
