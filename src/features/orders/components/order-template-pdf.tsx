@@ -66,6 +66,8 @@ export type FinalCalcData = {
   total: string;
   discount: string;
   discountType: string | null;
+  addonDiscount: string;
+  addonType: string | null;
   marginDiscount: string;
   marginType: string | null;
   marginTotal: string;
@@ -78,6 +80,7 @@ const FINAL_CALC_ID = '__final_calculation__';
 
 /** Options that control which rows appear on the Final Calculation PDF page */
 type FinalCalcPDFOptions = {
+  includeAddonDiscount: boolean;
   includeMarginDiscount: boolean;
   includeMarginTotal: boolean;
 };
@@ -422,15 +425,6 @@ function FinalCalcPreview({
             <span>Total</span>
             <span className='font-mono tabular-nums'>{total}</span>
           </div>
-          <div className='flex justify-between border-b px-3 py-1.5'>
-            <span className='text-muted-foreground'>
-              Discount
-              {discountType
-                ? ` (${discountType === 'PERCENT' ? '%' : '₹'})`
-                : ''}
-            </span>
-            <span className='font-mono tabular-nums'>{discount}</span>
-          </div>
           {options.includeMarginDiscount && (
             <div className='flex justify-between border-b px-3 py-1.5'>
               <span className='text-muted-foreground'>
@@ -444,6 +438,28 @@ function FinalCalcPreview({
             <div className='flex justify-between border-b px-3 py-1.5'>
               <span className='text-muted-foreground'>Margin Total</span>
               <span className='font-mono tabular-nums'>{marginTotal}</span>
+            </div>
+          )}
+          <div className='flex justify-between border-b px-3 py-1.5'>
+            <span className='text-muted-foreground'>
+              Discount
+              {discountType
+                ? ` (${discountType === 'PERCENT' ? '%' : '₹'})`
+                : ''}
+            </span>
+            <span className='font-mono tabular-nums'>{discount}</span>
+          </div>
+          {options.includeAddonDiscount && (
+            <div className='flex justify-between border-b px-3 py-1.5'>
+              <span className='text-muted-foreground'>
+                Addon Discount
+                {data.addonType
+                  ? ` (${data.addonType === 'PERCENT' ? '%' : '₹'})`
+                  : ''}
+              </span>
+              <span className='font-mono tabular-nums'>
+                {data.addonDiscount}
+              </span>
             </div>
           )}
           <div className='flex justify-between bg-indigo-50 px-3 py-2 font-semibold text-indigo-700'>
@@ -849,14 +865,7 @@ async function generateMultiPDF(
     const summaryX = PAGE_W - MARGIN - summaryW;
 
     // Build summary rows dynamically based on options
-    const sRows: [string, string, boolean][] = [
-      ['Total', fc.total, false],
-      [
-        `Discount${fc.discountType ? ` (${fc.discountType === 'PERCENT' ? '%' : '₹'})` : ''}`,
-        discount,
-        false
-      ]
-    ];
+    const sRows: [string, string, boolean][] = [['Total', fc.total, false]];
     if (finalCalcOptions.includeMarginDiscount) {
       sRows.push([
         `Margin Discount${fc.marginType ? ` (${fc.marginType === 'PERCENT' ? '%' : '₹'})` : ''}`,
@@ -866,6 +875,18 @@ async function generateMultiPDF(
     }
     if (finalCalcOptions.includeMarginTotal) {
       sRows.push(['Margin Total', fc.marginTotal, false]);
+    }
+    sRows.push([
+      `Discount${fc.discountType ? ` (${fc.discountType === 'PERCENT' ? '%' : '₹'})` : ''}`,
+      discount,
+      false
+    ]);
+    if (finalCalcOptions.includeAddonDiscount) {
+      sRows.push([
+        `Addon Discount${fc.addonType ? ` (${fc.addonType === 'PERCENT' ? '%' : '₹'})` : ''}`,
+        fc.addonDiscount,
+        false
+      ]);
     }
     sRows.push(['Final Payable Amount', finalPayableAmount, true]);
 
@@ -1359,6 +1380,7 @@ export default function OrderTemplatePDF({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isGenerating, setIsGenerating] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [includeAddonDiscount, setIncludeAddonDiscount] = useState(true);
   const [includeMarginDiscount, setIncludeMarginDiscount] = useState(true);
   const [includeMarginTotal, setIncludeMarginTotal] = useState(true);
 
@@ -1380,12 +1402,25 @@ export default function OrderTemplatePDF({
   // Total item count (templates + optional final calc)
   const totalItemCount = labelledEntries.length + (finalCalc ? 1 : 0);
 
-  // Open dialog and pre-select all templates
+  // Open dialog — pre-select only non-duplicate templates that have a non-zero total
   const openDialog = useCallback(() => {
-    setSelectedIds(new Set(allIds));
+    const defaultSelected = new Set<string>();
+    for (const { entry } of labelledEntries) {
+      // Skip new (no values yet) and child (duplicate) templates
+      if (entry.isNew || entry.isChild) continue;
+      // Skip templates with no summary or a zero/missing total
+      const total = parseFloat(entry.summary?.finalPayableAmount ?? '0');
+      if (!entry.summary || isNaN(total) || total === 0) continue;
+      defaultSelected.add(entry.orderTemplateId);
+    }
+    // Include Final Calculation by default only when there are selected templates
+    if (finalCalc && defaultSelected.size > 0) {
+      defaultSelected.add(FINAL_CALC_ID);
+    }
+    setSelectedIds(defaultSelected);
     setExpandedId(null);
     setDialogOpen(true);
-  }, [allIds]);
+  }, [labelledEntries, finalCalc]);
 
   const toggleEntry = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -1419,6 +1454,7 @@ export default function OrderTemplatePDF({
         finalCalc ?? null,
         includeFinalCalc,
         {
+          includeAddonDiscount,
           includeMarginDiscount,
           includeMarginTotal
         }
@@ -1436,6 +1472,7 @@ export default function OrderTemplatePDF({
     templateValues,
     extraValues,
     finalCalc,
+    includeAddonDiscount,
     includeMarginDiscount,
     includeMarginTotal
   ]);
@@ -1474,7 +1511,7 @@ export default function OrderTemplatePDF({
           {/* Order info strip */}
           <div className='bg-muted/40 flex flex-wrap gap-x-5 gap-y-1 rounded-md border px-4 py-2 text-xs'>
             <span>
-              <span className='text-muted-foreground'>Order: </span>
+              <span className='text-muted-foreground'>Design: </span>
               <span className='font-semibold'>#{order.orderNo}</span>
             </span>
             <span>
@@ -1617,6 +1654,16 @@ export default function OrderTemplatePDF({
                       />
                       <span>Include Margin Total</span>
                     </label>
+                    <label className='flex cursor-pointer items-center gap-2 text-xs'>
+                      <Checkbox
+                        checked={includeAddonDiscount}
+                        onCheckedChange={(v) =>
+                          setIncludeAddonDiscount(v === true)
+                        }
+                        className='h-3.5 w-3.5 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600'
+                      />
+                      <span>Include Addon Discount</span>
+                    </label>
                   </div>
                 </div>
               )}
@@ -1684,6 +1731,7 @@ export default function OrderTemplatePDF({
                               <FinalCalcPreview
                                 data={finalCalc}
                                 options={{
+                                  includeAddonDiscount,
                                   includeMarginDiscount,
                                   includeMarginTotal
                                 }}

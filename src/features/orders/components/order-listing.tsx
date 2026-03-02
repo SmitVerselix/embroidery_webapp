@@ -197,10 +197,10 @@ export default function OrderListing({ companyId }: OrderListingProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Order No</TableHead>
+              <TableHead>Design No</TableHead>
               <TableHead>Customer Name</TableHead>
               <TableHead>Product</TableHead>
-              <TableHead>Order Type</TableHead>
+              <TableHead>Design Type</TableHead>
               <TableHead>Description</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created At</TableHead>
@@ -301,7 +301,7 @@ export default function OrderListing({ companyId }: OrderListingProps) {
                           }}
                         >
                           <Pencil className='mr-2 h-4 w-4' />
-                          Edit Order
+                          Edit Design
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -318,7 +318,7 @@ export default function OrderListing({ companyId }: OrderListingProps) {
         <div className='flex items-center justify-between px-2'>
           <div className='text-muted-foreground flex-1 text-sm'>
             Showing {(page - 1) * limit + 1} to{' '}
-            {Math.min(page * limit, totalCount)} of {totalCount} orders
+            {Math.min(page * limit, totalCount)} of {totalCount} designs
           </div>
           <div className='flex items-center space-x-6 lg:space-x-8'>
             <div className='flex items-center space-x-2'>

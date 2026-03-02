@@ -43,16 +43,16 @@ export const navItems: NavItem[] = [
     ]
   },
   {
-    title: 'Orders',
+    title: 'Designs',
     url: '/dashboard/[companyId]/orders',
     icon: 'orders',
     items: [
       {
-        title: 'All Orders',
+        title: 'All Designs',
         url: '/dashboard/[companyId]/orders'
       },
       {
-        title: 'Add Order',
+        title: 'Add Design',
         url: '/dashboard/[companyId]/orders/new'
       }
     ]

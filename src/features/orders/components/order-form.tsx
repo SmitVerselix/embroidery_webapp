@@ -937,16 +937,16 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
       >
         <ArrowLeft className='mr-2 h-4 w-4' />
-        Back to Orders
+        Back to Designs
       </Link>
 
       <form onSubmit={handleSubmit(onSubmit)} className='space-y-6'>
         {/* ════════════════ ORDER DETAILS CARD ════════════════ */}
         <Card>
           <CardHeader>
-            <CardTitle>Order Details</CardTitle>
+            <CardTitle>Design Details</CardTitle>
             <CardDescription>
-              Enter the basic information for your order
+              Enter the basic information for your design
             </CardDescription>
           </CardHeader>
           <CardContent className='space-y-4'>
@@ -960,7 +960,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
               <div className='space-y-2'>
                 <Label htmlFor='orderNo'>
-                  Order Number <span className='text-destructive'>*</span>
+                  Design Number <span className='text-destructive'>*</span>
                 </Label>
                 <Input
                   id='orderNo'
@@ -978,7 +978,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
               <div className='space-y-2'>
                 <Label>
-                  Order Type <span className='text-destructive'>*</span>
+                  Design Type <span className='text-destructive'>*</span>
                 </Label>
                 <Select
                   value={selectedOrderType}
@@ -1084,7 +1084,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                         </div>
                       ) : ordersList.length === 0 ? (
                         <div className='text-muted-foreground py-4 text-center text-sm'>
-                          No orders found
+                          No designs found
                         </div>
                       ) : (
                         ordersList.map((o) => (
@@ -1236,7 +1236,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             <CardHeader className='pb-3'>
               <CardTitle className='flex items-center gap-2 text-base'>
                 <Link2 className='h-4 w-4' />
-                Referenced Order — #{referencedOrder.orderNo}
+                Referenced Design — #{referencedOrder.orderNo}
               </CardTitle>
               <CardDescription>
                 Data pre-filled from the referenced order. Edit the values below
@@ -1252,7 +1252,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   </p>
                 </div>
                 <div>
-                  <span className='text-muted-foreground'>Order Type</span>
+                  <span className='text-muted-foreground'>Design Type</span>
                   <p className='font-medium'>{referencedOrder.orderType}</p>
                 </div>
                 <div>
@@ -1278,7 +1278,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             <div className='flex flex-col items-center gap-2'>
               <Loader2 className='text-primary h-6 w-6 animate-spin' />
               <p className='text-muted-foreground text-sm'>
-                Loading referenced order data...
+                Loading referenced design data...
               </p>
             </div>
           </div>
@@ -1293,7 +1293,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               <h2 className='text-lg font-semibold'>Template Values</h2>
               <p className='text-muted-foreground text-sm'>
                 {isReferenceMode
-                  ? 'Values pre-filled from the referenced order. Edit as needed.'
+                  ? 'Values pre-filled from the referenced design. Edit as needed.'
                   : 'Enter values for each template.'}{' '}
                 Formula columns are auto-calculated. Fields marked with{' '}
                 <span className='text-destructive font-bold'>*</span> are
@@ -1447,12 +1447,12 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             {isSubmitting ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                Creating Order...
+                Creating Design...
               </>
             ) : (
               <>
                 <CheckCircle2 className='mr-2 h-4 w-4' />
-                Create Order
+                Create Design
               </>
             )}
           </Button>

@@ -6,7 +6,7 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 
 export const metadata = {
-  title: 'Dashboard: Order History'
+  title: 'Dashboard: Design History'
 };
 
 type PageProps = {
@@ -20,7 +20,7 @@ export default async function Page(props: PageProps) {
   return (
     <PageContainer
       scrollable={false}
-      pageTitle='Order History'
+      pageTitle='Design History'
       pageDescription='View all changes and actions performed on this order'
       pageHeaderAction={
         <Link
@@ -30,7 +30,7 @@ export default async function Page(props: PageProps) {
             'text-xs md:text-sm'
           )}
         >
-          <IconArrowLeft className='mr-2 h-4 w-4' /> Back to Order
+          <IconArrowLeft className='mr-2 h-4 w-4' /> Back to Design
         </Link>
       }
     >

@@ -2,7 +2,7 @@ import PageContainer from '@/components/layout/page-container';
 import OrderViewPage from '@/features/orders/components/order-view-page';
 
 export const metadata = {
-  title: 'Dashboard: Edit Order'
+  title: 'Dashboard: Edit Design'
 };
 
 type PageProps = {

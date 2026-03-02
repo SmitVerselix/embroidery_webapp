@@ -6,7 +6,7 @@ import { IconPlus } from '@tabler/icons-react';
 import Link from 'next/link';
 
 export const metadata = {
-  title: 'Dashboard: Orders',
+  title: 'Dashboard: Designs'
 };
 
 type PageProps = {
@@ -20,14 +20,14 @@ export default async function Page(props: PageProps) {
   return (
     <PageContainer
       scrollable={false}
-      pageTitle="Orders"
-      pageDescription="Manage your orders and track their status"
+      pageTitle='Designs'
+      pageDescription='Manage your designs and track their status'
       pageHeaderAction={
         <Link
           href={`/dashboard/${companyId}/orders/new`}
           className={cn(buttonVariants(), 'text-xs md:text-sm')}
         >
-          <IconPlus className="mr-2 h-4 w-4" /> Add New
+          <IconPlus className='mr-2 h-4 w-4' /> Add New
         </Link>
       }
     >

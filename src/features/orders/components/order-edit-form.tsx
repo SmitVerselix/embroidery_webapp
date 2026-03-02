@@ -641,7 +641,7 @@ export default function OrderEditForm({
           className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
         >
           <ArrowLeft className='mr-2 h-4 w-4' />
-          Back to Orders
+          Back to Designs
         </Link>
         <div className='flex flex-col items-center justify-center space-y-4 py-10'>
           <div className='bg-destructive/15 rounded-full p-3'>
@@ -654,7 +654,7 @@ export default function OrderEditForm({
             </p>
           </div>
           <Button variant='outline' onClick={() => router.push(listUrl)}>
-            Back to Orders
+            Back to Designs
           </Button>
         </div>
       </div>
@@ -672,7 +672,7 @@ export default function OrderEditForm({
         className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
       >
         <ArrowLeft className='mr-2 h-4 w-4' />
-        Back to Order Details
+        Back to Design Details
       </Link>
 
       {/* Order Info Card (read-only summary) */}
@@ -681,7 +681,7 @@ export default function OrderEditForm({
           <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
             <div className='space-y-1'>
               <CardTitle className='flex items-center gap-3 text-2xl'>
-                Edit Order #{order.orderNo}
+                Edit Design #{order.orderNo}
                 <Badge variant={getOrderTypeBadgeVariant(order.orderType)}>
                   {order.orderType}
                 </Badge>
@@ -706,7 +706,7 @@ export default function OrderEditForm({
               <p className='font-medium'>{order.customer?.name ?? '-'}</p>
             </div>
             <div>
-              <span className='text-muted-foreground'>Order No</span>
+              <span className='text-muted-foreground'>Design No</span>
               <p className='font-medium'>{order.orderNo}</p>
             </div>
             <div>
@@ -772,7 +772,7 @@ export default function OrderEditForm({
           {saveSuccess && (
             <div className='flex items-start gap-2 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-400'>
               <CheckCircle2 className='mt-0.5 h-4 w-4 flex-shrink-0' />
-              <span>Order values saved successfully!</span>
+              <span>Design values saved successfully!</span>
             </div>
           )}
 
@@ -895,7 +895,7 @@ export default function OrderEditForm({
             <div className='flex flex-col items-center justify-center text-center'>
               <AlertCircle className='text-muted-foreground mb-2 h-8 w-8' />
               <p className='text-muted-foreground text-sm'>
-                No templates found for this order.
+                No templates found for this design.
               </p>
             </div>
           </CardContent>

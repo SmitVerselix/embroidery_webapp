@@ -169,6 +169,8 @@ type UpdateFinalCalculationPayload = {
   discountType: DiscountType;
   marginDiscount: number;
   marginType: DiscountType;
+  addonDiscount: number;
+  addonType: DiscountType;
 };
 
 const updateFinalCalculation = async (
@@ -212,6 +214,8 @@ interface FinalCalculationTableProps {
   total: string;
   discount: string;
   discountType: string | null;
+  addonDiscount: string;
+  addonType: string | null;
   marginDiscount: string;
   marginType: string | null;
   marginTotal: string;
@@ -227,6 +231,8 @@ function FinalCalculationTable({
   total,
   discount,
   discountType: orderDiscountType,
+  addonDiscount,
+  addonType: orderAddonType,
   marginDiscount,
   marginType: orderMarginType,
   marginTotal,
@@ -249,6 +255,10 @@ function FinalCalculationTable({
   const [formMarginType, setFormMarginType] = useState<DiscountType>(
     (orderMarginType as DiscountType) || 'AMOUNT'
   );
+  const [formAddonDiscount, setFormAddonDiscount] = useState(addonDiscount);
+  const [formAddonType, setFormAddonType] = useState<DiscountType>(
+    (orderAddonType as DiscountType) || 'AMOUNT'
+  );
   const [formNotes, setFormNotes] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
@@ -260,14 +270,17 @@ function FinalCalculationTable({
     if (!isEditing) {
       setFormDiscount(discount);
       setFormMarginDiscount(marginDiscount);
+      setFormAddonDiscount(addonDiscount);
     }
-  }, [discount, marginDiscount, isEditing]);
+  }, [discount, marginDiscount, addonDiscount, isEditing]);
 
   const handleEdit = () => {
     setFormDiscount(discount);
     setFormDiscountType((orderDiscountType as DiscountType) || 'AMOUNT');
     setFormMarginDiscount(marginDiscount);
     setFormMarginType((orderMarginType as DiscountType) || 'AMOUNT');
+    setFormAddonDiscount(addonDiscount);
+    setFormAddonType((orderAddonType as DiscountType) || 'AMOUNT');
     setFormNotes(
       Object.fromEntries(
         templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
@@ -294,6 +307,8 @@ function FinalCalculationTable({
         notes,
         discount: parseFloat(formDiscount) || 0,
         discountType: formDiscountType,
+        addonDiscount: parseFloat(formAddonDiscount) || 0,
+        addonType: formAddonType,
         marginDiscount: parseFloat(formMarginDiscount) || 0,
         marginType: formMarginType
       });
@@ -425,46 +440,6 @@ function FinalCalculationTable({
               <td className='px-4 py-2' />
             </tr>
 
-            {/* ── Discount ───────────────────────────────────────────── */}
-            <tr className='border-b'>
-              <td className='px-4 py-2 font-medium'>Discount</td>
-              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
-                {isEditing ? (
-                  <div className='flex items-center gap-2'>
-                    <Input
-                      className='h-7 w-28 font-mono text-xs tabular-nums'
-                      type='number'
-                      min='0'
-                      step='0.01'
-                      value={formDiscount}
-                      onChange={(e) => setFormDiscount(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                    />
-                    <Select
-                      value={formDiscountType}
-                      onValueChange={(v) =>
-                        setFormDiscountType(v as DiscountType)
-                      }
-                    >
-                      <SelectTrigger className='h-7 w-28 text-xs'>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value='AMOUNT'>Amount (₹)</SelectItem>
-                        <SelectItem value='PERCENT'>Percent (%)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : (
-                  <span className='font-mono tabular-nums'>
-                    {discount} {orderDiscountType === 'PERCENT' ? '%' : '₹'}
-                  </span>
-                )}
-              </td>
-              {/* Empty notes cell */}
-              <td className='px-4 py-2' />
-            </tr>
-
             {/* ── Margin Discount ────────────────────────────────────── */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Margin Discount</td>
@@ -513,6 +488,84 @@ function FinalCalculationTable({
                 colSpan={hasAnyChildren ? 2 : 1}
               >
                 {marginTotal}
+              </td>
+              {/* Empty notes cell */}
+              <td className='px-4 py-2' />
+            </tr>
+
+            {/* ── Discount ───────────────────────────────────────────── */}
+            <tr className='border-b'>
+              <td className='px-4 py-2 font-medium'>Discount</td>
+              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
+                {isEditing ? (
+                  <div className='flex items-center gap-2'>
+                    <Input
+                      className='h-7 w-28 font-mono text-xs tabular-nums'
+                      type='number'
+                      min='0'
+                      step='0.01'
+                      value={formDiscount}
+                      onChange={(e) => setFormDiscount(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                    />
+                    <Select
+                      value={formDiscountType}
+                      onValueChange={(v) =>
+                        setFormDiscountType(v as DiscountType)
+                      }
+                    >
+                      <SelectTrigger className='h-7 w-28 text-xs'>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='AMOUNT'>Amount (₹)</SelectItem>
+                        <SelectItem value='PERCENT'>Percent (%)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <span className='font-mono tabular-nums'>
+                    {discount} {orderDiscountType === 'PERCENT' ? '%' : '₹'}
+                  </span>
+                )}
+              </td>
+              {/* Empty notes cell */}
+              <td className='px-4 py-2' />
+            </tr>
+
+            {/* ── Addon Discount ─────────────────────────────────────── */}
+            <tr className='border-b'>
+              <td className='px-4 py-2 font-medium'>Addon Discount</td>
+              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
+                {isEditing ? (
+                  <div className='flex items-center gap-2'>
+                    <Input
+                      className='h-7 w-28 font-mono text-xs tabular-nums'
+                      type='number'
+                      min='0'
+                      step='0.01'
+                      value={formAddonDiscount}
+                      onChange={(e) => setFormAddonDiscount(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                    />
+                    <Select
+                      value={formAddonType}
+                      onValueChange={(v) => setFormAddonType(v as DiscountType)}
+                    >
+                      <SelectTrigger className='h-7 w-28 text-xs'>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='AMOUNT'>Amount (₹)</SelectItem>
+                        <SelectItem value='PERCENT'>Percent (%)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <span className='font-mono tabular-nums'>
+                    {addonDiscount} {orderAddonType === 'PERCENT' ? '%' : '₹'}
+                  </span>
+                )}
               </td>
               {/* Empty notes cell */}
               <td className='px-4 py-2' />
@@ -1113,6 +1166,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       total: formatAmount((order as any).total),
       discount: formatAmount(order.discount),
       discountType: (order as any).discountType ?? null,
+      addonDiscount: formatAmount((order as any).addonDiscount),
+      addonType: (order as any).addonType ?? null,
       marginDiscount: formatAmount(order.marginDiscount),
       marginType: (order as any).marginType ?? null,
       marginTotal: formatAmount((order as any).marginTotal),
@@ -1282,6 +1337,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           total={formatAmount(order.total)}
           discount={formatAmount(order.discount)}
           discountType={(order as any).discountType ?? null}
+          addonDiscount={formatAmount((order as any).addonDiscount)}
+          addonType={(order as any).addonType ?? null}
           marginDiscount={formatAmount(order.marginDiscount)}
           marginType={(order as any).marginType ?? null}
           marginTotal={formatAmount((order as any).marginTotal)}
@@ -1341,20 +1398,20 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
         >
           <ArrowLeft className='mr-2 h-4 w-4' />
-          Back to Orders
+          Back to Designs
         </Link>
         <div className='flex flex-col items-center justify-center space-y-4 py-10'>
           <div className='bg-destructive/15 rounded-full p-3'>
             <AlertCircle className='text-destructive h-6 w-6' />
           </div>
           <div className='space-y-2 text-center'>
-            <h3 className='font-semibold'>Failed to load order</h3>
+            <h3 className='font-semibold'>Failed to load design</h3>
             <p className='text-muted-foreground text-sm'>
-              {error || 'Order not found'}
+              {error || 'Design not found'}
             </p>
           </div>
           <Button variant='outline' onClick={() => router.push(backUrl)}>
-            Back to Orders
+            Back to Designs
           </Button>
         </div>
       </div>
@@ -1400,7 +1457,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
       >
         <ArrowLeft className='mr-2 h-4 w-4' />
-        Back to Orders
+        Back to Designs
       </Link>
 
       {/* Order Info Card */}
@@ -1409,7 +1466,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
             <div className='space-y-1'>
               <CardTitle className='flex items-center gap-3 text-2xl'>
-                Order #{order.orderNo}
+                Design #{order.orderNo}
                 <Badge variant={getOrderTypeBadgeVariant(order.orderType)}>
                   {order.orderType}
                 </Badge>
@@ -1452,7 +1509,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 className='gap-1.5'
               >
                 <Pencil className='h-4 w-4' />
-                Edit Order
+                Edit Design
               </Button>
 
               <Button
@@ -1482,7 +1539,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
               <p className='font-medium'>{order.customer?.name ?? '-'}</p>
             </div>
             <div>
-              <span className='text-muted-foreground'>Order No</span>
+              <span className='text-muted-foreground'>Design No</span>
               <p className='font-medium'>{order.orderNo}</p>
             </div>
             <div>
