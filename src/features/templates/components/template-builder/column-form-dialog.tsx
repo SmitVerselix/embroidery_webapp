@@ -154,7 +154,7 @@ export default function ColumnFormDialog({
       if (isEditing && initialData && col.id === initialData.id) {
         return false;
       }
-      return col.dataType === 'NUMBER';
+      return true;
     });
     return filtered.sort((a, b) => a.orderNo - b.orderNo);
   }, [availableColumns, isEditing, initialData]);

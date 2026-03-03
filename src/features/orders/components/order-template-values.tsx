@@ -117,26 +117,60 @@ const blockColors = [
 function evaluateFormula(
   formulaString: string | null,
   columns: TemplateColumn[],
-  rowValues: Record<string, string>
+  rowValues: Record<string, string>,
+  _visited?: Set<string>
 ): string {
   if (!formulaString) return '—';
 
   const parsed = parseFormula(formulaString);
   if (!parsed || parsed.steps.length === 0) return '—';
 
+  // Track visited formula columns to prevent circular references
+  const visited = _visited ?? new Set<string>();
+
+  // Build a map of column key → resolved numeric value
+  // This now handles NUMBER columns directly and FORMULA columns recursively
   const keyToValue: Record<string, number> = {};
   columns.forEach((col) => {
     if (col.dataType === 'NUMBER') {
       const val = rowValues[col.id];
       keyToValue[col.key] = val ? parseFloat(val) || 0 : 0;
+    } else if (col.dataType === 'FORMULA') {
+      // Recursively evaluate FORMULA columns (skip if already visiting to avoid cycles)
+      if (!visited.has(col.key) && col.formula) {
+        visited.add(col.key);
+        const evalResult = evaluateFormula(
+          col.formula,
+          columns,
+          rowValues,
+          visited
+        );
+        keyToValue[col.key] =
+          evalResult !== '—' ? parseFloat(evalResult) || 0 : 0;
+      } else {
+        keyToValue[col.key] = 0;
+      }
+    } else if (col.dataType === 'TEXT') {
+      // TEXT columns: try to parse as number, otherwise 0
+      const val = rowValues[col.id];
+      keyToValue[col.key] = val ? parseFloat(val) || 0 : 0;
     }
   });
 
-  let result = keyToValue[parsed.steps[0]?.columnKey] ?? 0;
+  // ── Resolve the first step value ──────────────────────────────────
+  const getStepValue = (step: any): number => {
+    if (step.type === 'constant') {
+      return step.value ?? 0;
+    }
+    return keyToValue[step.columnKey] ?? 0;
+  };
 
+  let result = getStepValue(parsed.steps[0]);
+
+  // ── Apply step operators ──────────────────────────────────────────
   for (let i = 1; i < parsed.steps.length; i++) {
     const op = parsed.operators[i - 1];
-    const val = keyToValue[parsed.steps[i]?.columnKey] ?? 0;
+    const val = getStepValue(parsed.steps[i]);
 
     switch (op) {
       case '+':
@@ -160,16 +194,48 @@ function evaluateFormula(
     }
   }
 
+  // ── Apply modifiers ───────────────────────────────────────────────
   for (const mod of parsed.modifiers) {
     switch (mod.type) {
       case 'percentage': {
         const pct = (result * mod.value) / 100;
-        result = mod.operator === '+' ? result + pct : result - pct;
+        switch (mod.operator) {
+          case '+':
+            result = result + pct;
+            break;
+          case '-':
+            result = result - pct;
+            break;
+          case '*':
+            result = result * pct;
+            break;
+          case '/':
+            result = pct !== 0 ? result / pct : 0;
+            break;
+          default:
+            result = result + pct;
+        }
         break;
       }
-      case 'fixed':
-        result = mod.operator === '+' ? result + mod.value : result - mod.value;
+      case 'fixed': {
+        switch (mod.operator) {
+          case '+':
+            result = result + mod.value;
+            break;
+          case '-':
+            result = result - mod.value;
+            break;
+          case '*':
+            result = result * mod.value;
+            break;
+          case '/':
+            result = mod.value !== 0 ? result / mod.value : 0;
+            break;
+          default:
+            result = result + mod.value;
+        }
         break;
+      }
       case 'round':
         result = parseFloat(result.toFixed(mod.value));
         break;

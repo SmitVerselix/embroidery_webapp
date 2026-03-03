@@ -33,9 +33,13 @@ import type { TemplateColumn } from '@/lib/api/types';
 
 export type Operator = '+' | '-' | '*' | '/' | '%' | '^';
 
+export type FormulaStepType = 'column' | 'constant';
+
 export type FormulaStep = {
   id: string;
-  columnKey: string;
+  type: FormulaStepType;
+  columnKey: string; // used when type === 'column'
+  value?: number; // used when type === 'constant'
 };
 
 export type ModifierType =
@@ -48,10 +52,12 @@ export type ModifierType =
   | 'min'
   | 'max';
 
+export type ModifierOperator = '+' | '-' | '*' | '/';
+
 export type FormulaModifier = {
   id: string;
   type: ModifierType;
-  operator: '+' | '-';
+  operator: ModifierOperator;
   value: number;
 };
 
@@ -74,9 +80,15 @@ const OPERATORS: { label: string; value: Operator; symbol: string }[] = [
   { label: 'Power', value: '^', symbol: '^' }
 ];
 
-const MODIFIER_OPERATORS: { label: string; value: '+' | '-' }[] = [
-  { label: 'Add', value: '+' },
-  { label: 'Subtract', value: '-' }
+const MODIFIER_OPERATORS: {
+  label: string;
+  value: ModifierOperator;
+  symbol: string;
+}[] = [
+  { label: 'Add', value: '+', symbol: '+' },
+  { label: 'Subtract', value: '-', symbol: '−' },
+  { label: 'Multiply', value: '*', symbol: '×' },
+  { label: 'Divide', value: '/', symbol: '÷' }
 ];
 
 const MODIFIER_TYPES: {
@@ -96,7 +108,7 @@ const MODIFIER_TYPES: {
   {
     value: 'percentage',
     label: '% Percentage',
-    description: 'Add/subtract a percentage of the result',
+    description: 'Apply a percentage of the result',
     icon: Percent,
     hasOperator: true,
     hasValue: true,
@@ -109,7 +121,7 @@ const MODIFIER_TYPES: {
   {
     value: 'fixed',
     label: '# Fixed Number',
-    description: 'Add/subtract a fixed number',
+    description: 'Apply a fixed number to the result',
     icon: Hash,
     hasOperator: true,
     hasValue: true,
@@ -182,6 +194,11 @@ const MODIFIER_TYPES: {
   }
 ];
 
+const STEP_TYPES: { label: string; value: FormulaStepType }[] = [
+  { label: 'Column', value: 'column' },
+  { label: 'Number', value: 'constant' }
+];
+
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
@@ -197,11 +214,33 @@ const getOperatorSymbol = (op: Operator): string => {
 const symbolToOperator = (symbol: string): Operator | null => {
   const map: Record<string, Operator> = {
     '+': '+',
-    '−': '-',
-    '×': '*',
-    '÷': '/',
+    '\u2212': '-',
+    '\u00d7': '*',
+    '\u00f7': '/',
     '%': '%',
     '^': '^'
+  };
+  return map[symbol] ?? null;
+};
+
+/** Map modifier operator to display symbol */
+const getModifierOperatorSymbol = (op: ModifierOperator): string => {
+  const map: Record<ModifierOperator, string> = {
+    '+': '+',
+    '-': '−',
+    '*': '×',
+    '/': '÷'
+  };
+  return map[op] || op;
+};
+
+/** Map display symbol back to modifier operator */
+const symbolToModifierOperator = (symbol: string): ModifierOperator | null => {
+  const map: Record<string, ModifierOperator> = {
+    '+': '+',
+    '\u2212': '-',
+    '\u00d7': '*',
+    '\u00f7': '/'
   };
   return map[symbol] ?? null;
 };
@@ -209,26 +248,31 @@ const symbolToOperator = (symbol: string): Operator | null => {
 const getModifierConfig = (type: ModifierType) =>
   MODIFIER_TYPES.find((m) => m.value === type);
 
+/** Check if a string looks like a number (integer or decimal) */
+const isNumericToken = (token: string): boolean => {
+  return /^-?\d+(\.\d+)?$/.test(token);
+};
+
 // =============================================================================
 // FORMULA STRING FORMAT
 // =============================================================================
-// The formula is stored and sent as a human-readable string using column KEYS.
+// The formula is stored and sent as a human-readable string using column KEYS
+// and constant numbers.
 //
 // Examples:
-//   Simple:        "qty_0 × rate_0"
-//   With modifier: "(qty_0 × rate_0) + 10%"
-//   With function: "ROUND((qty_0 × rate_0) + 10%, 2)"
-//   Complex:       "ABS(ROUND((qty_0 + rate_0) − 100, 2))"
+//   Simple:          "qty_0 × rate_0"
+//   With constant:   "(total_0 × rate_0) ÷ 1000"
+//   With modifier:   "(qty_0 × rate_0) + 10%"
+//   Multiply mod:    "(qty_0 × rate_0) × 1.18"
+//   Divide mod:      "(qty_0 × rate_0) ÷ 1000"
+//   With function:   "ROUND((qty_0 × rate_0) ÷ 1000, 2)"
+//   Complex:         "ABS(ROUND((qty_0 + rate_0) − 100, 2))"
 //
 // Operator symbols: + (add), − (subtract), × (multiply), ÷ (divide), % (modulo), ^ (power)
-// Note: "−" is U+2212 (minus sign), not ASCII hyphen.
 // =============================================================================
 
 /**
  * Parse formula string to FormulaData.
- * Supports both:
- *   - Legacy JSON format: '{"steps":["qty_0"],"operators":["+"],"modifiers":[...]}'
- *   - New readable string format: "qty_0 × rate_0"
  */
 export const parseFormula = (
   formulaString: string | null
@@ -244,10 +288,34 @@ export const parseFormula = (
       const parsed = JSON.parse(trimmed);
       if (parsed.steps && Array.isArray(parsed.steps)) {
         return {
-          steps: (parsed.steps as string[]).map((columnKey: string) => ({
-            id: generateId(),
-            columnKey
-          })),
+          steps: (
+            parsed.steps as (
+              | string
+              | { type: string; columnKey?: string; value?: number }
+            )[]
+          ).map((step) => {
+            if (typeof step === 'string') {
+              if (isNumericToken(step)) {
+                return {
+                  id: generateId(),
+                  type: 'constant' as FormulaStepType,
+                  columnKey: '',
+                  value: parseFloat(step)
+                };
+              }
+              return {
+                id: generateId(),
+                type: 'column' as FormulaStepType,
+                columnKey: step
+              };
+            }
+            return {
+              id: generateId(),
+              type: (step.type || 'column') as FormulaStepType,
+              columnKey: step.columnKey || '',
+              value: step.value
+            };
+          }),
           operators: parsed.operators || [],
           modifiers: (parsed.modifiers || []).map(
             (mod: Omit<FormulaModifier, 'id'>) => ({
@@ -272,25 +340,16 @@ export const parseFormula = (
 
 /**
  * Parse a human-readable formula string into FormulaData.
- *
- * Strategy:
- * 1. Unwrap outer functions (ROUND, ABS, CEIL, FLOOR, MAX/min-cap, MIN/max-cap)
- *    to extract modifiers (outermost first → they were applied last).
- * 2. Strip optional parentheses around the core expression.
- * 3. Parse trailing percentage / fixed modifiers (e.g. "+ 10%", "− 50").
- * 4. Parse the remaining core tokens into steps + operators.
  */
 function parseFormulaString(formula: string): FormulaData {
   const modifiers: FormulaModifier[] = [];
   let expr = formula.trim();
 
   // ── 1. Unwrap outer functions (peel from outside in) ─────────────────────
-  // We loop because functions can nest: ABS(ROUND(..., 2))
   let changed = true;
   while (changed) {
     changed = false;
 
-    // ROUND(inner, N)
     const roundMatch = expr.match(/^ROUND\((.+),\s*(\d+)\)$/);
     if (roundMatch) {
       modifiers.unshift({
@@ -304,7 +363,6 @@ function parseFormulaString(formula: string): FormulaData {
       continue;
     }
 
-    // ABS(inner)
     const absMatch = expr.match(/^ABS\((.+)\)$/);
     if (absMatch) {
       modifiers.unshift({
@@ -318,7 +376,6 @@ function parseFormulaString(formula: string): FormulaData {
       continue;
     }
 
-    // CEIL(inner)
     const ceilMatch = expr.match(/^CEIL\((.+)\)$/);
     if (ceilMatch) {
       modifiers.unshift({
@@ -332,7 +389,6 @@ function parseFormulaString(formula: string): FormulaData {
       continue;
     }
 
-    // FLOOR(inner)
     const floorMatch = expr.match(/^FLOOR\((.+)\)$/);
     if (floorMatch) {
       modifiers.unshift({
@@ -346,7 +402,6 @@ function parseFormulaString(formula: string): FormulaData {
       continue;
     }
 
-    // MAX(inner, value)  →  min cap (result cannot go below value)
     const maxMatch = expr.match(/^MAX\((.+),\s*([\d.]+)\)$/);
     if (maxMatch) {
       modifiers.unshift({
@@ -360,7 +415,6 @@ function parseFormulaString(formula: string): FormulaData {
       continue;
     }
 
-    // MIN(inner, value)  →  max cap (result cannot exceed value)
     const minMatch = expr.match(/^MIN\((.+),\s*([\d.]+)\)$/);
     if (minMatch) {
       modifiers.unshift({
@@ -376,19 +430,19 @@ function parseFormulaString(formula: string): FormulaData {
   }
 
   // ── 2. Parse trailing percentage/fixed modifiers ─────────────────────────
-  // Pattern: "(core) + 10%" or "(core) − 50"
-  // We peel from right to left since they were appended in order.
+  // Supports all 4 operators: +  −  ×  ÷
   changed = true;
   while (changed) {
     changed = false;
 
-    // Percentage modifier: ... [+|−] N%
-    const pctMatch = expr.match(/^(.+)\s+([+\u2212])\s+([\d.]+)%$/);
+    // Percentage modifier: ... [+|−|×|÷] N%
+    const pctMatch = expr.match(/^(.+)\s+([+\u2212×÷])\s+([\d.]+)%$/);
     if (pctMatch) {
+      const parsedOp = symbolToModifierOperator(pctMatch[2]);
       modifiers.unshift({
         id: generateId(),
         type: 'percentage',
-        operator: pctMatch[2] === '+' ? '+' : '-',
+        operator: parsedOp || '+',
         value: parseFloat(pctMatch[3])
       });
       expr = pctMatch[1].trim();
@@ -396,14 +450,14 @@ function parseFormulaString(formula: string): FormulaData {
       continue;
     }
 
-    // Fixed modifier: ... [+|−] N  (only if core is wrapped in parens)
-    // We check parens to avoid confusing "key1 + key2" with a fixed modifier
-    const fixedMatch = expr.match(/^(\(.+\))\s+([+\u2212])\s+([\d.]+)$/);
+    // Fixed modifier: ... [+|−|×|÷] N  (only if core is wrapped in parens)
+    const fixedMatch = expr.match(/^(\(.+\))\s+([+\u2212×÷])\s+([\d.]+)$/);
     if (fixedMatch) {
+      const parsedOp = symbolToModifierOperator(fixedMatch[2]);
       modifiers.unshift({
         id: generateId(),
         type: 'fixed',
-        operator: fixedMatch[2] === '+' ? '+' : '-',
+        operator: parsedOp || '+',
         value: parseFloat(fixedMatch[3])
       });
       expr = fixedMatch[1].trim();
@@ -414,7 +468,6 @@ function parseFormulaString(formula: string): FormulaData {
 
   // ── 3. Strip wrapping parentheses ────────────────────────────────────────
   if (expr.startsWith('(') && expr.endsWith(')')) {
-    // Only strip if these parens are balanced and wrap the whole expression
     let depth = 0;
     let wrapsAll = true;
     for (let i = 0; i < expr.length; i++) {
@@ -431,8 +484,6 @@ function parseFormulaString(formula: string): FormulaData {
   }
 
   // ── 4. Tokenize core expression into steps and operators ─────────────────
-  // Split by operator symbols: +  −  ×  ÷  %  ^
-  // Operator symbols are surrounded by spaces in our format.
   const tokens = expr.split(/\s+/);
 
   const steps: FormulaStep[] = [];
@@ -445,10 +496,20 @@ function parseFormulaString(formula: string): FormulaData {
     if (op !== null) {
       operators.push(op);
     } else if (token) {
-      steps.push({
-        id: generateId(),
-        columnKey: token
-      });
+      if (isNumericToken(token)) {
+        steps.push({
+          id: generateId(),
+          type: 'constant',
+          columnKey: '',
+          value: parseFloat(token)
+        });
+      } else {
+        steps.push({
+          id: generateId(),
+          type: 'column',
+          columnKey: token
+        });
+      }
     }
   }
 
@@ -457,30 +518,27 @@ function parseFormulaString(formula: string): FormulaData {
 
 /**
  * Convert FormulaData to string for API.
- * Produces a human-readable formula using column KEYS and operator symbols.
- * e.g. "qty_0 × rate_0", "ROUND((qty_0 × rate_0) + 10%, 2)"
  */
 export const stringifyFormula = (data: FormulaData): string => {
   if (data.steps.length === 0) return '';
 
-  // Build main expression using column keys
   let expression = data.steps
     .map((step, index) => {
-      const key = step.columnKey;
-      if (index === 0) return key;
+      const token =
+        step.type === 'constant' ? String(step.value ?? 0) : step.columnKey;
+
+      if (index === 0) return token;
       const op = data.operators[index - 1];
-      return `${getOperatorSymbol(op)} ${key}`;
+      return `${getOperatorSymbol(op)} ${token}`;
     })
     .join(' ');
 
-  // Wrap in parentheses if there are modifiers
   if (data.modifiers.length > 0) {
     expression = `(${expression})`;
   }
 
-  // Apply modifiers (same logic as getFormulaPreview)
   data.modifiers.forEach((mod) => {
-    const symbol = mod.operator === '+' ? '+' : '−';
+    const symbol = getModifierOperatorSymbol(mod.operator);
     switch (mod.type) {
       case 'percentage':
         expression += ` ${symbol} ${mod.value}%`;
@@ -526,24 +584,25 @@ export const getFormulaPreview = (
     return col?.label || `[${key}]`;
   };
 
-  // Build main expression
   let expression = data.steps
     .map((step, index) => {
-      const label = getColumnLabel(step.columnKey);
+      const label =
+        step.type === 'constant'
+          ? String(step.value ?? 0)
+          : getColumnLabel(step.columnKey);
+
       if (index === 0) return label;
       const op = data.operators[index - 1];
       return `${getOperatorSymbol(op)} ${label}`;
     })
     .join(' ');
 
-  // Wrap in parentheses if there are modifiers
   if (data.modifiers.length > 0) {
     expression = `(${expression})`;
   }
 
-  // Add modifiers
   data.modifiers.forEach((mod) => {
-    const symbol = mod.operator === '+' ? '+' : '−';
+    const symbol = getModifierOperatorSymbol(mod.operator);
     switch (mod.type) {
       case 'percentage':
         expression += ` ${symbol} ${mod.value}%`;
@@ -582,27 +641,33 @@ export const validateFormula = (
   data: FormulaData,
   availableColumns: TemplateColumn[]
 ): string | null => {
-  // Must have at least one step
   if (data.steps.length === 0) {
     return 'Please add at least one column to the formula';
   }
 
-  // Check all columns exist and are selected
   const availableKeys = new Set(availableColumns.map((c) => c.key));
-  const usedKeys: string[] = [];
 
   for (let i = 0; i < data.steps.length; i++) {
     const step = data.steps[i];
-    if (!step.columnKey || step.columnKey === '') {
-      return `Please select a column for step ${i + 1}`;
+
+    if (step.type === 'constant') {
+      if (
+        step.value === undefined ||
+        step.value === null ||
+        isNaN(step.value)
+      ) {
+        return `Please enter a valid number for step ${i + 1}`;
+      }
+    } else {
+      if (!step.columnKey || step.columnKey === '') {
+        return `Please select a column for step ${i + 1}`;
+      }
+      if (!availableKeys.has(step.columnKey)) {
+        return `Column "${step.columnKey}" in step ${i + 1} is not available. Please select a different column.`;
+      }
     }
-    if (!availableKeys.has(step.columnKey)) {
-      return `Column "${step.columnKey}" in step ${i + 1} is not available. Please select a different column.`;
-    }
-    usedKeys.push(step.columnKey);
   }
 
-  // Check operators count matches steps
   if (
     data.steps.length > 1 &&
     data.operators.length !== data.steps.length - 1
@@ -610,7 +675,6 @@ export const validateFormula = (
     return 'Missing operators between columns';
   }
 
-  // Validate each operator
   for (let i = 0; i < data.operators.length; i++) {
     const op = data.operators[i];
     if (!OPERATORS.some((o) => o.value === op)) {
@@ -618,7 +682,6 @@ export const validateFormula = (
     }
   }
 
-  // Validate modifiers
   for (let i = 0; i < data.modifiers.length; i++) {
     const mod = data.modifiers[i];
     const config = getModifierConfig(mod.type);
@@ -647,7 +710,6 @@ export const validateFormula = (
     }
   }
 
-  // Check min < max if both exist
   const minMod = data.modifiers.find((m) => m.type === 'min');
   const maxMod = data.modifiers.find((m) => m.type === 'max');
   if (minMod && maxMod && minMod.value >= maxMod.value) {
@@ -666,7 +728,10 @@ const hasInvalidColumns = (
 ): boolean => {
   const availableKeys = new Set(availableColumns.map((c) => c.key));
   return data.steps.some(
-    (step) => step.columnKey && !availableKeys.has(step.columnKey)
+    (step) =>
+      step.type === 'column' &&
+      step.columnKey &&
+      !availableKeys.has(step.columnKey)
   );
 };
 
@@ -679,9 +744,10 @@ const cleanFormulaData = (
 ): FormulaData => {
   const availableKeys = new Set(availableColumns.map((c) => c.key));
 
-  const validSteps = data.steps.filter(
-    (step) => !step.columnKey || availableKeys.has(step.columnKey)
-  );
+  const validSteps = data.steps.filter((step) => {
+    if (step.type === 'constant') return true;
+    return !step.columnKey || availableKeys.has(step.columnKey);
+  });
 
   const newOperators = data.operators.slice(
     0,
@@ -721,26 +787,19 @@ export default function FormulaBuilder({
   const [hasShownInvalidWarning, setHasShownInvalidWarning] = useState(false);
   const [showModifierMenu, setShowModifierMenu] = useState(false);
 
-  // Filter only NUMBER columns
-  const numberColumns = useMemo(
-    () => availableColumns.filter((col) => col.dataType === 'NUMBER'),
-    [availableColumns]
-  );
+  const numberColumns = useMemo(() => availableColumns, [availableColumns]);
 
-  // Build a lookup map for quick label resolution
   const columnLabelMap = useMemo(() => {
     const map = new Map<string, string>();
     numberColumns.forEach((col) => map.set(col.key, col.label));
     return map;
   }, [numberColumns]);
 
-  // Check if current formula has invalid column references
   const hasInvalidRefs = useMemo(
     () => hasInvalidColumns(value, numberColumns),
     [value, numberColumns]
   );
 
-  // Auto-clean invalid columns when availableColumns changes
   useEffect(() => {
     if (hasInvalidRefs && !hasShownInvalidWarning) {
       setHasShownInvalidWarning(true);
@@ -761,23 +820,26 @@ export default function FormulaBuilder({
   // STEP HANDLERS
   // ==========================================================================
 
-  const addStep = useCallback(() => {
-    const newStep: FormulaStep = {
-      id: generateId(),
-      columnKey: ''
-    };
+  const addStep = useCallback(
+    (type: FormulaStepType = 'column') => {
+      const newStep: FormulaStep =
+        type === 'constant'
+          ? { id: generateId(), type: 'constant', columnKey: '', value: 0 }
+          : { id: generateId(), type: 'column', columnKey: '' };
 
-    const newOperators =
-      value.steps.length > 0
-        ? [...value.operators, '+' as Operator]
-        : value.operators;
+      const newOperators =
+        value.steps.length > 0
+          ? [...value.operators, '+' as Operator]
+          : value.operators;
 
-    onChange({
-      ...value,
-      steps: [...value.steps, newStep],
-      operators: newOperators
-    });
-  }, [value, onChange]);
+      onChange({
+        ...value,
+        steps: [...value.steps, newStep],
+        operators: newOperators
+      });
+    },
+    [value, onChange]
+  );
 
   const updateStep = useCallback(
     (stepId: string, columnKey: string) => {
@@ -785,6 +847,37 @@ export default function FormulaBuilder({
         ...value,
         steps: value.steps.map((step) =>
           step.id === stepId ? { ...step, columnKey } : step
+        )
+      });
+    },
+    [value, onChange]
+  );
+
+  const updateStepValue = useCallback(
+    (stepId: string, val: number) => {
+      onChange({
+        ...value,
+        steps: value.steps.map((step) =>
+          step.id === stepId ? { ...step, value: val } : step
+        )
+      });
+    },
+    [value, onChange]
+  );
+
+  const updateStepType = useCallback(
+    (stepId: string, newType: FormulaStepType) => {
+      onChange({
+        ...value,
+        steps: value.steps.map((step) =>
+          step.id === stepId
+            ? {
+                ...step,
+                type: newType,
+                columnKey: newType === 'column' ? '' : '',
+                value: newType === 'constant' ? 0 : undefined
+              }
+            : step
         )
       });
     },
@@ -835,13 +928,11 @@ export default function FormulaBuilder({
       const config = getModifierConfig(type);
       if (!config) return;
 
-      // Prevent duplicate single-instance modifiers (abs, ceil, floor)
       if (['abs', 'ceil', 'floor'].includes(type)) {
         const exists = value.modifiers.some((m) => m.type === type);
         if (exists) return;
       }
 
-      // Prevent duplicate min/max
       if (type === 'min' || type === 'max') {
         const exists = value.modifiers.some((m) => m.type === type);
         if (exists) return;
@@ -850,7 +941,7 @@ export default function FormulaBuilder({
       const newModifier: FormulaModifier = {
         id: generateId(),
         type,
-        operator: config.hasOperator ? '+' : '+',
+        operator: '+',
         value: config.defaultValue
       };
 
@@ -910,7 +1001,6 @@ export default function FormulaBuilder({
     [numberColumns]
   );
 
-  // Get label for a column key (for rendering in SelectValue)
   const getColumnLabel = useCallback(
     (columnKey: string): string | null => {
       return columnLabelMap.get(columnKey) || null;
@@ -918,13 +1008,11 @@ export default function FormulaBuilder({
     [columnLabelMap]
   );
 
-  // Check which modifier types are already used (for disabling in menu)
   const usedModifierTypes = useMemo(
     () => new Set(value.modifiers.map((m) => m.type)),
     [value.modifiers]
   );
 
-  // Build a lookup map for quick blockIndex resolution
   const columnBlockMap = useMemo(() => {
     const map = new Map<string, number>();
     numberColumns.forEach((col) => map.set(col.key, col.blockIndex));
@@ -961,85 +1049,136 @@ export default function FormulaBuilder({
         </div>
       )}
 
-      {/* No NUMBER columns warning */}
+      {/* No columns warning */}
       {numberColumns.length === 0 && (
         <div className='flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-400'>
           <AlertCircle className='h-4 w-4 flex-shrink-0' />
           <span>
-            No number columns available. Create NUMBER type columns first to use
-            in formulas.
+            No columns available. Create columns first to use in formulas.
           </span>
         </div>
       )}
 
       {/* Formula Steps */}
-      {numberColumns.length > 0 && (
-        <Card>
-          <CardContent className='space-y-4 pt-4'>
-            {/* Step 1: Column Selection */}
-            <div className='space-y-3'>
-              <div className='flex items-center justify-between'>
-                <Label className='text-muted-foreground text-xs tracking-wide uppercase'>
-                  Select Columns
-                </Label>
+      <Card>
+        <CardContent className='space-y-4 pt-4'>
+          {/* Step 1: Column / Constant Selection */}
+          <div className='space-y-3'>
+            <div className='flex items-center justify-between'>
+              <Label className='text-muted-foreground text-xs tracking-wide uppercase'>
+                Select Columns
+              </Label>
+              <div className='flex gap-1'>
                 <Button
                   type='button'
                   variant='outline'
                   size='sm'
-                  onClick={addStep}
+                  onClick={() => addStep('column')}
                   disabled={disabled}
                   className='h-7 text-xs'
                 >
                   <Plus className='mr-1 h-3 w-3' />
                   Add Column
                 </Button>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={() => addStep('constant')}
+                  disabled={disabled}
+                  className='h-7 text-xs'
+                >
+                  <Hash className='mr-1 h-3 w-3' />
+                  Add Number
+                </Button>
               </div>
+            </div>
 
-              {value.steps.length === 0 ? (
-                <div className='text-muted-foreground rounded-md border-2 border-dashed py-6 text-center text-sm'>
-                  Click &quot;Add Column&quot; to start building your formula
-                </div>
-              ) : (
-                <div className='space-y-2'>
-                  {value.steps.map((step, index) => {
-                    const isInvalid =
-                      step.columnKey && !isColumnKeyValid(step.columnKey);
-                    const selectedLabel = step.columnKey
+            {value.steps.length === 0 ? (
+              <div className='text-muted-foreground rounded-md border-2 border-dashed py-6 text-center text-sm'>
+                Click &quot;Add Column&quot; or &quot;Add Number&quot; to start
+                building your formula
+              </div>
+            ) : (
+              <div className='space-y-2'>
+                {value.steps.map((step, index) => {
+                  const isInvalid =
+                    step.type === 'column' &&
+                    step.columnKey &&
+                    !isColumnKeyValid(step.columnKey);
+                  const selectedLabel =
+                    step.type === 'column' && step.columnKey
                       ? getColumnLabel(step.columnKey)
                       : null;
 
-                    return (
-                      <div key={step.id} className='flex items-center gap-2'>
-                        {/* Operator (not for first step) */}
-                        {index > 0 && (
-                          <Select
-                            value={value.operators[index - 1] || '+'}
-                            onValueChange={(val) =>
-                              updateOperator(index - 1, val as Operator)
-                            }
-                            disabled={disabled}
-                          >
-                            <SelectTrigger className='h-9 w-[90px]'>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {OPERATORS.map((op) => (
-                                <SelectItem key={op.value} value={op.value}>
-                                  <span className='flex items-center gap-2'>
-                                    <span className='w-4 text-center font-mono'>
-                                      {op.symbol}
-                                    </span>
-                                    <span className='text-muted-foreground text-xs'>
-                                      {op.label}
-                                    </span>
+                  return (
+                    <div key={step.id} className='flex items-center gap-2'>
+                      {/* Operator (not for first step) */}
+                      {index > 0 && (
+                        <Select
+                          value={value.operators[index - 1] || '+'}
+                          onValueChange={(val) =>
+                            updateOperator(index - 1, val as Operator)
+                          }
+                          disabled={disabled}
+                        >
+                          <SelectTrigger className='h-9 w-[90px]'>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {OPERATORS.map((op) => (
+                              <SelectItem key={op.value} value={op.value}>
+                                <span className='flex items-center gap-2'>
+                                  <span className='w-4 text-center font-mono'>
+                                    {op.symbol}
                                   </span>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        )}
+                                  <span className='text-muted-foreground text-xs'>
+                                    {op.label}
+                                  </span>
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
 
-                        {/* Column Selector */}
+                      {/* Step type toggle */}
+                      <Select
+                        value={step.type}
+                        onValueChange={(val) =>
+                          updateStepType(step.id, val as FormulaStepType)
+                        }
+                        disabled={disabled}
+                      >
+                        <SelectTrigger className='h-9 w-[100px]'>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {STEP_TYPES.map((st) => (
+                            <SelectItem key={st.value} value={st.value}>
+                              {st.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Column Selector or Number Input */}
+                      {step.type === 'constant' ? (
+                        <Input
+                          type='number'
+                          value={step.value ?? 0}
+                          onChange={(e) =>
+                            updateStepValue(
+                              step.id,
+                              parseFloat(e.target.value) || 0
+                            )
+                          }
+                          disabled={disabled}
+                          className='h-9 flex-1'
+                          placeholder='Enter number...'
+                          step='any'
+                        />
+                      ) : (
                         <Select
                           value={step.columnKey || undefined}
                           onValueChange={(val) => updateStep(step.id, val)}
@@ -1109,13 +1248,174 @@ export default function FormulaBuilder({
                             )}
                           </SelectContent>
                         </Select>
+                      )}
+
+                      {/* Remove Button */}
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon'
+                        onClick={() => removeStep(step.id)}
+                        disabled={disabled}
+                        className='text-muted-foreground hover:text-destructive h-9 w-9'
+                      >
+                        <Trash2 className='h-4 w-4' />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Step 2: Modifiers */}
+          {hasSteps && (
+            <div className='space-y-3 border-t pt-3'>
+              <div className='flex items-center justify-between'>
+                <Label className='text-muted-foreground text-xs tracking-wide uppercase'>
+                  Additional Operations (Optional)
+                </Label>
+                <div className='relative'>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={() => setShowModifierMenu(!showModifierMenu)}
+                    disabled={disabled}
+                    className='h-7 text-xs'
+                  >
+                    <Plus className='mr-1 h-3 w-3' />
+                    Add Operation
+                  </Button>
+
+                  {showModifierMenu && (
+                    <>
+                      <div
+                        className='fixed inset-0 z-40'
+                        onClick={() => setShowModifierMenu(false)}
+                      />
+                      <div className='bg-popover absolute top-full right-0 z-50 mt-1 w-[240px] rounded-md border p-1 shadow-md'>
+                        {MODIFIER_TYPES.map((modType) => {
+                          const isSingleUse = [
+                            'abs',
+                            'ceil',
+                            'floor',
+                            'min',
+                            'max'
+                          ].includes(modType.value);
+                          const isUsed = usedModifierTypes.has(modType.value);
+                          const isDisabled = isSingleUse && isUsed;
+
+                          return (
+                            <button
+                              key={modType.value}
+                              type='button'
+                              className={cn(
+                                'hover:bg-accent hover:text-accent-foreground w-full rounded-sm px-3 py-2 text-left text-sm',
+                                isDisabled &&
+                                  'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-inherit'
+                              )}
+                              onClick={() => {
+                                if (!isDisabled) addModifier(modType.value);
+                              }}
+                              disabled={isDisabled}
+                            >
+                              <div className='font-medium'>{modType.label}</div>
+                              <div className='text-muted-foreground text-xs'>
+                                {modType.description}
+                                {isDisabled && ' (already added)'}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {value.modifiers.length > 0 && (
+                <div className='space-y-2'>
+                  {value.modifiers.map((mod) => {
+                    const config = getModifierConfig(mod.type);
+                    if (!config) return null;
+
+                    return (
+                      <div
+                        key={mod.id}
+                        className='flex flex-wrap items-center gap-2'
+                      >
+                        {/* Type Badge */}
+                        <Badge
+                          variant='secondary'
+                          className='h-9 shrink-0 px-3'
+                        >
+                          {config.label}
+                        </Badge>
+
+                        {/* Operator — now with all 4 options */}
+                        {config.hasOperator && (
+                          <Select
+                            value={mod.operator}
+                            onValueChange={(val) =>
+                              updateModifier(mod.id, {
+                                operator: val as ModifierOperator
+                              })
+                            }
+                            disabled={disabled}
+                          >
+                            <SelectTrigger className='h-9 w-[140px]'>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {MODIFIER_OPERATORS.map((op) => (
+                                <SelectItem key={op.value} value={op.value}>
+                                  <span className='flex items-center gap-2'>
+                                    <span className='w-4 text-center font-mono'>
+                                      {op.symbol}
+                                    </span>
+                                    <span>
+                                      {op.label} ({op.symbol})
+                                    </span>
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+
+                        {/* Value (if applicable) */}
+                        {config.hasValue && (
+                          <div className='flex items-center gap-1'>
+                            <Input
+                              type='number'
+                              value={mod.value}
+                              onChange={(e) =>
+                                updateModifier(mod.id, {
+                                  value: parseFloat(e.target.value) || 0
+                                })
+                              }
+                              disabled={disabled}
+                              className='h-9 w-[100px]'
+                              min={config.valueMin}
+                              max={config.valueMax}
+                              step={config.valueStep}
+                              placeholder={config.valuePlaceholder}
+                            />
+                            {mod.type === 'percentage' && (
+                              <span className='text-muted-foreground text-sm'>
+                                %
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         {/* Remove Button */}
                         <Button
                           type='button'
                           variant='ghost'
                           size='icon'
-                          onClick={() => removeStep(step.id)}
+                          onClick={() => removeModifier(mod.id)}
                           disabled={disabled}
                           className='text-muted-foreground hover:text-destructive h-9 w-9'
                         >
@@ -1127,169 +1427,9 @@ export default function FormulaBuilder({
                 </div>
               )}
             </div>
-
-            {/* Step 2: Modifiers */}
-            {hasSteps && (
-              <div className='space-y-3 border-t pt-3'>
-                <div className='flex items-center justify-between'>
-                  <Label className='text-muted-foreground text-xs tracking-wide uppercase'>
-                    Additional Operations (Optional)
-                  </Label>
-                  <div className='relative'>
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='sm'
-                      onClick={() => setShowModifierMenu(!showModifierMenu)}
-                      disabled={disabled}
-                      className='h-7 text-xs'
-                    >
-                      <Plus className='mr-1 h-3 w-3' />
-                      Add Operation
-                    </Button>
-
-                    {/* Modifier type selection dropdown */}
-                    {showModifierMenu && (
-                      <>
-                        {/* Backdrop to close menu */}
-                        <div
-                          className='fixed inset-0 z-40'
-                          onClick={() => setShowModifierMenu(false)}
-                        />
-                        <div className='bg-popover absolute top-full right-0 z-50 mt-1 w-[240px] rounded-md border p-1 shadow-md'>
-                          {MODIFIER_TYPES.map((modType) => {
-                            const isSingleUse = [
-                              'abs',
-                              'ceil',
-                              'floor',
-                              'min',
-                              'max'
-                            ].includes(modType.value);
-                            const isUsed = usedModifierTypes.has(modType.value);
-                            const isDisabled = isSingleUse && isUsed;
-
-                            return (
-                              <button
-                                key={modType.value}
-                                type='button'
-                                className={cn(
-                                  'hover:bg-accent hover:text-accent-foreground w-full rounded-sm px-3 py-2 text-left text-sm',
-                                  isDisabled &&
-                                    'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-inherit'
-                                )}
-                                onClick={() => {
-                                  if (!isDisabled) addModifier(modType.value);
-                                }}
-                                disabled={isDisabled}
-                              >
-                                <div className='font-medium'>
-                                  {modType.label}
-                                </div>
-                                <div className='text-muted-foreground text-xs'>
-                                  {modType.description}
-                                  {isDisabled && ' (already added)'}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {value.modifiers.length > 0 && (
-                  <div className='space-y-2'>
-                    {value.modifiers.map((mod) => {
-                      const config = getModifierConfig(mod.type);
-                      if (!config) return null;
-
-                      return (
-                        <div
-                          key={mod.id}
-                          className='flex flex-wrap items-center gap-2'
-                        >
-                          {/* Type Badge */}
-                          <Badge
-                            variant='secondary'
-                            className='h-9 shrink-0 px-3'
-                          >
-                            {config.label}
-                          </Badge>
-
-                          {/* Operator (only for percentage and fixed) */}
-                          {config.hasOperator && (
-                            <Select
-                              value={mod.operator}
-                              onValueChange={(val) =>
-                                updateModifier(mod.id, {
-                                  operator: val as '+' | '-'
-                                })
-                              }
-                              disabled={disabled}
-                            >
-                              <SelectTrigger className='h-9 w-[110px]'>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {MODIFIER_OPERATORS.map((op) => (
-                                  <SelectItem key={op.value} value={op.value}>
-                                    {op.value === '+'
-                                      ? 'Add (+)'
-                                      : 'Subtract (−)'}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          )}
-
-                          {/* Value (if applicable) */}
-                          {config.hasValue && (
-                            <div className='flex items-center gap-1'>
-                              <Input
-                                type='number'
-                                value={mod.value}
-                                onChange={(e) =>
-                                  updateModifier(mod.id, {
-                                    value: parseFloat(e.target.value) || 0
-                                  })
-                                }
-                                disabled={disabled}
-                                className='h-9 w-[100px]'
-                                min={config.valueMin}
-                                max={config.valueMax}
-                                step={config.valueStep}
-                                placeholder={config.valuePlaceholder}
-                              />
-                              {mod.type === 'percentage' && (
-                                <span className='text-muted-foreground text-sm'>
-                                  %
-                                </span>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Remove Button */}
-                          <Button
-                            type='button'
-                            variant='ghost'
-                            size='icon'
-                            onClick={() => removeModifier(mod.id)}
-                            disabled={disabled}
-                            className='text-muted-foreground hover:text-destructive h-9 w-9'
-                          >
-                            <Trash2 className='h-4 w-4' />
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
       {/* Formula Preview */}
       {preview && (
