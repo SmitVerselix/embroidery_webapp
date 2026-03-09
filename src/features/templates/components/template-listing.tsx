@@ -772,7 +772,7 @@ export default function TemplateListing({
     try {
       if (editingColumn) {
         const generatedKey =
-          data.label.toLowerCase().replace(/\s+/g, '_') + '_0';
+          data.label.toLowerCase().replace(/\s+/g, '_') + `_${data.blockIndex}`;
         const oldKey = editingColumn.key;
         const keyChanged = oldKey !== generatedKey;
         const tid = columnTemplateId;

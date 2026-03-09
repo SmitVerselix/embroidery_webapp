@@ -394,9 +394,11 @@ export default function OrderTemplateValues({
   );
 
   const formatAmount = (value: string | null | undefined): string => {
-    if (!value) return '0.00';
+    if (!value) return '0';
     const num = parseFloat(value);
-    return isNaN(num) ? '0.00' : num.toFixed(2);
+    if (isNaN(num)) return '0';
+    if (num === 0) return '0';
+    return num.toFixed(2);
   };
 
   // ──────────────────────────────────────────────────────────────────────
@@ -633,7 +635,11 @@ export default function OrderTemplateValues({
                               type={
                                 column.dataType === 'NUMBER' ? 'number' : 'text'
                               }
-                              value={getValue(row.id, column.id)}
+                              value={
+                                readOnly && column.dataType === 'NUMBER'
+                                  ? formatAmount(getValue(row.id, column.id))
+                                  : getValue(row.id, column.id)
+                              }
                               onChange={(e) =>
                                 handleValueChange(
                                   row.id,
@@ -686,7 +692,9 @@ export default function OrderTemplateValues({
                 <div className='flex items-center justify-between gap-8'>
                   <span className='text-muted-foreground'>Discount</span>
                   <span className='font-medium tabular-nums'>
-                    {summary.discount ?? '—'}
+                    {summary.discount != null
+                      ? formatAmount(summary.discount)
+                      : '—'}
                   </span>
                 </div>
 

@@ -253,24 +253,6 @@ const isNumericToken = (token: string): boolean => {
   return /^-?\d+(\.\d+)?$/.test(token);
 };
 
-// =============================================================================
-// FORMULA STRING FORMAT
-// =============================================================================
-// The formula is stored and sent as a human-readable string using column KEYS
-// and constant numbers.
-//
-// Examples:
-//   Simple:          "qty_0 × rate_0"
-//   With constant:   "(total_0 × rate_0) ÷ 1000"
-//   With modifier:   "(qty_0 × rate_0) + 10%"
-//   Multiply mod:    "(qty_0 × rate_0) × 1.18"
-//   Divide mod:      "(qty_0 × rate_0) ÷ 1000"
-//   With function:   "ROUND((qty_0 × rate_0) ÷ 1000, 2)"
-//   Complex:         "ABS(ROUND((qty_0 + rate_0) − 100, 2))"
-//
-// Operator symbols: + (add), − (subtract), × (multiply), ÷ (divide), % (modulo), ^ (power)
-// =============================================================================
-
 /**
  * Parse formula string to FormulaData.
  */

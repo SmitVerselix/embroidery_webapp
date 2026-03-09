@@ -118,9 +118,10 @@ const getOrderTypeBadgeVariant = (type: string) => {
 
 /** Format a numeric string to 2 decimal places for display */
 const formatAmount = (value: string | null | undefined): string => {
-  if (!value) return '0.00';
+  if (!value) return '0';
   const num = parseFloat(value);
-  if (isNaN(num)) return '0.00';
+  if (isNaN(num)) return '0';
+  if (num === 0) return '0';
   return num.toFixed(2);
 };
 
@@ -670,11 +671,11 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       const summary: OrderTemplateSummary | null = rawSummary
         ? {
             id: rawSummary.id,
-            total: rawSummary.total ?? '0.0000',
+            total: rawSummary.total ?? '0.00',
             discount: rawSummary.discount ?? null,
-            discountAmount: rawSummary.discountAmount ?? '0.0000',
+            discountAmount: rawSummary.discountAmount ?? '0.00',
             discountType: rawSummary.discountType ?? null,
-            finalPayableAmount: rawSummary.finalPayableAmount ?? '0.0000',
+            finalPayableAmount: rawSummary.finalPayableAmount ?? '0.00',
             notes: rawSummary.notes ?? null
           }
         : null;
@@ -691,7 +692,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       const valuesMap: TemplateValuesMap = {};
       (tmplData.values || []).forEach((v) => {
         if (!valuesMap[v.rowId]) valuesMap[v.rowId] = {};
-        valuesMap[v.rowId][v.columnId] = v.value ?? v.calculatedValue ?? '';
+        valuesMap[v.rowId][v.columnId] = v.calculatedValue ?? v.value ?? '';
       });
       loadedValues[orderTemplateId] = valuesMap;
 
