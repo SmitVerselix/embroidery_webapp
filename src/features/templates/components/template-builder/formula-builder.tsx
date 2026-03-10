@@ -67,6 +67,11 @@ export type FormulaData = {
   modifiers: FormulaModifier[];
 };
 
+export type TemplateBlock = {
+  index: number;
+  label: string;
+};
+
 // =============================================================================
 // CONSTANTS
 // =============================================================================
@@ -751,6 +756,7 @@ interface FormulaBuilderProps {
   value: FormulaData;
   onChange: (data: FormulaData) => void;
   availableColumns: TemplateColumn[];
+  selectedBlockIndex?: number;
   error?: string | null;
   disabled?: boolean;
 }
@@ -763,6 +769,7 @@ export default function FormulaBuilder({
   value,
   onChange,
   availableColumns,
+  selectedBlockIndex,
   error,
   disabled = false
 }: FormulaBuilderProps) {
@@ -770,6 +777,12 @@ export default function FormulaBuilder({
   const [showModifierMenu, setShowModifierMenu] = useState(false);
 
   const numberColumns = useMemo(() => availableColumns, [availableColumns]);
+
+  // Filtered columns based on the selected block from the parent form
+  const filteredColumns = useMemo(() => {
+    if (selectedBlockIndex === undefined) return numberColumns;
+    return numberColumns.filter((col) => col.blockIndex === selectedBlockIndex);
+  }, [numberColumns, selectedBlockIndex]);
 
   const columnLabelMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1203,12 +1216,14 @@ export default function FormulaBuilder({
                             </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
-                            {numberColumns.length === 0 ? (
+                            {filteredColumns.length === 0 ? (
                               <div className='text-muted-foreground px-2 py-3 text-center text-sm'>
-                                No columns available
+                                {numberColumns.length === 0
+                                  ? 'No columns available'
+                                  : 'No columns in this block'}
                               </div>
                             ) : (
-                              numberColumns.map((col) => (
+                              filteredColumns.map((col) => (
                                 <SelectItem key={col.id} value={col.key}>
                                   <span className='flex items-center gap-2'>
                                     <span>{col.label}</span>

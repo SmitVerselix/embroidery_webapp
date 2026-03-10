@@ -29,6 +29,7 @@ import { Loader2, AlertCircle, Info } from 'lucide-react';
 
 import FormulaBuilder, {
   type FormulaData,
+  type TemplateBlock,
   createEmptyFormula,
   parseFormula,
   stringifyFormula,
@@ -36,13 +37,10 @@ import FormulaBuilder, {
 } from './formula-builder';
 
 // =============================================================================
-// BLOCK TYPE (shared across components)
+// BLOCK TYPE (re-exported from formula-builder for backward compat)
 // =============================================================================
 
-export type TemplateBlock = {
-  index: number; // blockIndex value (0, 1, 2, ...)
-  label: string; // display name (e.g., "Before Line Balancing")
-};
+export type { TemplateBlock };
 
 // =============================================================================
 // SCHEMA
@@ -394,6 +392,7 @@ export default function ColumnFormDialog({
                 value={formulaData}
                 onChange={setFormulaData}
                 availableColumns={formulaAvailableColumns}
+                selectedBlockIndex={selectedBlockIndex}
                 error={formulaError}
                 disabled={isLoading}
               />

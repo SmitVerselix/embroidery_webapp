@@ -625,11 +625,26 @@ export default function OrderTemplateValues({
                         );
                       }
 
+                      // TOTAL rows: display value only (no input), similar to formula columns
+                      if (isTotal) {
+                        const displayValue =
+                          column.dataType === 'NUMBER'
+                            ? formatAmount(getValue(row.id, column.id))
+                            : getValue(row.id, column.id) || '—';
+                        return (
+                          <TableCell
+                            key={column.id}
+                            className='bg-muted text-center'
+                          >
+                            <span className='font-mono text-sm font-medium'>
+                              {displayValue}
+                            </span>
+                          </TableCell>
+                        );
+                      }
+
                       return (
-                        <TableCell
-                          key={column.id}
-                          className={cn(isTotal && 'bg-muted')}
-                        >
+                        <TableCell key={column.id}>
                           <div className='space-y-1'>
                             <Input
                               type={
