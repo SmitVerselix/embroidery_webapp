@@ -58,7 +58,11 @@ import type {
   LoginHistoryPayload,
   UpdateFinalCalculationData,
   OrderHistoryParams,
-  OrderHistoryListResponse
+  OrderHistoryListResponse,
+  CreateBlockData,
+  TemplateBlock,
+  UpdateBlockData,
+  ReorderBlockData
 } from './types';
 
 // =============================================================================
@@ -449,6 +453,59 @@ export const reorderColumns = async (
 ): Promise<void> => {
   await api.put<ApiResponse<void>>(
     ENDPOINTS.COLUMN.REORDER(companyId, productId, templateId),
+    data
+  );
+};
+
+// =============================================================================
+// TEMPLATE BLOCK SERVICES
+// =============================================================================
+
+export const createBlock = async (
+  companyId: string,
+  productId: string,
+  templateId: string,
+  data: CreateBlockData
+): Promise<TemplateBlock> => {
+  const res = await api.post<ApiResponse<TemplateBlock>>(
+    ENDPOINTS.BLOCK.CREATE(companyId, productId, templateId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const updateBlock = async (
+  companyId: string,
+  productId: string,
+  templateId: string,
+  blockId: string,
+  data: UpdateBlockData
+): Promise<void> => {
+  await api.put<ApiResponse<number[]>>(
+    ENDPOINTS.BLOCK.UPDATE(companyId, productId, templateId, blockId),
+    data
+  );
+};
+
+export const deleteBlock = async (
+  companyId: string,
+  productId: string,
+  templateId: string,
+  blockId: string
+): Promise<void> => {
+  await api.delete<ApiResponse<number[]>>(
+    ENDPOINTS.BLOCK.DELETE(companyId, productId, templateId, blockId)
+  );
+};
+
+export const reorderBlocks = async (
+  companyId: string,
+  productId: string,
+  templateId: string,
+  data: ReorderBlockData
+): Promise<void> => {
+  await api.put<ApiResponse<void>>(
+    ENDPOINTS.BLOCK.REORDER(companyId, productId, templateId),
     data
   );
 };

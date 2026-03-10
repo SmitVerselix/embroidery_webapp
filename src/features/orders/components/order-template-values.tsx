@@ -6,7 +6,8 @@ import type {
   TemplateColumn,
   TemplateRow,
   TemplateExtra,
-  DiscountType
+  DiscountType,
+  TemplateBlock as TemplateBlockApi
 } from '@/lib/api/types';
 import { DISCOUNT_TYPES } from '@/lib/api/types';
 import {
@@ -59,6 +60,9 @@ import { Label } from '@/components/ui/label';
 export type TemplateValuesMap = Record<string, Record<string, string>>;
 // TemplateValuesMap[rowId][columnId] = value
 
+export type BlockValuesMap = Record<number, string>;
+// BlockValuesMap[blockIndex] = templateBlockId
+
 type TemplateBlock = {
   index: number;
   label: string;
@@ -80,6 +84,10 @@ export interface OrderTemplateValuesProps {
   discountType?: DiscountType;
   discountValue?: string;
   onDiscountChange?: (type: DiscountType, value: string) => void;
+  // Block selection support
+  apiBlocks?: TemplateBlockApi[];
+  blockValues?: BlockValuesMap;
+  onBlockValuesChange?: (values: BlockValuesMap) => void;
 }
 
 // =============================================================================
@@ -125,18 +133,14 @@ function evaluateFormula(
   const parsed = parseFormula(formulaString);
   if (!parsed || parsed.steps.length === 0) return '—';
 
-  // Track visited formula columns to prevent circular references
   const visited = _visited ?? new Set<string>();
 
-  // Build a map of column key → resolved numeric value
-  // This now handles NUMBER columns directly and FORMULA columns recursively
   const keyToValue: Record<string, number> = {};
   columns.forEach((col) => {
     if (col.dataType === 'NUMBER') {
       const val = rowValues[col.id];
       keyToValue[col.key] = val ? parseFloat(val) || 0 : 0;
     } else if (col.dataType === 'FORMULA') {
-      // Recursively evaluate FORMULA columns (skip if already visiting to avoid cycles)
       if (!visited.has(col.key) && col.formula) {
         visited.add(col.key);
         const evalResult = evaluateFormula(
@@ -151,13 +155,11 @@ function evaluateFormula(
         keyToValue[col.key] = 0;
       }
     } else if (col.dataType === 'TEXT') {
-      // TEXT columns: try to parse as number, otherwise 0
       const val = rowValues[col.id];
       keyToValue[col.key] = val ? parseFloat(val) || 0 : 0;
     }
   });
 
-  // ── Resolve the first step value ──────────────────────────────────
   const getStepValue = (step: any): number => {
     if (step.type === 'constant') {
       return step.value ?? 0;
@@ -167,7 +169,6 @@ function evaluateFormula(
 
   let result = getStepValue(parsed.steps[0]);
 
-  // ── Apply step operators ──────────────────────────────────────────
   for (let i = 1; i < parsed.steps.length; i++) {
     const op = parsed.operators[i - 1];
     const val = getStepValue(parsed.steps[i]);
@@ -194,7 +195,6 @@ function evaluateFormula(
     }
   }
 
-  // ── Apply modifiers ───────────────────────────────────────────────
   for (const mod of parsed.modifiers) {
     switch (mod.type) {
       case 'percentage': {
@@ -278,7 +278,10 @@ export default function OrderTemplateValues({
   summary,
   discountType,
   discountValue,
-  onDiscountChange
+  onDiscountChange,
+  apiBlocks = [],
+  blockValues = {},
+  onBlockValuesChange
 }: OrderTemplateValuesProps) {
   const columns = useMemo(
     () => [...(template.columns || [])].sort((a, b) => a.orderNo - b.orderNo),
@@ -311,7 +314,6 @@ export default function OrderTemplateValues({
   // ── Block grouping ──────────────────────────────────────────────────
   const blocks = useMemo(() => deriveBlocks(columns), [columns]);
 
-  // Group columns by blockIndex, preserving block order
   const orderedBlockColumns = useMemo(() => {
     const grouped: { block: TemplateBlock; columns: TemplateColumn[] }[] = [];
     blocks.forEach((block) => {
@@ -323,13 +325,11 @@ export default function OrderTemplateValues({
     return grouped;
   }, [blocks, columns]);
 
-  // Flat list of columns in block order (for rendering table cells)
   const flatOrderedColumns = useMemo(
     () => orderedBlockColumns.flatMap((g) => g.columns),
     [orderedBlockColumns]
   );
 
-  // Check if we have multiple blocks with columns
   const hasMultipleBlocks = orderedBlockColumns.length > 1;
 
   const hasColumns = columns.length > 0;
@@ -339,8 +339,8 @@ export default function OrderTemplateValues({
   const hasFooterExtras = footerExtras.length > 0;
   const hasMediaExtras = mediaExtras.length > 0;
   const hasAnyExtras = hasHeaderExtras || hasFooterExtras || hasMediaExtras;
+  const hasApiBlocks = apiBlocks.length > 0;
 
-  // Check if summary has actual data
   const hasSummary =
     summary && typeof summary === 'object' && Object.keys(summary).length > 0;
 
@@ -400,6 +400,15 @@ export default function OrderTemplateValues({
     if (num === 0) return '0';
     return num.toFixed(2);
   };
+
+  // ── BLOCK VALUE HANDLER ──────────────────────────────────────────────
+  const handleBlockValueChange = useCallback(
+    (blockIndex: number, templateBlockId: string) => {
+      const newBlockValues = { ...blockValues, [blockIndex]: templateBlockId };
+      onBlockValuesChange?.(newBlockValues);
+    },
+    [blockValues, onBlockValuesChange]
+  );
 
   // ──────────────────────────────────────────────────────────────────────
   // DISCOUNT HANDLERS
@@ -504,6 +513,49 @@ export default function OrderTemplateValues({
 
     return (
       <div className='min-w-0 flex-1 overflow-hidden rounded-lg border'>
+        {/* Single-block dropdown */}
+        {!hasMultipleBlocks && hasApiBlocks && !readOnly && (
+          <div className='flex items-center gap-3 border-b px-4 py-2.5'>
+            <Layers className='text-muted-foreground h-4 w-4' />
+            <span className='text-muted-foreground text-xs font-medium'>
+              Block:
+            </span>
+            <Select
+              value={blockValues[blocks[0]?.index ?? 0] || ''}
+              onValueChange={(val) =>
+                handleBlockValueChange(blocks[0]?.index ?? 0, val)
+              }
+              disabled={disabled}
+            >
+              <SelectTrigger className='h-8 w-[220px] text-xs'>
+                <SelectValue placeholder='Select block...' />
+              </SelectTrigger>
+              <SelectContent>
+                {apiBlocks.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {!hasMultipleBlocks &&
+          hasApiBlocks &&
+          readOnly &&
+          blockValues[blocks[0]?.index ?? 0] && (
+            <div className='flex items-center gap-3 border-b px-4 py-2.5'>
+              <Layers className='text-muted-foreground h-4 w-4' />
+              <span className='text-muted-foreground text-xs font-medium'>
+                Block:
+              </span>
+              <Badge variant='outline' className='text-xs'>
+                {apiBlocks.find(
+                  (b) => b.id === blockValues[blocks[0]?.index ?? 0]
+                )?.name || '—'}
+              </Badge>
+            </div>
+          )}
         <div className='overflow-x-auto'>
           <Table>
             <TableHeader>
@@ -519,27 +571,67 @@ export default function OrderTemplateValues({
                   </TableHead>
 
                   {/* Block group headers with colspan */}
-                  {orderedBlockColumns.map((group, idx) => (
-                    <TableHead
-                      key={group.block.index}
-                      colSpan={group.columns.length}
-                      className={cn(
-                        'border-x text-center text-sm font-bold',
-                        blockColors[idx % blockColors.length]
-                      )}
-                    >
-                      <div className='flex items-center justify-center gap-2 py-1'>
-                        <Layers className='h-3.5 w-3.5' />
-                        <span>{group.block.label}</span>
-                      </div>
-                    </TableHead>
-                  ))}
+                  {orderedBlockColumns.map((group, idx) => {
+                    const selectedBlockId =
+                      blockValues[group.block.index] || '';
+                    const selectedBlock = apiBlocks.find(
+                      (b) => b.id === selectedBlockId
+                    );
+
+                    return (
+                      <TableHead
+                        key={group.block.index}
+                        colSpan={group.columns.length}
+                        className={cn(
+                          'border-x text-center text-sm font-bold',
+                          blockColors[idx % blockColors.length]
+                        )}
+                      >
+                        <div className='flex flex-col items-center gap-1.5 py-1'>
+                          <div className='flex items-center gap-2'>
+                            <Layers className='h-3.5 w-3.5' />
+                            <span>{group.block.label}</span>
+                          </div>
+                          {hasApiBlocks &&
+                            (readOnly ? (
+                              selectedBlock ? (
+                                <Badge
+                                  variant='outline'
+                                  className='text-[10px] font-normal'
+                                >
+                                  {selectedBlock.name}
+                                </Badge>
+                              ) : null
+                            ) : (
+                              <Select
+                                value={selectedBlockId}
+                                onValueChange={(val) =>
+                                  handleBlockValueChange(group.block.index, val)
+                                }
+                                disabled={disabled}
+                              >
+                                <SelectTrigger className='h-7 w-full max-w-[200px] border-current/20 bg-white/50 text-xs dark:bg-black/20'>
+                                  <SelectValue placeholder='Select block...' />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {apiBlocks.map((b) => (
+                                    <SelectItem key={b.id} value={b.id}>
+                                      {b.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ))}
+                        </div>
+                      </TableHead>
+                    );
+                  })}
                 </TableRow>
               )}
 
               {/* ── Row 2: Individual Column Headers ── */}
               <TableRow className='bg-muted/50'>
-                {/* Row label (only if single block — otherwise it's in the row above with rowSpan) */}
+                {/* Row label (only if single block) */}
                 {!hasMultipleBlocks && (
                   <TableHead className='bg-muted/50 sticky left-0 z-10 min-w-[140px] font-semibold'>
                     Row / Item
@@ -625,7 +717,7 @@ export default function OrderTemplateValues({
                         );
                       }
 
-                      // TOTAL rows: display value only (no input), similar to formula columns
+                      // TOTAL rows: display value only (no input)
                       if (isTotal) {
                         const displayValue =
                           column.dataType === 'NUMBER'
@@ -691,19 +783,16 @@ export default function OrderTemplateValues({
             </TableBody>
           </Table>
 
-          {/* Summary Section — only render when summary data exists */}
+          {/* Summary Section */}
           {hasSummary && (
             <div className='mt-4 flex justify-end border-t'>
               <div className='space-y-2.5 rounded-lg p-4 text-sm'>
-                {/* Total */}
                 <div className='flex items-center justify-between gap-8'>
                   <span className='text-muted-foreground'>Total</span>
                   <span className='font-medium tabular-nums'>
                     {formatAmount(summary.total)}
                   </span>
                 </div>
-
-                {/* Discount Value (e.g. 10 for 10%) */}
                 <div className='flex items-center justify-between gap-8'>
                   <span className='text-muted-foreground'>Discount</span>
                   <span className='font-medium tabular-nums'>
@@ -712,16 +801,12 @@ export default function OrderTemplateValues({
                       : '—'}
                   </span>
                 </div>
-
-                {/* Discount Type */}
                 <div className='flex items-center justify-between gap-8'>
                   <span className='text-muted-foreground'>Discount Type</span>
                   <span className='font-medium'>
                     {summary.discountType ?? '—'}
                   </span>
                 </div>
-
-                {/* Discount Amount (calculated) */}
                 <div className='flex items-center justify-between gap-8'>
                   <span className='text-muted-foreground'>Discount Amount</span>
                   <span
@@ -735,10 +820,7 @@ export default function OrderTemplateValues({
                     {formatAmount(summary.discountAmount)}
                   </span>
                 </div>
-
                 <Separator />
-
-                {/* Final Payable Amount */}
                 <div className='flex items-center justify-between gap-8 pt-0.5'>
                   <span className='font-semibold'>Final Payable Amount</span>
                   <span className='text-base font-semibold tabular-nums'>

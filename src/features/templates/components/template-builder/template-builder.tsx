@@ -3,6 +3,23 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   getTemplate,
   createColumn,
   updateColumn,
@@ -12,7 +29,11 @@ import {
   deleteRow,
   createExtra,
   updateExtra,
-  deleteExtra
+  deleteExtra,
+  createBlock,
+  updateBlock,
+  deleteBlock as deleteBlockApi,
+  reorderBlocks
 } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
@@ -20,6 +41,7 @@ import type {
   TemplateColumn,
   TemplateRow,
   TemplateExtra,
+  TemplateBlock as TemplateBlockApi,
   ColumnDataType,
   RowType,
   ExtraSectionType,
@@ -76,13 +98,17 @@ import {
   Loader2,
   Settings,
   LayoutTemplate,
-  Layers
+  Layers,
+  GripVertical,
+  List
 } from 'lucide-react';
 import Link from 'next/link';
+import { cn } from '@/lib/utils';
 
 import ColumnFormDialog, { type TemplateBlock } from './column-form-dialog';
 import RowFormDialog from './row-form-dialog';
 import ExtraFormDialog from './extra-form-dialog';
+import BlockFormDialog from './block-form-dialog';
 import TemplatePreview from './template-preview';
 import { parseFormula, stringifyFormula } from './formula-builder';
 
@@ -124,18 +150,86 @@ function BuilderSkeleton() {
 function deriveBlocksFromColumns(columns: TemplateColumn[]): TemplateBlock[] {
   const blockIndices = new Set<number>();
   columns.forEach((col) => blockIndices.add(col.blockIndex));
-
-  // Always have at least block 0
-  if (blockIndices.size === 0) {
-    blockIndices.add(0);
-  }
-
+  if (blockIndices.size === 0) blockIndices.add(0);
   return Array.from(blockIndices)
     .sort((a, b) => a - b)
-    .map((index) => ({
-      index,
-      label: `Block ${index}`
-    }));
+    .map((index) => ({ index, label: `Block ${index}` }));
+}
+
+// =============================================================================
+// SORTABLE BLOCK LIST ITEM
+// =============================================================================
+
+function SortableBlockListItem({
+  block,
+  onEdit,
+  onDelete
+}: {
+  block: TemplateBlockApi;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: block.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <TableRow
+      ref={setNodeRef}
+      style={style}
+      className={cn(isDragging && 'bg-muted opacity-50')}
+    >
+      <TableCell className='w-[40px] py-2'>
+        <button
+          type='button'
+          className='hover:bg-muted cursor-grab touch-none rounded p-1 active:cursor-grabbing'
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className='text-muted-foreground h-4 w-4' />
+        </button>
+      </TableCell>
+      <TableCell className='py-2 text-sm font-medium'>{block.name}</TableCell>
+      <TableCell className='py-2'>
+        <Badge variant='secondary' className='text-xs'>
+          {block.orderNo}
+        </Badge>
+      </TableCell>
+      <TableCell className='py-2'>
+        <Badge
+          variant={block.isActive ? 'default' : 'secondary'}
+          className='text-xs'
+        >
+          {block.isActive ? 'Active' : 'Inactive'}
+        </Badge>
+      </TableCell>
+      <TableCell className='py-2'>
+        <div className='flex gap-1'>
+          <Button
+            variant='ghost'
+            size='icon'
+            className='h-7 w-7'
+            onClick={onEdit}
+          >
+            <Pencil className='h-3 w-3' />
+          </Button>
+          <Button
+            variant='ghost'
+            size='icon'
+            className='text-destructive hover:text-destructive h-7 w-7'
+            onClick={onDelete}
+          >
+            <Trash2 className='h-3 w-3' />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
 }
 
 // =============================================================================
@@ -154,8 +248,9 @@ export default function TemplateBuilder({
   const [columns, setColumns] = useState<TemplateColumn[]>([]);
   const [rows, setRows] = useState<TemplateRow[]>([]);
   const [extras, setExtras] = useState<TemplateExtra[]>([]);
+  const [apiBlocks, setApiBlocks] = useState<TemplateBlockApi[]>([]);
 
-  // Block management
+  // Block management (local for column grouping)
   const [blocks, setBlocks] = useState<TemplateBlock[]>([
     { index: 0, label: 'Block 0' }
   ]);
@@ -170,6 +265,8 @@ export default function TemplateBuilder({
   const [isColumnLoading, setIsColumnLoading] = useState(false);
   const [isRowLoading, setIsRowLoading] = useState(false);
   const [isExtraLoading, setIsExtraLoading] = useState(false);
+  const [isBlockLoading, setIsBlockLoading] = useState(false);
+  const [isReordering, setIsReordering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Column dialog
@@ -189,15 +286,26 @@ export default function TemplateBuilder({
   const [editingExtra, setEditingExtra] = useState<TemplateExtra | null>(null);
   const [extraError, setExtraError] = useState<string | null>(null);
 
+  // Block dialog (API-backed)
+  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
+  const [editingApiBlock, setEditingApiBlock] =
+    useState<TemplateBlockApi | null>(null);
+  const [blockError, setBlockError] = useState<string | null>(null);
+
   // Delete dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteType, setDeleteType] = useState<
-    'column' | 'row' | 'extra' | null
+    'column' | 'row' | 'extra' | 'block' | null
   >(null);
   const [itemToDelete, setItemToDelete] = useState<
-    TemplateColumn | TemplateRow | TemplateExtra | null
+    TemplateColumn | TemplateRow | TemplateExtra | TemplateBlockApi | null
   >(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   // ──────────────────────────────────────────────────────────────────────
   // FETCH
@@ -214,8 +322,9 @@ export default function TemplateBuilder({
       setColumns(sortedCols);
       setRows([...(data.rows || [])].sort((a, b) => a.orderNo - b.orderNo));
       setExtras([...(data.extra || [])].sort((a, b) => a.orderNo - b.orderNo));
-
-      // Derive blocks from existing columns
+      setApiBlocks(
+        [...(data.blocks || [])].sort((a, b) => a.orderNo - b.orderNo)
+      );
       const derivedBlocks = deriveBlocksFromColumns(sortedCols);
       setBlocks(derivedBlocks);
     } catch (err) {
@@ -249,7 +358,6 @@ export default function TemplateBuilder({
       }
       grouped[col.blockIndex].push(col);
     });
-    // Sort within each block
     Object.keys(grouped).forEach((key) => {
       grouped[Number(key)].sort((a, b) => a.orderNo - b.orderNo);
     });
@@ -257,7 +365,7 @@ export default function TemplateBuilder({
   }, [columns, blocks]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // BLOCK HANDLERS
+  // LOCAL BLOCK HANDLERS
   // ──────────────────────────────────────────────────────────────────────
   const handleAddBlock = () => {
     if (!newBlockLabel.trim()) return;
@@ -283,7 +391,6 @@ export default function TemplateBuilder({
   };
 
   const handleRemoveBlock = (blockIndex: number) => {
-    // Only allow removing blocks that have no columns
     const blockColumns = columns.filter((c) => c.blockIndex === blockIndex);
     if (blockColumns.length > 0) {
       setError(
@@ -291,12 +398,82 @@ export default function TemplateBuilder({
       );
       return;
     }
-    // Don't allow removing the last block
     if (blocks.length <= 1) {
       setError('Must have at least one block.');
       return;
     }
     setBlocks((prev) => prev.filter((b) => b.index !== blockIndex));
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // BLOCK LIST HANDLERS (API-backed CRUD)
+  // ──────────────────────────────────────────────────────────────────────
+  const handleAddApiBlock = () => {
+    setEditingApiBlock(null);
+    setBlockError(null);
+    setBlockDialogOpen(true);
+  };
+
+  const handleEditApiBlock = (block: TemplateBlockApi) => {
+    setEditingApiBlock(block);
+    setBlockError(null);
+    setBlockDialogOpen(true);
+  };
+
+  const handleBlockSubmit = async (data: { name: string }) => {
+    setIsBlockLoading(true);
+    setBlockError(null);
+    try {
+      if (editingApiBlock) {
+        await updateBlock(
+          companyId,
+          productId,
+          templateId,
+          editingApiBlock.id,
+          { name: data.name }
+        );
+        setApiBlocks((prev) =>
+          prev.map((b) =>
+            b.id === editingApiBlock.id ? { ...b, name: data.name } : b
+          )
+        );
+      } else {
+        const newBlock = await createBlock(companyId, productId, templateId, {
+          name: data.name
+        });
+        setApiBlocks((prev) =>
+          [...prev, newBlock].sort((a, b) => a.orderNo - b.orderNo)
+        );
+      }
+      setBlockDialogOpen(false);
+    } catch (err) {
+      setBlockError(getError(err));
+      throw err;
+    } finally {
+      setIsBlockLoading(false);
+    }
+  };
+
+  const handleBlockDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldI = apiBlocks.findIndex((b) => b.id === active.id);
+    const newI = apiBlocks.findIndex((b) => b.id === over.id);
+    if (oldI === -1 || newI === -1) return;
+    const reordered = arrayMove(apiBlocks, oldI, newI);
+    setApiBlocks(reordered);
+    setIsReordering(true);
+    try {
+      await reorderBlocks(companyId, productId, templateId, {
+        ids: reordered.map((b) => b.id)
+      });
+      setApiBlocks(reordered.map((b, i) => ({ ...b, orderNo: i + 1 })));
+    } catch (err) {
+      setApiBlocks(apiBlocks);
+      setError(getError(err));
+    } finally {
+      setIsReordering(false);
+    }
   };
 
   // ──────────────────────────────────────────────────────────────────────
@@ -307,7 +484,6 @@ export default function TemplateBuilder({
     setColumnError(null);
     setColumnDialogOpen(true);
   };
-
   const handleEditColumn = (column: TemplateColumn) => {
     setEditingColumn(column);
     setColumnError(null);
@@ -331,8 +507,6 @@ export default function TemplateBuilder({
           data.label.toLowerCase().replace(/\s+/g, '_') + '_0';
         const oldKey = editingColumn.key;
         const keyChanged = oldKey !== generatedKey;
-
-        // Update the edited column (with correct blockIndex)
         await updateColumn(companyId, productId, templateId, editingColumn.id, {
           key: generatedKey,
           label: data.label,
@@ -342,18 +516,14 @@ export default function TemplateBuilder({
           isFinalCalculation: data.isFinalCalculation,
           formula: data.formula
         });
-
         let updatedColumns = columns.map((col) =>
           col.id === editingColumn.id
             ? { ...col, ...data, key: generatedKey }
             : col
         );
-
-        // If key changed, update all FORMULA columns referencing the old key
         if (keyChanged) {
           const escapedOldKey = oldKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const keyRegex = new RegExp(`\\b${escapedOldKey}\\b`, 'g');
-
           const affectedFormulaColumns = updatedColumns.filter(
             (col) =>
               col.id !== editingColumn.id &&
@@ -361,13 +531,11 @@ export default function TemplateBuilder({
               col.formula &&
               keyRegex.test(col.formula)
           );
-
           for (const formulaCol of affectedFormulaColumns) {
             const updatedFormula = formulaCol.formula!.replace(
               new RegExp(`\\b${escapedOldKey}\\b`, 'g'),
               generatedKey
             );
-
             await updateColumn(
               companyId,
               productId,
@@ -383,7 +551,6 @@ export default function TemplateBuilder({
                 formula: updatedFormula
               }
             );
-
             updatedColumns = updatedColumns.map((col) =>
               col.id === formulaCol.id
                 ? { ...col, formula: updatedFormula }
@@ -391,10 +558,8 @@ export default function TemplateBuilder({
             );
           }
         }
-
         setColumns(updatedColumns);
       } else {
-        // Create new column with the correct blockIndex
         const newColumn = await createColumn(
           companyId,
           productId,
@@ -420,7 +585,6 @@ export default function TemplateBuilder({
     setRowError(null);
     setRowDialogOpen(true);
   };
-
   const handleEditRow = (row: TemplateRow) => {
     setEditingRow(row);
     setRowError(null);
@@ -461,7 +625,6 @@ export default function TemplateBuilder({
     setExtraError(null);
     setExtraDialogOpen(true);
   };
-
   const handleEditExtra = (extra: TemplateExtra) => {
     setEditingExtra(extra);
     setExtraError(null);
@@ -516,8 +679,8 @@ export default function TemplateBuilder({
   // DELETE HANDLERS
   // ──────────────────────────────────────────────────────────────────────
   const handleDeleteClick = (
-    type: 'column' | 'row' | 'extra',
-    item: TemplateColumn | TemplateRow | TemplateExtra
+    type: 'column' | 'row' | 'extra' | 'block',
+    item: TemplateColumn | TemplateRow | TemplateExtra | TemplateBlockApi
   ) => {
     setDeleteType(type);
     setItemToDelete(item);
@@ -531,24 +694,19 @@ export default function TemplateBuilder({
       if (deleteType === 'column') {
         const deletedColumn = itemToDelete as TemplateColumn;
         await deleteColumn(companyId, productId, templateId, deletedColumn.id);
-
         let updatedColumns = columns.filter((c) => c.id !== deletedColumn.id);
-
         const deletedKey = deletedColumn.key;
         const escapedKey = deletedKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const keyRegex = new RegExp(`\\b${escapedKey}\\b`);
-
         const affectedFormulaColumns = updatedColumns.filter(
           (col) =>
             col.dataType === 'FORMULA' &&
             col.formula &&
             keyRegex.test(col.formula)
         );
-
         for (const formulaCol of affectedFormulaColumns) {
           const parsed = parseFormula(formulaCol.formula!);
           if (!parsed) continue;
-
           let stepIndex: number;
           while (
             (stepIndex = parsed.steps.findIndex(
@@ -562,10 +720,8 @@ export default function TemplateBuilder({
               parsed.operators.splice(0, 1);
             }
           }
-
           const updatedFormula =
             parsed.steps.length > 0 ? stringifyFormula(parsed) : '';
-
           await updateColumn(companyId, productId, templateId, formulaCol.id, {
             key: formulaCol.key,
             label: formulaCol.label,
@@ -575,7 +731,6 @@ export default function TemplateBuilder({
             isFinalCalculation: formulaCol.isFinalCalculation,
             formula: updatedFormula
           });
-
           updatedColumns = updatedColumns.map((col) =>
             col.id === formulaCol.id ? { ...col, formula: updatedFormula } : col
           );
@@ -587,6 +742,9 @@ export default function TemplateBuilder({
       } else if (deleteType === 'extra') {
         await deleteExtra(companyId, productId, templateId, itemToDelete.id);
         setExtras((prev) => prev.filter((e) => e.id !== itemToDelete.id));
+      } else if (deleteType === 'block') {
+        await deleteBlockApi(companyId, productId, templateId, itemToDelete.id);
+        setApiBlocks((prev) => prev.filter((b) => b.id !== itemToDelete.id));
       }
       setDeleteDialogOpen(false);
       setItemToDelete(null);
@@ -596,6 +754,15 @@ export default function TemplateBuilder({
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  // Helper to get display name
+  const getDeleteItemLabel = (): string => {
+    if (!itemToDelete) return '';
+    if ('label' in itemToDelete)
+      return (itemToDelete as { label: string }).label;
+    if ('name' in itemToDelete) return (itemToDelete as { name: string }).name;
+    return '';
   };
 
   // ──────────────────────────────────────────────────────────────────────
@@ -639,7 +806,6 @@ export default function TemplateBuilder({
         <h4 className='text-sm font-medium'>{title}</h4>
         <p className='text-muted-foreground text-xs'>{description}</p>
       </div>
-
       {items.length === 0 ? (
         <div className='text-muted-foreground rounded-md border border-dashed py-4 text-center text-sm'>
           No {title.toLowerCase()} added yet
@@ -778,12 +944,23 @@ export default function TemplateBuilder({
         </div>
       )}
 
+      {isReordering && (
+        <div className='text-muted-foreground flex items-center gap-2 text-sm'>
+          <Loader2 className='h-4 w-4 animate-spin' />
+          Saving order...
+        </div>
+      )}
+
       {/* ══════════════ TABS ══════════════ */}
       <Tabs defaultValue='preview' className='space-y-4'>
-        <TabsList className='grid w-full grid-cols-5'>
+        <TabsList className='grid w-full grid-cols-6'>
           <TabsTrigger value='preview' className='flex items-center gap-2'>
             <Eye className='h-4 w-4' />
             Preview
+          </TabsTrigger>
+          <TabsTrigger value='block-list' className='flex items-center gap-2'>
+            <List className='h-4 w-4' />
+            Block List ({apiBlocks.length})
           </TabsTrigger>
           <TabsTrigger value='blocks' className='flex items-center gap-2'>
             <Layers className='h-4 w-4' />
@@ -803,7 +980,7 @@ export default function TemplateBuilder({
           </TabsTrigger>
         </TabsList>
 
-        {/* ── Preview Tab ─────────────────────────────────────────── */}
+        {/* ── Preview Tab ── */}
         <TabsContent value='preview'>
           <TemplatePreview
             template={template}
@@ -814,7 +991,77 @@ export default function TemplateBuilder({
           />
         </TabsContent>
 
-        {/* ── Blocks Tab ──────────────────────────────────────────── */}
+        {/* ── Block List Tab (API-backed) ── */}
+        <TabsContent value='block-list'>
+          <Card>
+            <CardHeader>
+              <div className='flex items-center justify-between'>
+                <div>
+                  <CardTitle className='text-lg'>Block List</CardTitle>
+                  <CardDescription>
+                    Manage API-backed blocks for this template. Drag to reorder.
+                  </CardDescription>
+                </div>
+                <Button onClick={handleAddApiBlock}>
+                  <Plus className='mr-2 h-4 w-4' />
+                  Add Block
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {apiBlocks.length === 0 ? (
+                <div className='bg-muted/30 flex flex-col items-center justify-center rounded-lg border py-12 text-center'>
+                  <List className='text-muted-foreground mb-3 h-10 w-10' />
+                  <h3 className='text-lg font-medium'>No Blocks Yet</h3>
+                  <p className='text-muted-foreground mt-1 max-w-sm text-sm'>
+                    Add blocks to organize your template structure.
+                  </p>
+                  <Button className='mt-4' onClick={handleAddApiBlock}>
+                    <Plus className='mr-2 h-4 w-4' />
+                    Add First Block
+                  </Button>
+                </div>
+              ) : (
+                <div className='rounded-md border'>
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleBlockDragEnd}
+                  >
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className='w-[40px]' />
+                          <TableHead>Name</TableHead>
+                          <TableHead>Order</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className='w-[80px]'>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        <SortableContext
+                          items={apiBlocks.map((b) => b.id)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {apiBlocks.map((block) => (
+                            <SortableBlockListItem
+                              key={block.id}
+                              block={block}
+                              onEdit={() => handleEditApiBlock(block)}
+                              onDelete={() => handleDeleteClick('block', block)}
+                            />
+                          ))}
+                        </SortableContext>
+                      </TableBody>
+                    </Table>
+                  </DndContext>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Blocks Tab (local) ── */}
         <TabsContent value='blocks'>
           <Card>
             <CardHeader>
@@ -830,7 +1077,6 @@ export default function TemplateBuilder({
               </div>
             </CardHeader>
             <CardContent className='space-y-6'>
-              {/* Add new block */}
               <div className='flex items-end gap-3'>
                 <div className='flex-1 space-y-2'>
                   <Label>New Block Name</Label>
@@ -854,27 +1100,21 @@ export default function TemplateBuilder({
                   Add Block
                 </Button>
               </div>
-
-              {/* Existing blocks */}
               <div className='space-y-3'>
                 {blocks.map((block) => {
                   const blockCols = columnsByBlock[block.index] || [];
                   const isEditing = editingBlockIndex === block.index;
-
                   return (
                     <div
                       key={block.index}
                       className='flex items-center gap-3 rounded-lg border p-4'
                     >
-                      {/* Block index badge */}
                       <Badge
                         variant='outline'
                         className='shrink-0 font-mono text-sm'
                       >
                         {block.index}
                       </Badge>
-
-                      {/* Block label (editable) */}
                       <div className='flex-1'>
                         {isEditing ? (
                           <div className='flex items-center gap-2'>
@@ -928,8 +1168,6 @@ export default function TemplateBuilder({
                           </div>
                         )}
                       </div>
-
-                      {/* Actions */}
                       {!isEditing && (
                         <div className='flex items-center gap-1'>
                           <Button
@@ -958,8 +1196,6 @@ export default function TemplateBuilder({
                   );
                 })}
               </div>
-
-              {/* Info */}
               <div className='flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-400'>
                 <Layers className='mt-0.5 h-4 w-4 flex-shrink-0' />
                 <div>
@@ -971,8 +1207,7 @@ export default function TemplateBuilder({
                     <code className='rounded bg-blue-100 px-1 dark:bg-blue-900'>
                       blockIndex
                     </code>{' '}
-                    in the API call. Each column creation triggers its own API
-                    call with the correct blockIndex.
+                    in the API call.
                   </p>
                 </div>
               </div>
@@ -980,7 +1215,7 @@ export default function TemplateBuilder({
           </Card>
         </TabsContent>
 
-        {/* ── Columns Tab ─────────────────────────────────────────── */}
+        {/* ── Columns Tab ── */}
         <TabsContent value='columns'>
           <Card>
             <CardHeader>
@@ -1017,7 +1252,6 @@ export default function TemplateBuilder({
                     const blockCols = columnsByBlock[block.index] || [];
                     return (
                       <div key={block.index} className='space-y-3'>
-                        {/* Block header */}
                         <div className='flex items-center gap-2'>
                           <Badge variant='outline' className='font-mono'>
                             Block {block.index}
@@ -1030,7 +1264,6 @@ export default function TemplateBuilder({
                             {blockCols.length !== 1 ? 's' : ''}
                           </Badge>
                         </div>
-
                         {blockCols.length === 0 ? (
                           <div className='text-muted-foreground rounded-md border border-dashed py-4 text-center text-sm'>
                             No columns in this block yet
@@ -1136,7 +1369,7 @@ export default function TemplateBuilder({
           </Card>
         </TabsContent>
 
-        {/* ── Rows Tab ────────────────────────────────────────────── */}
+        {/* ── Rows Tab ── */}
         <TabsContent value='rows'>
           <Card>
             <CardHeader>
@@ -1247,7 +1480,7 @@ export default function TemplateBuilder({
           </Card>
         </TabsContent>
 
-        {/* ── Extra Tab ───────────────────────────────────────────── */}
+        {/* ── Extra Tab ── */}
         <TabsContent value='extras'>
           <Card>
             <CardHeader>
@@ -1313,7 +1546,6 @@ export default function TemplateBuilder({
         isLoading={isColumnLoading}
         error={columnError}
       />
-
       <RowFormDialog
         open={rowDialogOpen}
         onOpenChange={setRowDialogOpen}
@@ -1322,7 +1554,6 @@ export default function TemplateBuilder({
         isLoading={isRowLoading}
         error={rowError}
       />
-
       <ExtraFormDialog
         open={extraDialogOpen}
         onOpenChange={setExtraDialogOpen}
@@ -1330,6 +1561,14 @@ export default function TemplateBuilder({
         initialData={editingExtra}
         isLoading={isExtraLoading}
         error={extraError}
+      />
+      <BlockFormDialog
+        open={blockDialogOpen}
+        onOpenChange={setBlockDialogOpen}
+        onSubmit={handleBlockSubmit}
+        initialData={editingApiBlock}
+        isLoading={isBlockLoading}
+        error={blockError}
       />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -1341,13 +1580,12 @@ export default function TemplateBuilder({
                 ? 'Column'
                 : deleteType === 'row'
                   ? 'Row'
-                  : 'Extra Field'}
+                  : deleteType === 'block'
+                    ? 'Block'
+                    : 'Extra Field'}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;
-              {itemToDelete && 'label' in itemToDelete
-                ? itemToDelete.label
-                : ''}
+              Are you sure you want to delete &quot;{getDeleteItemLabel()}
               &quot;? This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -295,6 +295,36 @@ export type ReorderColumnData = {
 };
 
 // =============================================================================
+// TEMPLATE BLOCK TYPES
+// =============================================================================
+
+export type TemplateBlock = {
+  id: string;
+  isActive?: boolean;
+  name: string;
+  templateId: string;
+  createdBy?: string;
+  updatedBy?: string | null;
+  deletedBy?: string | null;
+  deletedAt?: string | null;
+  orderNo: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CreateBlockData = {
+  name: string;
+};
+
+export type UpdateBlockData = {
+  name?: string;
+};
+
+export type ReorderBlockData = {
+  ids: string[];
+};
+
+// =============================================================================
 // TEMPLATE ROW TYPES
 // =============================================================================
 
@@ -464,6 +494,7 @@ export type TemplateWithDetails = Template & {
   columns: TemplateColumn[];
   rows: TemplateRow[];
   extra?: TemplateExtra[];
+  blocks?: TemplateBlock[];
 };
 
 // =============================================================================
@@ -538,12 +569,18 @@ export type OrderExtraValuePayload = {
   orderIndex: number;
 };
 
+export type OrderBlockValuePayload = {
+  templateBlockId: string;
+  blockIndex: string;
+};
+
 export type OrderTemplatePayload = {
   templateId: string;
   values: OrderValue[];
   extravalues?: OrderExtraValuePayload[];
   summary?: TemplateSummaryPayload;
   children?: OrderTemplatePayload[];
+  blockvalues?: OrderBlockValuePayload[];
 };
 
 export type OrderExtraValue = {
@@ -689,7 +726,7 @@ export type CreateOrderData = {
 // =============================================================================
 
 export type UpdateOrderValueItem = {
-  orderValueId?: string; // existing value ID (omit for new values)
+  orderValueId?: string;
   value: string;
   rowId: string;
   columnId: string;
@@ -705,6 +742,7 @@ export type UpdateOrderValuesTemplatePayload = {
   extravalues?: OrderExtraValuePayload[];
   summary?: TemplateSummaryPayload;
   children?: UpdateOrderValuesTemplatePayload[];
+  blockvalues?: OrderBlockValuePayload[];
 };
 
 export type UpdateOrderValuesData = {

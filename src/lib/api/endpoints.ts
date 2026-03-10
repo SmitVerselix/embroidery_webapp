@@ -95,6 +95,28 @@ export const ENDPOINTS = {
       `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/column/reorder`
   },
 
+  // Template Block endpoints
+  BLOCK: {
+    CREATE: (companyId: string, productId: string, templateId: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/block/create`,
+    UPDATE: (
+      companyId: string,
+      productId: string,
+      templateId: string,
+      blockId: string
+    ) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/block/update/${blockId}`,
+    DELETE: (
+      companyId: string,
+      productId: string,
+      templateId: string,
+      blockId: string
+    ) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/block/delete/${blockId}`,
+    REORDER: (companyId: string, productId: string, templateId: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/block/reorder`
+  },
+
   // Template Row endpoints
   ROW: {
     CREATE: (companyId: string, productId: string, templateId: string) =>

@@ -21,6 +21,7 @@ import type {
   UpdateOrderValuesTemplatePayload,
   UpdateOrderValueItem,
   OrderExtraValuePayload,
+  OrderBlockValuePayload,
   DiscountType,
   TemplateSummaryPayload
 } from '@/lib/api/types';
@@ -51,7 +52,8 @@ import {
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
 import OrderTemplateValues, {
-  type TemplateValuesMap
+  type TemplateValuesMap,
+  type BlockValuesMap
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
 import TemplateLayoutCanvas, {
@@ -101,13 +103,11 @@ const SCROLL_ZOOM_FACTOR = 0.001;
 // INTERNAL TYPES
 // =============================================================================
 
-/** A unique order-template instance with its full template definition */
 type OrderTemplateEntry = {
   orderTemplateId: string;
   templateId: string;
   parentOrderTemplateId: string | null;
   template: TemplateWithDetails;
-  /** true when the product template has no corresponding order-template yet */
   isNew?: boolean;
 };
 
@@ -169,22 +169,17 @@ export default function OrderEditForm({
 
   // Data state
   const [order, setOrder] = useState<OrderWithDetails | null>(null);
-  /** Each entry is a unique order-template instance */
   const [entries, setEntries] = useState<OrderTemplateEntry[]>([]);
-  /** Keyed by orderTemplateId */
   const [templateValues, setTemplateValues] = useState<
     Record<string, TemplateValuesMap>
   >({});
-  /** Keyed by orderTemplateId */
   const [extraValues, setExtraValues] = useState<
     Record<string, ExtraValuesMap>
   >({});
 
-  /** Original value IDs: orderTemplateId → "rowId-columnId" → orderValueId */
   const [originalValueIds, setOriginalValueIds] = useState<
     Record<string, Record<string, string>>
   >({});
-  /** Original extra value IDs: orderTemplateId → extraFieldId → orderExtraValueId */
   const [originalExtraValueIds, setOriginalExtraValueIds] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -192,16 +187,21 @@ export default function OrderEditForm({
   // Comment field
   const [comment, setComment] = useState('');
 
-  // Discount per template: orderTemplateId → { discountType, discountValue }
+  // Discount per template
   const [templateDiscounts, setTemplateDiscounts] = useState<
     Record<string, { discountType: DiscountType; discountValue: string }>
+  >({});
+
+  // Block values per template (keyed by orderTemplateId)
+  const [templateBlockValues, setTemplateBlockValues] = useState<
+    Record<string, BlockValuesMap>
   >({});
 
   // Loading / error
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Validation errors — keyed by orderTemplateId
+  // Validation errors
   const [cellErrors, setCellErrors] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -214,24 +214,22 @@ export default function OrderEditForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // ── Zoom state ──────────────────────────────────────────────────────
+  // Zoom state
   const [zoom, setZoom] = useState(1);
   const [isCanvasFocused, setIsCanvasFocused] = useState(false);
   const [isTemplateDragging, setIsTemplateDragging] = useState(false);
 
-  // ── Drag-to-scroll state ────────────────────────────────────────────
+  // Drag-to-scroll state
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const scrollStart = useRef({ left: 0, top: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
   const lastPinchDist = useRef<number | null>(null);
-
-  /** Layout toolbar portals into this div (sits outside the canvas). */
   const toolbarPortalRef = useRef<HTMLDivElement>(null);
 
   // ──────────────────────────────────────────────────────────────────────
-  // FETCH ORDER (single API call — no separate getTemplate calls)
+  // FETCH ORDER
   // ──────────────────────────────────────────────────────────────────────
   const fetchOrder = useCallback(async () => {
     setIsLoading(true);
@@ -240,7 +238,6 @@ export default function OrderEditForm({
       const orderData = await getOrder(companyId, orderId);
       setOrder(orderData);
 
-      // ── Build template cache from product.templates ────────────────
       const templateCache: Record<string, TemplateWithDetails> = {};
       const productTemplates = (orderData.product?.templates ||
         []) as TemplateWithDetails[];
@@ -248,7 +245,6 @@ export default function OrderEditForm({
         templateCache[tmpl.id] = tmpl;
       }
 
-      // ── State accumulators ─────────────────────────────────────────
       const loadedEntries: OrderTemplateEntry[] = [];
       const loadedValues: Record<string, TemplateValuesMap> = {};
       const loadedExtraValues: Record<string, ExtraValuesMap> = {};
@@ -258,11 +254,10 @@ export default function OrderEditForm({
         string,
         { discountType: DiscountType; discountValue: string }
       > = {};
+      const loadedBlockValues: Record<string, BlockValuesMap> = {};
 
-      /** Track which product templateIds already have order data */
       const processedTemplateIds = new Set<string>();
 
-      // ── Recursive processor for order-template entries ─────────────
       const processTemplate = (
         tmplData: OrderTemplateData,
         parentOrderTemplateId: string | null
@@ -280,7 +275,6 @@ export default function OrderEditForm({
           template: fullTemplate
         });
 
-        // Map main values
         const valuesMap: TemplateValuesMap = {};
         const vIdMap: Record<string, string> = {};
         const colTypeMap: Record<string, string> = {};
@@ -304,7 +298,6 @@ export default function OrderEditForm({
         loadedValues[orderTemplateId] = valuesMap;
         valueIdMap[orderTemplateId] = vIdMap;
 
-        // Map extra values
         const extValMap: ExtraValuesMap = {};
         const evIdMap: Record<string, string> = {};
         (tmplData.extraValues || []).forEach((ev) => {
@@ -318,7 +311,20 @@ export default function OrderEditForm({
         loadedExtraValues[orderTemplateId] = extValMap;
         extraValueIdMap[orderTemplateId] = evIdMap;
 
-        // Extract discount from summary
+        // Parse blockValues from API: [{ templateBlockId, blockIndex: "block_0" }]
+        // Convert to BlockValuesMap: { 0: templateBlockId }
+        const bvMap: BlockValuesMap = {};
+        ((tmplData as any).blockValues || []).forEach((bv: any) => {
+          const idx = parseInt(
+            (bv.blockIndex as string).replace('block_', ''),
+            10
+          );
+          if (!isNaN(idx)) {
+            bvMap[idx] = bv.templateBlockId;
+          }
+        });
+        loadedBlockValues[orderTemplateId] = bvMap;
+
         const rawSummary = tmplData.summary;
         if (rawSummary) {
           discountMap[orderTemplateId] = {
@@ -333,7 +339,6 @@ export default function OrderEditForm({
           };
         }
 
-        // Process children recursively
         if (tmplData.children && tmplData.children.length > 0) {
           tmplData.children.forEach((child) => {
             processTemplate(child, orderTemplateId);
@@ -341,12 +346,10 @@ export default function OrderEditForm({
         }
       };
 
-      // ── Process existing order templates ───────────────────────────
       (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
         processTemplate(tmplData, null);
       });
 
-      // ── Add entries for product templates without order data yet ───
       for (const tmpl of productTemplates) {
         if (!processedTemplateIds.has(tmpl.id)) {
           const tempKey = `new_${tmpl.id}`;
@@ -365,6 +368,7 @@ export default function OrderEditForm({
             discountType: 'PERCENT',
             discountValue: '0'
           };
+          loadedBlockValues[tempKey] = {};
         }
       }
 
@@ -374,6 +378,8 @@ export default function OrderEditForm({
       setOriginalValueIds(valueIdMap);
       setOriginalExtraValueIds(extraValueIdMap);
       setTemplateDiscounts(discountMap);
+      // Use parsed block values from API instead of resetting to {}
+      setTemplateBlockValues(loadedBlockValues);
     } catch (err) {
       setError(getError(err));
     } finally {
@@ -386,18 +392,12 @@ export default function OrderEditForm({
   }, [fetchOrder]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // VALUE CHANGE HANDLERS (keyed by orderTemplateId)
+  // VALUE CHANGE HANDLERS
   // ──────────────────────────────────────────────────────────────────────
   const handleTemplateValuesChange = useCallback(
     (orderTemplateId: string, values: TemplateValuesMap) => {
-      setTemplateValues((prev) => ({
-        ...prev,
-        [orderTemplateId]: values
-      }));
-      setCellErrors((prev) => ({
-        ...prev,
-        [orderTemplateId]: {}
-      }));
+      setTemplateValues((prev) => ({ ...prev, [orderTemplateId]: values }));
+      setCellErrors((prev) => ({ ...prev, [orderTemplateId]: {} }));
       setSaveSuccess(false);
     },
     []
@@ -405,14 +405,8 @@ export default function OrderEditForm({
 
   const handleExtraValuesChange = useCallback(
     (orderTemplateId: string, values: ExtraValuesMap) => {
-      setExtraValues((prev) => ({
-        ...prev,
-        [orderTemplateId]: values
-      }));
-      setExtraFieldErrors((prev) => ({
-        ...prev,
-        [orderTemplateId]: {}
-      }));
+      setExtraValues((prev) => ({ ...prev, [orderTemplateId]: values }));
+      setExtraFieldErrors((prev) => ({ ...prev, [orderTemplateId]: {} }));
       setSaveSuccess(false);
     },
     []
@@ -429,13 +423,23 @@ export default function OrderEditForm({
     []
   );
 
+  const handleBlockValuesChange = useCallback(
+    (orderTemplateId: string, values: BlockValuesMap) => {
+      setTemplateBlockValues((prev) => ({
+        ...prev,
+        [orderTemplateId]: values
+      }));
+      setSaveSuccess(false);
+    },
+    []
+  );
+
   // ──────────────────────────────────────────────────────────────────────
   // VALIDATION
   // ──────────────────────────────────────────────────────────────────────
   const validateAll = useCallback((): boolean => {
     let isValid = true;
 
-    // Validate main template values
     const newCellErrors: Record<string, Record<string, string>> = {};
     entries.forEach((entry) => {
       const tmpl = entry.template;
@@ -447,16 +451,13 @@ export default function OrderEditForm({
       rows.forEach((row) => {
         columns.forEach((col) => {
           if (col.dataType === 'FORMULA') return;
-
           const value = tmplValues[row.id]?.[col.id] || '';
           const cellKey = `${row.id}-${col.id}`;
-
           if (col.isRequired && !value.trim()) {
             tmplErrors[cellKey] = 'Required';
             isValid = false;
             return;
           }
-
           if (col.dataType === 'NUMBER' && value.trim()) {
             const num = Number(value);
             if (isNaN(num)) {
@@ -466,12 +467,10 @@ export default function OrderEditForm({
           }
         });
       });
-
       newCellErrors[entry.orderTemplateId] = tmplErrors;
     });
     setCellErrors(newCellErrors);
 
-    // Validate extra values
     const newExtraErrors: Record<string, Record<string, string>> = {};
     entries.forEach((entry) => {
       const tmpl = entry.template;
@@ -481,13 +480,11 @@ export default function OrderEditForm({
 
       extras.forEach((extra) => {
         const val = tmplExtraValues[extra.id]?.value || '';
-
         if (extra.isRequired && !val.trim()) {
           extErrors[extra.id] = 'Required';
           isValid = false;
           return;
         }
-
         if (extra.valueType === 'NUMBER' && val.trim()) {
           const num = Number(val);
           if (isNaN(num)) {
@@ -496,7 +493,6 @@ export default function OrderEditForm({
           }
         }
       });
-
       newExtraErrors[entry.orderTemplateId] = extErrors;
     });
     setExtraFieldErrors(newExtraErrors);
@@ -505,7 +501,26 @@ export default function OrderEditForm({
   }, [entries, templateValues, extraValues]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // SUBMIT — unified payload: values + extravalues + summary + comment
+  // HELPER: Build blockvalues payload
+  // ──────────────────────────────────────────────────────────────────────
+  const buildBlockValuesPayload = useCallback(
+    (bvMap: BlockValuesMap): OrderBlockValuePayload[] => {
+      const result: OrderBlockValuePayload[] = [];
+      Object.entries(bvMap).forEach(([blockIdx, templateBlockId]) => {
+        if (templateBlockId) {
+          result.push({
+            templateBlockId,
+            blockIndex: `block_${blockIdx}`
+          });
+        }
+      });
+      return result;
+    },
+    []
+  );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SUBMIT
   // ──────────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     setSubmitError(null);
@@ -519,7 +534,6 @@ export default function OrderEditForm({
     setIsSubmitting(true);
 
     try {
-      // Group entries: top-level (parentOrderTemplateId === null) and children
       const topLevelEntries = entries.filter(
         (e) => e.parentOrderTemplateId === null
       );
@@ -536,14 +550,13 @@ export default function OrderEditForm({
         const tmplExtras = tmpl.extra || [];
         const tmplExtraValues = extraValues[entry.orderTemplateId] || {};
 
-        // ── Build main values ────────────────────────────────────────
+        // Build main values
         const values: UpdateOrderValueItem[] = [];
         const usedOriginalIds = new Set<string>();
 
         rows.forEach((row) => {
           columns.forEach((col) => {
             if (col.dataType === 'FORMULA') return;
-
             const value = tmplValues[row.id]?.[col.id] || '';
             const cellKey = `${row.id}-${col.id}`;
             const existingValueId = origIds[cellKey];
@@ -562,7 +575,6 @@ export default function OrderEditForm({
           });
         });
 
-        // Find deleted values (only for existing entries)
         const deleteOrderValueIds: string[] = [];
         if (!entry.isNew) {
           Object.entries(origIds).forEach(([, valueId]) => {
@@ -572,7 +584,7 @@ export default function OrderEditForm({
           });
         }
 
-        // ── Build extra values ───────────────────────────────────────
+        // Build extra values
         const extravalues: OrderExtraValuePayload[] = [];
         const usedExtraIds = new Set<string>();
 
@@ -596,7 +608,6 @@ export default function OrderEditForm({
           }
         });
 
-        // Find deleted extra values (only for existing entries)
         const deleteOrderExtraValueIds: string[] = [];
         if (!entry.isNew) {
           Object.entries(origExIds).forEach(([, exValueId]) => {
@@ -606,7 +617,7 @@ export default function OrderEditForm({
           });
         }
 
-        // ── Build summary ────────────────────────────────────────────
+        // Build summary
         const discount = templateDiscounts[entry.orderTemplateId] || {
           discountType: 'PERCENT' as DiscountType,
           discountValue: '0'
@@ -616,7 +627,12 @@ export default function OrderEditForm({
           discountValue: discount.discountValue || '0'
         };
 
-        // ── Find children for this entry ─────────────────────────────
+        // Build block values — same format as order creation: "block_0", "block_1" etc.
+        const blockvalues = buildBlockValuesPayload(
+          templateBlockValues[entry.orderTemplateId] || {}
+        );
+
+        // Find children
         const childEntries = entries.filter(
           (e) => e.parentOrderTemplateId === entry.orderTemplateId
         );
@@ -625,11 +641,11 @@ export default function OrderEditForm({
 
         const payload: UpdateOrderValuesTemplatePayload = {
           templateId: entry.templateId,
-          // Only include orderTemplateId for existing entries
           ...(entry.isNew ? {} : { orderTemplateId: entry.orderTemplateId }),
           parentOrderTemplateId: entry.parentOrderTemplateId,
           values,
-          summary
+          summary,
+          ...(blockvalues.length > 0 ? { blockvalues } : {})
         };
 
         if (deleteOrderValueIds.length > 0) {
@@ -655,17 +671,13 @@ export default function OrderEditForm({
         templates: valuesTemplates
       };
 
-      // Include comment if provided
       if (comment.trim()) {
         updatePayload.comment = comment.trim();
       }
 
-      // ── Single API call for everything ─────────────────────────────
       await updateOrderValues(companyId, orderId, updatePayload);
 
       setSaveSuccess(true);
-
-      // Refresh data to get updated IDs
       await fetchOrder();
     } catch (err) {
       setSubmitError(getError(err));
@@ -698,7 +710,6 @@ export default function OrderEditForm({
     }
   }, []);
 
-  // ── CTRL + SCROLL WHEEL ZOOM ────────────────────────────────────────
   const handleWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
       if (!e.ctrlKey && !e.metaKey) return;
@@ -761,7 +772,6 @@ export default function OrderEditForm({
 
   const handleMouseUp = useCallback(() => setIsDragging(false), []);
 
-  // ── TOUCH PAN + PINCH-TO-ZOOM ──────────────────────────────────────
   const getTouchDist = (t1: React.Touch, t2: React.Touch): number => {
     const dx = t1.clientX - t2.clientX;
     const dy = t1.clientY - t2.clientY;
@@ -821,7 +831,6 @@ export default function OrderEditForm({
     lastPinchDist.current = null;
   }, []);
 
-  // ── DOUBLE-CLICK ZOOM TOGGLE ────────────────────────────────────────
   const handleDoubleClick = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
@@ -839,7 +848,6 @@ export default function OrderEditForm({
     []
   );
 
-  // ── KEYBOARD SHORTCUTS ──────────────────────────────────────────────
   useEffect(() => {
     if (!isCanvasFocused) return;
     const handler = (e: KeyboardEvent) => {
@@ -867,7 +875,7 @@ export default function OrderEditForm({
   }, [isCanvasFocused, handleZoomIn, handleZoomOut, handleResetView]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // TEMPLATE LAYOUT ITEMS (editable — with onChange, errors, discounts)
+  // TEMPLATE LAYOUT ITEMS
   // ──────────────────────────────────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
     const topLevelEntries = entries.filter(
@@ -885,7 +893,6 @@ export default function OrderEditForm({
         label: parent.template.name || parent.templateId,
         children: (
           <div className='space-y-4'>
-            {/* Parent badges */}
             <div className='flex items-center gap-2'>
               {hasChildren && (
                 <Badge variant='outline' className='text-xs'>
@@ -903,7 +910,7 @@ export default function OrderEditForm({
               )}
             </div>
 
-            {/* Parent — editable */}
+            {/* Parent */}
             <OrderTemplateValues
               template={parent.template}
               values={templateValues[parent.orderTemplateId] || {}}
@@ -927,9 +934,14 @@ export default function OrderEditForm({
               onDiscountChange={(type, value) =>
                 handleDiscountChange(parent.orderTemplateId, type, value)
               }
+              apiBlocks={parent.template.blocks || []}
+              blockValues={templateBlockValues[parent.orderTemplateId] || {}}
+              onBlockValuesChange={(vals) =>
+                handleBlockValuesChange(parent.orderTemplateId, vals)
+              }
             />
 
-            {/* Children — editable */}
+            {/* Children */}
             {childEntries.map((child, idx) => (
               <div key={child.orderTemplateId} className='space-y-2'>
                 <Badge variant='secondary' className='text-xs'>
@@ -959,6 +971,11 @@ export default function OrderEditForm({
                   onDiscountChange={(type, value) =>
                     handleDiscountChange(child.orderTemplateId, type, value)
                   }
+                  apiBlocks={child.template.blocks || []}
+                  blockValues={templateBlockValues[child.orderTemplateId] || {}}
+                  onBlockValuesChange={(vals) =>
+                    handleBlockValuesChange(child.orderTemplateId, vals)
+                  }
                 />
               </div>
             ))}
@@ -973,16 +990,17 @@ export default function OrderEditForm({
     cellErrors,
     extraFieldErrors,
     templateDiscounts,
+    templateBlockValues,
     isSubmitting,
     handleTemplateValuesChange,
     handleExtraValuesChange,
-    handleDiscountChange
+    handleDiscountChange,
+    handleBlockValuesChange
   ]);
 
   const backUrl = `/dashboard/${companyId}/orders/${orderId}`;
   const listUrl = `/dashboard/${companyId}/orders`;
 
-  // Count total validation errors
   const totalCellErrors = useMemo(() => {
     let count = 0;
     Object.values(cellErrors).forEach((tmplErrs) => {
@@ -1062,7 +1080,6 @@ export default function OrderEditForm({
   // ──────────────────────────────────────────────────────────────────────
   return (
     <div className='space-y-6'>
-      {/* Back */}
       <Link
         href={backUrl}
         className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
@@ -1071,7 +1088,7 @@ export default function OrderEditForm({
         Back to Design Details
       </Link>
 
-      {/* Order Info Card (read-only summary) */}
+      {/* Order Info Card */}
       <Card>
         <CardHeader>
           <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
@@ -1134,7 +1151,6 @@ export default function OrderEditForm({
         <>
           <Separator />
 
-          {/* Validation summary */}
           {totalCellErrors > 0 && (
             <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-3 text-sm'>
               <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
@@ -1146,7 +1162,6 @@ export default function OrderEditForm({
             </div>
           )}
 
-          {/* Submit error */}
           {submitError && (
             <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-3 text-sm'>
               <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
@@ -1154,7 +1169,6 @@ export default function OrderEditForm({
             </div>
           )}
 
-          {/* Success message */}
           {saveSuccess && (
             <div className='flex items-start gap-2 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-400'>
               <CheckCircle2 className='mt-0.5 h-4 w-4 flex-shrink-0' />
@@ -1162,7 +1176,7 @@ export default function OrderEditForm({
             </div>
           )}
 
-          {/* ── Top toolbar: zoom controls ─────────────────────────── */}
+          {/* Top toolbar */}
           <div className='bg-muted/60 flex items-center justify-between rounded-lg border px-4 py-2.5'>
             <div className='flex min-w-0 items-center gap-3'>
               <h2 className='truncate text-sm font-semibold'>
@@ -1173,7 +1187,6 @@ export default function OrderEditForm({
                 auto-calculated.
               </span>
             </div>
-
             <div className='bg-background flex items-center gap-1 rounded-lg border px-1 py-0.5 shadow-sm'>
               <CanvasToolbarButton
                 onClick={handleZoomOut}
@@ -1182,11 +1195,9 @@ export default function OrderEditForm({
               >
                 <ZoomOut className='h-4 w-4' />
               </CanvasToolbarButton>
-
               <span className='text-muted-foreground w-12 text-center font-mono text-xs tabular-nums select-none'>
                 {zoomPercent}%
               </span>
-
               <CanvasToolbarButton
                 onClick={handleZoomIn}
                 disabled={zoom >= MAX_ZOOM}
@@ -1194,9 +1205,7 @@ export default function OrderEditForm({
               >
                 <ZoomIn className='h-4 w-4' />
               </CanvasToolbarButton>
-
               <div className='bg-border mx-0.5 h-4 w-px' />
-
               <CanvasToolbarButton
                 onClick={handleResetView}
                 title='Reset view (0)'
@@ -1204,11 +1213,9 @@ export default function OrderEditForm({
                 <Maximize2 className='h-3.5 w-3.5' />
               </CanvasToolbarButton>
             </div>
-
             <div className='w-20' />
           </div>
 
-          {/* ── Layout toolbar portal (OUTSIDE the canvas) ─────────── */}
           <div
             ref={toolbarPortalRef}
             className='bg-muted/40 rounded-lg border px-4 py-2.5'
@@ -1258,7 +1265,6 @@ export default function OrderEditForm({
             </div>
           </div>
 
-          {/* ── Bottom hint bar ───────────────────────────────────── */}
           <div className='bg-muted/40 flex items-center justify-center rounded-lg border px-4 py-2'>
             <p className='text-muted-foreground text-[11px] select-none'>
               Scroll or drag to pan · Drag handle to reposition templates ·
@@ -1282,7 +1288,6 @@ export default function OrderEditForm({
         </>
       )}
 
-      {/* No templates */}
       {entries.length === 0 && (
         <Card>
           <CardContent className='py-8'>

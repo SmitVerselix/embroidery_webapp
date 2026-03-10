@@ -33,7 +33,11 @@ import {
   createExtra,
   updateExtra,
   deleteExtra,
-  reorderExtras
+  reorderExtras,
+  createBlock,
+  updateBlock,
+  deleteBlock as deleteBlockApi,
+  reorderBlocks
 } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
@@ -42,6 +46,7 @@ import type {
   TemplateColumn,
   TemplateRow,
   TemplateExtra,
+  TemplateBlock as TemplateBlockApi,
   ColumnDataType,
   RowType,
   ExtraSectionType,
@@ -99,7 +104,8 @@ import {
   Eye,
   GripVertical,
   LayoutTemplate,
-  Layers
+  Layers,
+  List
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -109,6 +115,7 @@ import ColumnFormDialog, {
 } from './template-builder/column-form-dialog';
 import RowFormDialog from './template-builder/row-form-dialog';
 import ExtraFormDialog from './template-builder/extra-form-dialog';
+import BlockFormDialog from './template-builder/block-form-dialog';
 import TemplatePreview from './template-builder/template-preview';
 import {
   parseFormula,
@@ -255,7 +262,7 @@ function SortableTemplateRow({
 }
 
 // =============================================================================
-// SORTABLE ITEMS (Column / Row / Extra)
+// SORTABLE ITEMS (Column / Row / Extra / Block)
 // =============================================================================
 
 function SortableColumnItem({
@@ -494,6 +501,78 @@ function SortableExtraItem({
   );
 }
 
+function SortableBlockListItem({
+  block,
+  onEdit,
+  onDelete
+}: {
+  block: TemplateBlockApi;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: block.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <TableRow
+      ref={setNodeRef}
+      style={style}
+      className={cn(isDragging && 'bg-muted opacity-50')}
+    >
+      <TableCell className='w-[40px] py-2'>
+        <button
+          type='button'
+          className='hover:bg-muted cursor-grab touch-none rounded p-1 active:cursor-grabbing'
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className='text-muted-foreground h-4 w-4' />
+        </button>
+      </TableCell>
+      <TableCell className='py-2 text-sm font-medium'>{block.name}</TableCell>
+      <TableCell className='py-2'>
+        <Badge variant='secondary' className='text-xs'>
+          {block.orderNo}
+        </Badge>
+      </TableCell>
+      <TableCell className='py-2'>
+        <Badge
+          variant={block.isActive !== false ? 'default' : 'secondary'}
+          className='text-xs'
+        >
+          {block.isActive !== false ? 'Active' : 'Inactive'}
+        </Badge>
+      </TableCell>
+      <TableCell className='py-2'>
+        <div className='flex gap-1'>
+          <Button
+            variant='ghost'
+            size='icon'
+            className='h-7 w-7'
+            onClick={onEdit}
+          >
+            <Pencil className='h-3 w-3' />
+          </Button>
+          <Button
+            variant='ghost'
+            size='icon'
+            className='text-destructive hover:text-destructive h-7 w-7'
+            onClick={onDelete}
+          >
+            <Trash2 className='h-3 w-3' />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 // =============================================================================
 // PROPS & EXPANDED STATE
 // =============================================================================
@@ -510,6 +589,7 @@ interface ExpandedTemplateData {
   rows: TemplateRow[];
   extras: TemplateExtra[];
   blocks: TemplateBlock[];
+  apiBlocks: TemplateBlockApi[];
 }
 
 // =============================================================================
@@ -527,7 +607,8 @@ function buildExpandedDataMap(
       columns: cols,
       rows: [...(t.rows || [])].sort((a, b) => a.orderNo - b.orderNo),
       extras: [...(t.extra || [])].sort((a, b) => a.orderNo - b.orderNo),
-      blocks: deriveBlocksFromColumns(cols)
+      blocks: deriveBlocksFromColumns(cols),
+      apiBlocks: [...(t.blocks || [])].sort((a, b) => a.orderNo - b.orderNo)
     };
   }
   return map;
@@ -589,20 +670,29 @@ export default function TemplateListing({
   const [isExtraLoading, setIsExtraLoading] = useState(false);
   const [extraError, setExtraError] = useState<string | null>(null);
 
+  // Block List dialog (API-backed)
+  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
+  const [editingBlock, setEditingBlock] = useState<TemplateBlockApi | null>(
+    null
+  );
+  const [blockTemplateId, setBlockTemplateId] = useState<string | null>(null);
+  const [isBlockLoading, setIsBlockLoading] = useState(false);
+  const [blockError, setBlockError] = useState<string | null>(null);
+
   // Delete item
   const [deleteItemDialogOpen, setDeleteItemDialogOpen] = useState(false);
   const [deleteItemType, setDeleteItemType] = useState<
-    'column' | 'row' | 'extra' | null
+    'column' | 'row' | 'extra' | 'block' | null
   >(null);
   const [itemToDelete, setItemToDelete] = useState<
-    TemplateColumn | TemplateRow | TemplateExtra | null
+    TemplateColumn | TemplateRow | TemplateExtra | TemplateBlockApi | null
   >(null);
   const [deleteItemTemplateId, setDeleteItemTemplateId] = useState<
     string | null
   >(null);
   const [isDeletingItem, setIsDeletingItem] = useState(false);
 
-  // Block management per template
+  // Block management per template (local blocks for column grouping)
   const [newBlockLabels, setNewBlockLabels] = useState<Record<string, string>>(
     {}
   );
@@ -623,12 +713,11 @@ export default function TemplateListing({
   };
 
   // ──────────────────────────────────────────────────────────────────────
-  // BLOCK HANDLERS (per template)
+  // BLOCK HANDLERS (local per template — for column grouping)
   // ──────────────────────────────────────────────────────────────────────
   const handleAddBlock = (tid: string) => {
     const label = (newBlockLabels[tid] || '').trim();
     if (!label) return;
-
     setExpandedData((prev) => {
       const td = prev[tid];
       if (!td) return prev;
@@ -636,10 +725,7 @@ export default function TemplateListing({
         td.blocks.length > 0 ? Math.max(...td.blocks.map((b) => b.index)) : -1;
       return {
         ...prev,
-        [tid]: {
-          ...td,
-          blocks: [...td.blocks, { index: maxIndex + 1, label }]
-        }
+        [tid]: { ...td, blocks: [...td.blocks, { index: maxIndex + 1, label }] }
       };
     });
     setNewBlockLabels((prev) => ({ ...prev, [tid]: '' }));
@@ -682,6 +768,103 @@ export default function TemplateListing({
         )
       }
     }));
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // BLOCK LIST HANDLERS (API-backed CRUD)
+  // ──────────────────────────────────────────────────────────────────────
+  const handleAddApiBlock = (tid: string) => {
+    setEditingBlock(null);
+    setBlockTemplateId(tid);
+    setBlockError(null);
+    setBlockDialogOpen(true);
+  };
+
+  const handleEditApiBlock = (tid: string, block: TemplateBlockApi) => {
+    setEditingBlock(block);
+    setBlockTemplateId(tid);
+    setBlockError(null);
+    setBlockDialogOpen(true);
+  };
+
+  const handleBlockSubmit = async (data: { name: string }) => {
+    if (!blockTemplateId) return;
+    setIsBlockLoading(true);
+    setBlockError(null);
+    try {
+      if (editingBlock) {
+        await updateBlock(
+          companyId,
+          productId,
+          blockTemplateId,
+          editingBlock.id,
+          { name: data.name }
+        );
+        setExpandedData((p) => ({
+          ...p,
+          [blockTemplateId]: {
+            ...p[blockTemplateId],
+            apiBlocks: p[blockTemplateId].apiBlocks.map((b) =>
+              b.id === editingBlock.id ? { ...b, name: data.name } : b
+            )
+          }
+        }));
+      } else {
+        const newBlock = await createBlock(
+          companyId,
+          productId,
+          blockTemplateId,
+          { name: data.name }
+        );
+        setExpandedData((p) => ({
+          ...p,
+          [blockTemplateId]: {
+            ...p[blockTemplateId],
+            apiBlocks: [...p[blockTemplateId].apiBlocks, newBlock].sort(
+              (a, b) => a.orderNo - b.orderNo
+            )
+          }
+        }));
+      }
+      setBlockDialogOpen(false);
+    } catch (err) {
+      setBlockError(getError(err));
+      throw err;
+    } finally {
+      setIsBlockLoading(false);
+    }
+  };
+
+  const handleBlockDragEnd = async (event: DragEndEvent, tid: string) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const cur = expandedData[tid]?.apiBlocks || [];
+    const oldI = cur.findIndex((b) => b.id === active.id);
+    const newI = cur.findIndex((b) => b.id === over.id);
+    if (oldI === -1 || newI === -1) return;
+    const reordered = arrayMove(cur, oldI, newI);
+    setExpandedData((p) => ({
+      ...p,
+      [tid]: { ...p[tid], apiBlocks: reordered }
+    }));
+    setIsReordering(true);
+    try {
+      await reorderBlocks(companyId, productId, tid, {
+        ids: reordered.map((b) => b.id)
+      });
+      setExpandedData((p) => ({
+        ...p,
+        [tid]: {
+          ...p[tid],
+          apiBlocks: reordered.map((b, i) => ({ ...b, orderNo: i + 1 }))
+        }
+      }));
+    } catch (err) {
+      setExpandedData((p) => ({ ...p, [tid]: { ...p[tid], apiBlocks: cur } }));
+      setError(getError(err));
+    } finally {
+      setIsReordering(false);
+    }
   };
 
   // ──────────────────────────────────────────────────────────────────────
@@ -776,7 +959,6 @@ export default function TemplateListing({
         const oldKey = editingColumn.key;
         const keyChanged = oldKey !== generatedKey;
         const tid = columnTemplateId;
-
         await updateColumn(companyId, productId, tid, editingColumn.id, {
           key: generatedKey,
           label: data.label,
@@ -786,15 +968,12 @@ export default function TemplateListing({
           isFinalCalculation: data.isFinalCalculation,
           formula: data.formula
         });
-
         let updatedColumns = (expandedData[tid]?.columns || []).map((c) =>
           c.id === editingColumn.id ? { ...c, ...data, key: generatedKey } : c
         );
-
         if (keyChanged) {
           const escapedOldKey = oldKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const keyRegex = new RegExp(`\\b${escapedOldKey}\\b`, 'g');
-
           const affectedFormulaColumns = updatedColumns.filter(
             (col) =>
               col.id !== editingColumn.id &&
@@ -802,13 +981,11 @@ export default function TemplateListing({
               col.formula &&
               keyRegex.test(col.formula)
           );
-
           for (const formulaCol of affectedFormulaColumns) {
             const updatedFormula = formulaCol.formula!.replace(
               new RegExp(`\\b${escapedOldKey}\\b`, 'g'),
               generatedKey
             );
-
             await updateColumn(companyId, productId, tid, formulaCol.id, {
               key: formulaCol.key,
               label: formulaCol.label,
@@ -818,7 +995,6 @@ export default function TemplateListing({
               isFinalCalculation: formulaCol.isFinalCalculation,
               formula: updatedFormula
             });
-
             updatedColumns = updatedColumns.map((col) =>
               col.id === formulaCol.id
                 ? { ...col, formula: updatedFormula }
@@ -826,7 +1002,6 @@ export default function TemplateListing({
             );
           }
         }
-
         setExpandedData((prev) => ({
           ...prev,
           [tid]: { ...prev[tid], columns: updatedColumns }
@@ -1095,12 +1270,12 @@ export default function TemplateListing({
   };
 
   // ──────────────────────────────────────────────────────────────────────
-  // DELETE ITEM
+  // DELETE ITEM (column / row / extra / block)
   // ──────────────────────────────────────────────────────────────────────
   const handleDeleteItemClick = (
-    type: 'column' | 'row' | 'extra',
+    type: 'column' | 'row' | 'extra' | 'block',
     tid: string,
-    item: TemplateColumn | TemplateRow | TemplateExtra
+    item: TemplateColumn | TemplateRow | TemplateExtra | TemplateBlockApi
   ) => {
     setDeleteItemType(type);
     setDeleteItemTemplateId(tid);
@@ -1116,26 +1291,21 @@ export default function TemplateListing({
       if (deleteItemType === 'column') {
         const deletedColumn = itemToDelete as TemplateColumn;
         await deleteColumn(companyId, productId, tid, deletedColumn.id);
-
         let updatedColumns = (expandedData[tid]?.columns || []).filter(
           (c) => c.id !== deletedColumn.id
         );
-
         const deletedKey = deletedColumn.key;
         const escapedKey = deletedKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const keyRegex = new RegExp(`\\b${escapedKey}\\b`);
-
         const affectedFormulaColumns = updatedColumns.filter(
           (col) =>
             col.dataType === 'FORMULA' &&
             col.formula &&
             keyRegex.test(col.formula)
         );
-
         for (const formulaCol of affectedFormulaColumns) {
           const parsed = parseFormula(formulaCol.formula!);
           if (!parsed) continue;
-
           let stepIndex: number;
           while (
             (stepIndex = parsed.steps.findIndex(
@@ -1149,10 +1319,8 @@ export default function TemplateListing({
               parsed.operators.splice(0, 1);
             }
           }
-
           const updatedFormula =
             parsed.steps.length > 0 ? stringifyFormula(parsed) : '';
-
           await updateColumn(companyId, productId, tid, formulaCol.id, {
             key: formulaCol.key,
             label: formulaCol.label,
@@ -1162,12 +1330,10 @@ export default function TemplateListing({
             isFinalCalculation: formulaCol.isFinalCalculation,
             formula: updatedFormula
           });
-
           updatedColumns = updatedColumns.map((col) =>
             col.id === formulaCol.id ? { ...col, formula: updatedFormula } : col
           );
         }
-
         setExpandedData((p) => ({
           ...p,
           [tid]: { ...p[tid], columns: updatedColumns }
@@ -1190,6 +1356,15 @@ export default function TemplateListing({
             extras: p[tid].extras.filter((e) => e.id !== itemToDelete.id)
           }
         }));
+      } else if (deleteItemType === 'block') {
+        await deleteBlockApi(companyId, productId, tid, itemToDelete.id);
+        setExpandedData((p) => ({
+          ...p,
+          [tid]: {
+            ...p[tid],
+            apiBlocks: p[tid].apiBlocks.filter((b) => b.id !== itemToDelete.id)
+          }
+        }));
       }
       setDeleteItemDialogOpen(false);
       setItemToDelete(null);
@@ -1205,6 +1380,15 @@ export default function TemplateListing({
   const filteredTemplates = templates.filter((t) =>
     t.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Helper to get display name from itemToDelete
+  const getDeleteItemLabel = (): string => {
+    if (!itemToDelete) return '';
+    if ('label' in itemToDelete)
+      return (itemToDelete as { label: string }).label;
+    if ('name' in itemToDelete) return (itemToDelete as { name: string }).name;
+    return '';
+  };
 
   // ──────────────────────────────────────────────────────────────────────
   // RENDER
@@ -1307,7 +1491,14 @@ export default function TemplateListing({
                             <TableCell colSpan={7} className='p-0'>
                               <div className='space-y-4 p-4'>
                                 <Tabs defaultValue='columns' className='w-full'>
-                                  <TabsList className='grid w-full max-w-2xl grid-cols-5'>
+                                  <TabsList className='grid w-full max-w-3xl grid-cols-6'>
+                                    <TabsTrigger
+                                      value='block-list'
+                                      className='text-xs'
+                                    >
+                                      <List className='mr-1 h-3 w-3' />
+                                      Block List ({td?.apiBlocks?.length || 0})
+                                    </TabsTrigger>
                                     <TabsTrigger
                                       value='blocks'
                                       className='text-xs'
@@ -1345,7 +1536,108 @@ export default function TemplateListing({
                                     </TabsTrigger>
                                   </TabsList>
 
-                                  {/* Blocks */}
+                                  {/* Block List (API-backed) */}
+                                  <TabsContent
+                                    value='block-list'
+                                    className='mt-4'
+                                  >
+                                    <Card>
+                                      <CardHeader className='py-3'>
+                                        <div className='flex items-center justify-between'>
+                                          <div>
+                                            <CardTitle className='text-sm font-medium'>
+                                              Block List
+                                            </CardTitle>
+                                            <p className='text-muted-foreground mt-1 text-xs'>
+                                              Drag{' '}
+                                              <GripVertical className='inline h-3 w-3' />{' '}
+                                              to reorder
+                                            </p>
+                                          </div>
+                                          <Button
+                                            size='sm'
+                                            onClick={() =>
+                                              handleAddApiBlock(tmpl.id)
+                                            }
+                                          >
+                                            <Plus className='mr-1 h-3 w-3' />
+                                            Add Block
+                                          </Button>
+                                        </div>
+                                      </CardHeader>
+                                      <CardContent className='pt-0'>
+                                        {!td?.apiBlocks?.length ? (
+                                          <div className='text-muted-foreground py-6 text-center text-sm'>
+                                            No blocks yet.
+                                          </div>
+                                        ) : (
+                                          <div className='rounded border'>
+                                            <DndContext
+                                              sensors={sensors}
+                                              collisionDetection={closestCenter}
+                                              onDragEnd={(e) =>
+                                                handleBlockDragEnd(e, tmpl.id)
+                                              }
+                                            >
+                                              <Table>
+                                                <TableHeader>
+                                                  <TableRow>
+                                                    <TableHead className='w-[40px]' />
+                                                    <TableHead className='text-xs'>
+                                                      Name
+                                                    </TableHead>
+                                                    <TableHead className='text-xs'>
+                                                      Order
+                                                    </TableHead>
+                                                    <TableHead className='text-xs'>
+                                                      Status
+                                                    </TableHead>
+                                                    <TableHead className='w-[80px] text-xs'>
+                                                      Actions
+                                                    </TableHead>
+                                                  </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                  <SortableContext
+                                                    items={td.apiBlocks.map(
+                                                      (b) => b.id
+                                                    )}
+                                                    strategy={
+                                                      verticalListSortingStrategy
+                                                    }
+                                                  >
+                                                    {td.apiBlocks.map(
+                                                      (block) => (
+                                                        <SortableBlockListItem
+                                                          key={block.id}
+                                                          block={block}
+                                                          onEdit={() =>
+                                                            handleEditApiBlock(
+                                                              tmpl.id,
+                                                              block
+                                                            )
+                                                          }
+                                                          onDelete={() =>
+                                                            handleDeleteItemClick(
+                                                              'block',
+                                                              tmpl.id,
+                                                              block
+                                                            )
+                                                          }
+                                                        />
+                                                      )
+                                                    )}
+                                                  </SortableContext>
+                                                </TableBody>
+                                              </Table>
+                                            </DndContext>
+                                          </div>
+                                        )}
+                                      </CardContent>
+                                    </Card>
+                                  </TabsContent>
+
+                                  {/* Blocks (local) */}
                                   <TabsContent value='blocks' className='mt-4'>
                                     <Card>
                                       <CardHeader className='py-3'>
@@ -1357,7 +1649,6 @@ export default function TemplateListing({
                                         </p>
                                       </CardHeader>
                                       <CardContent className='space-y-4 pt-0'>
-                                        {/* Add block */}
                                         <div className='flex items-center gap-2'>
                                           <Input
                                             placeholder='New block name...'
@@ -1394,8 +1685,6 @@ export default function TemplateListing({
                                             Add
                                           </Button>
                                         </div>
-
-                                        {/* Block list */}
                                         <div className='space-y-2'>
                                           {(td?.blocks || []).map((block) => {
                                             const blockCols = (
@@ -1836,13 +2125,12 @@ export default function TemplateListing({
                 ? 'Column'
                 : deleteItemType === 'row'
                   ? 'Row'
-                  : 'Extra Field'}
+                  : deleteItemType === 'block'
+                    ? 'Block'
+                    : 'Extra Field'}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;
-              {itemToDelete && 'label' in itemToDelete
-                ? itemToDelete.label
-                : ''}
+              Are you sure you want to delete &quot;{getDeleteItemLabel()}
               &quot;?
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1897,6 +2185,14 @@ export default function TemplateListing({
         initialData={editingExtra}
         isLoading={isExtraLoading}
         error={extraError}
+      />
+      <BlockFormDialog
+        open={blockDialogOpen}
+        onOpenChange={setBlockDialogOpen}
+        onSubmit={handleBlockSubmit}
+        initialData={editingBlock}
+        isLoading={isBlockLoading}
+        error={blockError}
       />
     </div>
   );

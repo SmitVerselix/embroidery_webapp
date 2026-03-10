@@ -4,8 +4,9 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 // CONFIGURATION
 // =============================================================================
 
-// const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://192.168.1.72:6565";
-const API_BASE_URL = 'https://embroidery-backend-zkey.onrender.com';
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || 'http://192.168.1.72:6565';
+// const API_BASE_URL = 'https://embroidery-backend-zkey.onrender.com';
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

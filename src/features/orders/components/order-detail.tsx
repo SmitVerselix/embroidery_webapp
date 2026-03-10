@@ -160,6 +160,9 @@ type OrderTemplateEntry = {
 
 type DiscountType = 'AMOUNT' | 'PERCENT';
 
+// BlockValuesMap: numeric blockIndex → templateBlockId
+type BlockValuesMap = Record<number, string>;
+
 // =============================================================================
 // UPDATE FINAL CALCULATION API
 // =============================================================================
@@ -606,6 +609,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const [extraValues, setExtraValues] = useState<
     Record<string, ExtraValuesMap>
   >({});
+  const [blockValues, setBlockValues] = useState<
+    Record<string, BlockValuesMap>
+  >({});
   const [isLoading, setIsLoading] = useState(true);
   const [duplicatingIds, setDuplicatingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -645,6 +651,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       setEntries([]);
       setTemplateValues({});
       setExtraValues({});
+      setBlockValues({});
       return;
     }
 
@@ -654,6 +661,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     const loadedEntries: OrderTemplateEntry[] = [];
     const loadedValues: Record<string, TemplateValuesMap> = {};
     const loadedExtraValues: Record<string, ExtraValuesMap> = {};
+    const loadedBlockValues: Record<string, BlockValuesMap> = {};
     const processedTemplateIds = new Set<string>();
 
     const processTemplate = (
@@ -706,6 +714,20 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       });
       loadedExtraValues[orderTemplateId] = extValMap;
 
+      // Parse blockValues: API returns [{ templateBlockId, blockIndex: "block_0" }]
+      // Convert to BlockValuesMap: { 0: templateBlockId }
+      const bvMap: BlockValuesMap = {};
+      ((tmplData as any).blockValues || []).forEach((bv: any) => {
+        const idx = parseInt(
+          (bv.blockIndex as string).replace('block_', ''),
+          10
+        );
+        if (!isNaN(idx)) {
+          bvMap[idx] = bv.templateBlockId;
+        }
+      });
+      loadedBlockValues[orderTemplateId] = bvMap;
+
       if (tmplData.children && tmplData.children.length > 0) {
         tmplData.children.forEach((child) =>
           processTemplate(child, orderTemplateId, true)
@@ -731,12 +753,14 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         });
         loadedValues[tempKey] = {};
         loadedExtraValues[tempKey] = {};
+        loadedBlockValues[tempKey] = {};
       }
     }
 
     setEntries(loadedEntries);
     setTemplateValues(loadedValues);
     setExtraValues(loadedExtraValues);
+    setBlockValues(loadedBlockValues);
   }, []);
 
   // ── FETCH ORDER ─────────────────────────────────────────────────────
@@ -1249,6 +1273,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                     extraValues={extraValues[parentEntry.orderTemplateId] || {}}
                     onExtraValuesChange={() => {}}
                     summary={parentEntry.summary ?? {}}
+                    apiBlocks={parentEntry.template.blocks || []}
+                    blockValues={blockValues[parentEntry.orderTemplateId] || {}}
+                    onBlockValuesChange={() => {}}
                   />
                 </div>
               )}
@@ -1268,6 +1295,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                     extraValues={extraValues[childEntry.orderTemplateId] || {}}
                     onExtraValuesChange={() => {}}
                     summary={childEntry.summary ?? {}}
+                    apiBlocks={childEntry.template.blocks || []}
+                    blockValues={blockValues[childEntry.orderTemplateId] || {}}
+                    onBlockValuesChange={() => {}}
                   />
                 </div>
               ))}
@@ -1281,6 +1311,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       duplicatingIds,
       templateValues,
       extraValues,
+      blockValues,
       requestDuplicate
     ]
   );
