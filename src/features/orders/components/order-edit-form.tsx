@@ -36,15 +36,12 @@ import {
   CardTitle
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
 import {
   Loader2,
   ArrowLeft,
   AlertCircle,
   CheckCircle2,
   Save,
-  MessageSquare,
   ZoomIn,
   ZoomOut,
   Maximize2
@@ -183,9 +180,6 @@ export default function OrderEditForm({
   const [originalExtraValueIds, setOriginalExtraValueIds] = useState<
     Record<string, Record<string, string>>
   >({});
-
-  // Comment field
-  const [comment, setComment] = useState('');
 
   // Discount per template
   const [templateDiscounts, setTemplateDiscounts] = useState<
@@ -670,10 +664,6 @@ export default function OrderEditForm({
       const updatePayload: UpdateOrderValuesData = {
         templates: valuesTemplates
       };
-
-      if (comment.trim()) {
-        updatePayload.comment = comment.trim();
-      }
 
       await updateOrderValues(companyId, orderId, updatePayload);
 
@@ -1300,33 +1290,6 @@ export default function OrderEditForm({
           </CardContent>
         </Card>
       )}
-
-      {/* Comment Section */}
-      <Card>
-        <CardHeader className='pb-3'>
-          <CardTitle className='flex items-center gap-2 text-base'>
-            <MessageSquare className='h-4 w-4' />
-            Comment
-          </CardTitle>
-          <CardDescription>
-            Add a comment for this update (optional). This will be sent with
-            your changes.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Textarea
-            value={comment}
-            onChange={(e) => {
-              setComment(e.target.value);
-              setSaveSuccess(false);
-            }}
-            placeholder='Enter your comment here...'
-            disabled={isSubmitting}
-            rows={3}
-            className='resize-none'
-          />
-        </CardContent>
-      </Card>
 
       {/* Action Buttons */}
       <div className='flex items-center gap-4 pt-2'>

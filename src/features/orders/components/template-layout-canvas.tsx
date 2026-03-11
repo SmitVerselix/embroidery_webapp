@@ -445,7 +445,12 @@ export default function TemplateLayoutCanvas({
     <div className='flex flex-wrap items-center gap-2'>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant='outline' size='sm' className='gap-1.5 text-xs'>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='gap-1.5 text-xs'
+          >
             <LayoutGrid className='h-3.5 w-3.5' />
             Layout
             <ChevronDown className='h-3 w-3' />
@@ -492,6 +497,7 @@ export default function TemplateLayoutCanvas({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              type='button'
               variant={snapEnabled ? 'default' : 'outline'}
               size='sm'
               className='gap-1.5 text-xs'
@@ -511,6 +517,7 @@ export default function TemplateLayoutCanvas({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              type='button'
               variant={isLocked ? 'destructive' : 'outline'}
               size='sm'
               className='gap-1.5 text-xs'
@@ -536,6 +543,7 @@ export default function TemplateLayoutCanvas({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              type='button'
               variant='ghost'
               size='sm'
               className='gap-1.5 text-xs'

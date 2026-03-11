@@ -81,11 +81,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger
-} from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -175,89 +170,82 @@ function SortableTemplateRow({
   };
 
   return (
-    <Collapsible open={isExpanded} asChild>
-      <>
-        <TableRow
-          ref={setNodeRef}
-          style={style}
-          className={cn(
-            'hover:bg-muted/50',
-            isDragging && 'bg-muted opacity-50'
-          )}
-        >
-          <TableCell className='w-[40px]'>
-            <button
-              type='button'
-              className='hover:bg-muted cursor-grab touch-none rounded p-1 active:cursor-grabbing'
-              {...attributes}
-              {...listeners}
-            >
-              <GripVertical className='text-muted-foreground h-4 w-4' />
-            </button>
-          </TableCell>
-          <TableCell className='w-[40px]'>
-            <CollapsibleTrigger asChild>
-              <Button
-                variant='ghost'
-                size='icon'
-                className='h-7 w-7'
-                onClick={onToggleExpand}
-              >
-                {isExpanded ? (
-                  <ChevronDown className='h-4 w-4' />
-                ) : (
-                  <ChevronRightIcon className='h-4 w-4' />
-                )}
+    <>
+      <TableRow
+        ref={setNodeRef}
+        style={style}
+        className={cn('hover:bg-muted/50', isDragging && 'bg-muted opacity-50')}
+      >
+        <TableCell className='w-[40px]'>
+          <button
+            type='button'
+            className='hover:bg-muted cursor-grab touch-none rounded p-1 active:cursor-grabbing'
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className='text-muted-foreground h-4 w-4' />
+          </button>
+        </TableCell>
+        <TableCell className='w-[40px]'>
+          <Button
+            variant='ghost'
+            size='icon'
+            className='h-7 w-7'
+            onClick={onToggleExpand}
+          >
+            {isExpanded ? (
+              <ChevronDown className='h-4 w-4' />
+            ) : (
+              <ChevronRightIcon className='h-4 w-4' />
+            )}
+          </Button>
+        </TableCell>
+        <TableCell className='font-medium'>{template.name}</TableCell>
+        <TableCell>
+          <Badge
+            variant={template.type === 'COSTING' ? 'default' : 'secondary'}
+          >
+            {template.type}
+          </Badge>
+        </TableCell>
+        <TableCell>
+          <Badge variant={template.isActive ? 'default' : 'secondary'}>
+            {template.isActive ? 'Active' : 'Inactive'}
+          </Badge>
+        </TableCell>
+        <TableCell className='text-muted-foreground'>
+          {formatDate(template.createdAt)}
+        </TableCell>
+        <TableCell>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant='ghost' size='icon' className='h-8 w-8'>
+                <MoreHorizontal className='h-4 w-4' />
               </Button>
-            </CollapsibleTrigger>
-          </TableCell>
-          <TableCell className='font-medium'>{template.name}</TableCell>
-          <TableCell>
-            <Badge
-              variant={template.type === 'COSTING' ? 'default' : 'secondary'}
-            >
-              {template.type}
-            </Badge>
-          </TableCell>
-          <TableCell>
-            <Badge variant={template.isActive ? 'default' : 'secondary'}>
-              {template.isActive ? 'Active' : 'Inactive'}
-            </Badge>
-          </TableCell>
-          <TableCell className='text-muted-foreground'>
-            {formatDate(template.createdAt)}
-          </TableCell>
-          <TableCell>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant='ghost' size='icon' className='h-8 w-8'>
-                  <MoreHorizontal className='h-4 w-4' />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align='end'>
-                <DropdownMenuItem onClick={onToggleExpand}>
-                  <Eye className='mr-2 h-4 w-4' />
-                  {isExpanded ? 'Collapse' : 'Expand'}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onEdit}>
-                  <Pencil className='mr-2 h-4 w-4' />
-                  Edit Template
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={onDelete}
-                  className='text-destructive focus:text-destructive'
-                >
-                  <Trash2 className='mr-2 h-4 w-4' />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </TableCell>
-        </TableRow>
-        {children}
-      </>
-    </Collapsible>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='end'>
+              <DropdownMenuItem onClick={onToggleExpand}>
+                <Eye className='mr-2 h-4 w-4' />
+                {isExpanded ? 'Collapse' : 'Expand'}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onEdit}>
+                <Pencil className='mr-2 h-4 w-4' />
+                Edit Template
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={onDelete}
+                className='text-destructive focus:text-destructive'
+              >
+                <Trash2 className='mr-2 h-4 w-4' />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </TableCell>
+      </TableRow>
+      {children}
+    </>
   );
 }
 
@@ -692,11 +680,6 @@ export default function TemplateListing({
   >(null);
   const [isDeletingItem, setIsDeletingItem] = useState(false);
 
-  // Block management per template (local blocks for column grouping)
-  const [newBlockLabels, setNewBlockLabels] = useState<Record<string, string>>(
-    {}
-  );
-
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -716,19 +699,23 @@ export default function TemplateListing({
   // BLOCK HANDLERS (local per template — for column grouping)
   // ──────────────────────────────────────────────────────────────────────
   const handleAddBlock = (tid: string) => {
-    const label = (newBlockLabels[tid] || '').trim();
-    if (!label) return;
     setExpandedData((prev) => {
       const td = prev[tid];
       if (!td) return prev;
       const maxIndex =
         td.blocks.length > 0 ? Math.max(...td.blocks.map((b) => b.index)) : -1;
+      const newIndex = maxIndex + 1;
       return {
         ...prev,
-        [tid]: { ...td, blocks: [...td.blocks, { index: maxIndex + 1, label }] }
+        [tid]: {
+          ...td,
+          blocks: [
+            ...td.blocks,
+            { index: newIndex, label: `block_${newIndex}` }
+          ]
+        }
       };
     });
-    setNewBlockLabels((prev) => ({ ...prev, [tid]: '' }));
   };
 
   const handleRemoveBlock = (tid: string, blockIndex: number) => {
@@ -1429,43 +1416,49 @@ export default function TemplateListing({
       )}
 
       {/* Table */}
-      <div className='rounded-md border'>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className='w-[40px]' />
-              <TableHead className='w-[40px]' />
-              <TableHead>Name</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Created At</TableHead>
-              <TableHead className='w-[100px]'>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredTemplates.length === 0 ? (
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleTemplateDragEnd}
+      >
+        <div className='rounded-md border'>
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={7} className='h-32 text-center'>
-                  <div className='flex flex-col items-center gap-2'>
-                    <FileText className='text-muted-foreground h-8 w-8' />
-                    <p className='text-muted-foreground'>
-                      {searchQuery ? 'No templates found' : 'No templates yet'}
-                    </p>
-                    {!searchQuery && (
-                      <Button size='sm' onClick={handleCreate} className='mt-2'>
-                        <Plus className='mr-2 h-4 w-4' />
-                        Create First Template
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
+                <TableHead className='w-[40px]' />
+                <TableHead className='w-[40px]' />
+                <TableHead>Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Created At</TableHead>
+                <TableHead className='w-[100px]'>Actions</TableHead>
               </TableRow>
-            ) : (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleTemplateDragEnd}
-              >
+            </TableHeader>
+            <TableBody>
+              {filteredTemplates.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className='h-32 text-center'>
+                    <div className='flex flex-col items-center gap-2'>
+                      <FileText className='text-muted-foreground h-8 w-8' />
+                      <p className='text-muted-foreground'>
+                        {searchQuery
+                          ? 'No templates found'
+                          : 'No templates yet'}
+                      </p>
+                      {!searchQuery && (
+                        <Button
+                          size='sm'
+                          onClick={handleCreate}
+                          className='mt-2'
+                        >
+                          <Plus className='mr-2 h-4 w-4' />
+                          Create First Template
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
                 <SortableContext
                   items={filteredTemplates.map((t) => t.id)}
                   strategy={verticalListSortingStrategy}
@@ -1486,7 +1479,7 @@ export default function TemplateListing({
                         onEdit={() => handleEditTemplate(tmpl.id)}
                         onDelete={() => handleDeleteTemplateClick(tmpl)}
                       >
-                        <CollapsibleContent asChild>
+                        {isExpanded && (
                           <TableRow className='bg-muted/30 hover:bg-muted/30'>
                             <TableCell colSpan={7} className='p-0'>
                               <div className='space-y-4 p-4'>
@@ -1571,14 +1564,14 @@ export default function TemplateListing({
                                             No blocks yet.
                                           </div>
                                         ) : (
-                                          <div className='rounded border'>
-                                            <DndContext
-                                              sensors={sensors}
-                                              collisionDetection={closestCenter}
-                                              onDragEnd={(e) =>
-                                                handleBlockDragEnd(e, tmpl.id)
-                                              }
-                                            >
+                                          <DndContext
+                                            sensors={sensors}
+                                            collisionDetection={closestCenter}
+                                            onDragEnd={(e) =>
+                                              handleBlockDragEnd(e, tmpl.id)
+                                            }
+                                          >
+                                            <div className='rounded border'>
                                               <Table>
                                                 <TableHeader>
                                                   <TableRow>
@@ -1630,8 +1623,8 @@ export default function TemplateListing({
                                                   </SortableContext>
                                                 </TableBody>
                                               </Table>
-                                            </DndContext>
-                                          </div>
+                                            </div>
+                                          </DndContext>
                                         )}
                                       </CardContent>
                                     </Card>
@@ -1649,42 +1642,16 @@ export default function TemplateListing({
                                         </p>
                                       </CardHeader>
                                       <CardContent className='space-y-4 pt-0'>
-                                        <div className='flex items-center gap-2'>
-                                          <Input
-                                            placeholder='New block name...'
-                                            value={
-                                              newBlockLabels[tmpl.id] || ''
-                                            }
-                                            onChange={(e) =>
-                                              setNewBlockLabels((p) => ({
-                                                ...p,
-                                                [tmpl.id]: e.target.value
-                                              }))
-                                            }
-                                            onKeyDown={(e) => {
-                                              if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                handleAddBlock(tmpl.id);
-                                              }
-                                            }}
-                                            className='h-8 text-sm'
-                                          />
-                                          <Button
-                                            size='sm'
-                                            className='h-8'
-                                            onClick={() =>
-                                              handleAddBlock(tmpl.id)
-                                            }
-                                            disabled={
-                                              !(
-                                                newBlockLabels[tmpl.id] || ''
-                                              ).trim()
-                                            }
-                                          >
-                                            <Plus className='mr-1 h-3 w-3' />
-                                            Add
-                                          </Button>
-                                        </div>
+                                        <Button
+                                          size='sm'
+                                          className='h-8'
+                                          onClick={() =>
+                                            handleAddBlock(tmpl.id)
+                                          }
+                                        >
+                                          <Plus className='mr-1 h-3 w-3' />
+                                          Add Block
+                                        </Button>
                                         <div className='space-y-2'>
                                           {(td?.blocks || []).map((block) => {
                                             const blockCols = (
@@ -1781,14 +1748,14 @@ export default function TemplateListing({
                                             No columns yet.
                                           </div>
                                         ) : (
-                                          <div className='rounded border'>
-                                            <DndContext
-                                              sensors={sensors}
-                                              collisionDetection={closestCenter}
-                                              onDragEnd={(e) =>
-                                                handleColumnDragEnd(e, tmpl.id)
-                                              }
-                                            >
+                                          <DndContext
+                                            sensors={sensors}
+                                            collisionDetection={closestCenter}
+                                            onDragEnd={(e) =>
+                                              handleColumnDragEnd(e, tmpl.id)
+                                            }
+                                          >
+                                            <div className='rounded border'>
                                               <Table>
                                                 <TableHeader>
                                                   <TableRow>
@@ -1847,8 +1814,8 @@ export default function TemplateListing({
                                                   </SortableContext>
                                                 </TableBody>
                                               </Table>
-                                            </DndContext>
-                                          </div>
+                                            </div>
+                                          </DndContext>
                                         )}
                                       </CardContent>
                                     </Card>
@@ -1886,14 +1853,14 @@ export default function TemplateListing({
                                             No rows yet.
                                           </div>
                                         ) : (
-                                          <div className='rounded border'>
-                                            <DndContext
-                                              sensors={sensors}
-                                              collisionDetection={closestCenter}
-                                              onDragEnd={(e) =>
-                                                handleRowDragEnd(e, tmpl.id)
-                                              }
-                                            >
+                                          <DndContext
+                                            sensors={sensors}
+                                            collisionDetection={closestCenter}
+                                            onDragEnd={(e) =>
+                                              handleRowDragEnd(e, tmpl.id)
+                                            }
+                                          >
+                                            <div className='rounded border'>
                                               <Table>
                                                 <TableHeader>
                                                   <TableRow>
@@ -1943,8 +1910,8 @@ export default function TemplateListing({
                                                   </SortableContext>
                                                 </TableBody>
                                               </Table>
-                                            </DndContext>
-                                          </div>
+                                            </div>
+                                          </DndContext>
                                         )}
                                       </CardContent>
                                     </Card>
@@ -1982,14 +1949,14 @@ export default function TemplateListing({
                                             No extra fields yet.
                                           </div>
                                         ) : (
-                                          <div className='rounded border'>
-                                            <DndContext
-                                              sensors={sensors}
-                                              collisionDetection={closestCenter}
-                                              onDragEnd={(e) =>
-                                                handleExtraDragEnd(e, tmpl.id)
-                                              }
-                                            >
+                                          <DndContext
+                                            sensors={sensors}
+                                            collisionDetection={closestCenter}
+                                            onDragEnd={(e) =>
+                                              handleExtraDragEnd(e, tmpl.id)
+                                            }
+                                          >
+                                            <div className='rounded border'>
                                               <Table>
                                                 <TableHeader>
                                                   <TableRow>
@@ -2042,8 +2009,8 @@ export default function TemplateListing({
                                                   </SortableContext>
                                                 </TableBody>
                                               </Table>
-                                            </DndContext>
-                                          </div>
+                                            </div>
+                                          </DndContext>
                                         )}
                                       </CardContent>
                                     </Card>
@@ -2063,16 +2030,16 @@ export default function TemplateListing({
                               </div>
                             </TableCell>
                           </TableRow>
-                        </CollapsibleContent>
+                        )}
                       </SortableTemplateRow>
                     );
                   })}
                 </SortableContext>
-              </DndContext>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </DndContext>
 
       {filteredTemplates.length > 0 && (
         <div className='text-muted-foreground text-sm'>

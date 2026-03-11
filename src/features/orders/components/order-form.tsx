@@ -1,6 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type WheelEvent as ReactWheelEvent,
+  type TouchEvent as ReactTouchEvent
+} from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -60,7 +69,10 @@ import {
   Search,
   FileText,
   X,
-  Link2
+  Link2,
+  ZoomIn,
+  ZoomOut,
+  Maximize2
 } from 'lucide-react';
 import Link from 'next/link';
 import OrderTemplateValues, {
@@ -68,6 +80,9 @@ import OrderTemplateValues, {
   type BlockValuesMap
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
+import TemplateLayoutCanvas, {
+  type TemplateLayoutItem
+} from './template-layout-canvas';
 import {
   Popover,
   PopoverContent,
@@ -126,6 +141,52 @@ const orderFormSchema = z
   });
 
 type OrderFormData = z.infer<typeof orderFormSchema>;
+
+// =============================================================================
+// ZOOM CONSTANTS
+// =============================================================================
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 5;
+const ZOOM_STEP = 0.25;
+const SCROLL_ZOOM_FACTOR = 0.001;
+
+// =============================================================================
+// CANVAS TOOLBAR BUTTON
+// =============================================================================
+
+function CanvasToolbarButton({
+  onClick,
+  disabled = false,
+  title,
+  children
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type='button'
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      disabled={disabled}
+      title={title}
+      className={cn(
+        'inline-flex h-8 w-8 items-center justify-center rounded-md',
+        'text-muted-foreground hover:text-foreground hover:bg-accent',
+        'transition-colors duration-150',
+        'focus-visible:ring-ring focus:outline-none focus-visible:ring-2',
+        'disabled:pointer-events-none disabled:opacity-30'
+      )}
+    >
+      {children}
+    </button>
+  );
+}
 
 // =============================================================================
 // PROPS
@@ -222,6 +283,20 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   // Submit
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // ── Zoom state ──────────────────────────────────────────────────────
+  const [zoom, setZoom] = useState(1);
+  const [isCanvasFocused, setIsCanvasFocused] = useState(false);
+  const [isTemplateDragging, setIsTemplateDragging] = useState(false);
+
+  // ── Drag-to-scroll state ────────────────────────────────────────────
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+  const scrollStart = useRef({ left: 0, top: 0 });
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const lastPinchDist = useRef<number | null>(null);
+  const toolbarPortalRef = useRef<HTMLDivElement>(null);
 
   const {
     register,
@@ -774,6 +849,317 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     },
     []
   );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // ZOOM HELPERS
+  // ──────────────────────────────────────────────────────────────────────
+  const clampZoom = useCallback(
+    (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)),
+    []
+  );
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((z) => clampZoom(z + ZOOM_STEP));
+  }, [clampZoom]);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((z) => clampZoom(z - ZOOM_STEP));
+  }, [clampZoom]);
+
+  const handleResetView = useCallback(() => {
+    setZoom(1);
+    if (containerRef.current) {
+      containerRef.current.scrollLeft = 0;
+      containerRef.current.scrollTop = 0;
+    }
+  }, []);
+
+  const handleWheel = useCallback(
+    (e: ReactWheelEvent<HTMLDivElement>) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const delta = -e.deltaY * SCROLL_ZOOM_FACTOR;
+      setZoom((z) => clampZoom(z + delta * z));
+    },
+    [clampZoom]
+  );
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const preventNativeZoom = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    };
+    container.addEventListener('wheel', preventNativeZoom, { passive: false });
+    return () => container.removeEventListener('wheel', preventNativeZoom);
+  }, [templates.length]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // DRAG-TO-SCROLL
+  // ──────────────────────────────────────────────────────────────────────
+  const handleMouseDown = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (isTemplateDragging) return;
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (
+        target.closest('button') ||
+        target.closest('a') ||
+        target.closest('input') ||
+        target.closest('select') ||
+        target.closest('textarea') ||
+        target.closest('[data-drag-handle]')
+      )
+        return;
+      e.preventDefault();
+      setIsDragging(true);
+      dragStart.current = { x: e.clientX, y: e.clientY };
+      scrollStart.current = {
+        left: containerRef.current?.scrollLeft ?? 0,
+        top: containerRef.current?.scrollTop ?? 0
+      };
+    },
+    [isTemplateDragging]
+  );
+
+  const handleMouseMove = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (!isDragging || isTemplateDragging || !containerRef.current) return;
+      const dx = e.clientX - dragStart.current.x;
+      const dy = e.clientY - dragStart.current.y;
+      containerRef.current.scrollLeft = scrollStart.current.left - dx;
+      containerRef.current.scrollTop = scrollStart.current.top - dy;
+    },
+    [isDragging, isTemplateDragging]
+  );
+
+  const handleMouseUp = useCallback(() => setIsDragging(false), []);
+
+  const getTouchDist = (t1: React.Touch, t2: React.Touch): number => {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const handleTouchStart = useCallback(
+    (e: ReactTouchEvent<HTMLDivElement>) => {
+      if (isTemplateDragging) return;
+      if (e.touches.length === 1) {
+        const target = e.target as HTMLElement;
+        if (
+          target.closest('button') ||
+          target.closest('a') ||
+          target.closest('input') ||
+          target.closest('select') ||
+          target.closest('textarea') ||
+          target.closest('[data-drag-handle]')
+        )
+          return;
+        setIsDragging(true);
+        dragStart.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY
+        };
+        scrollStart.current = {
+          left: containerRef.current?.scrollLeft ?? 0,
+          top: containerRef.current?.scrollTop ?? 0
+        };
+      } else if (e.touches.length === 2) {
+        lastPinchDist.current = getTouchDist(e.touches[0], e.touches[1]);
+      }
+    },
+    [isTemplateDragging]
+  );
+
+  const handleTouchMove = useCallback(
+    (e: ReactTouchEvent<HTMLDivElement>) => {
+      if (isTemplateDragging) return;
+      if (e.touches.length === 1 && isDragging && containerRef.current) {
+        const dx = e.touches[0].clientX - dragStart.current.x;
+        const dy = e.touches[0].clientY - dragStart.current.y;
+        containerRef.current.scrollLeft = scrollStart.current.left - dx;
+        containerRef.current.scrollTop = scrollStart.current.top - dy;
+      } else if (e.touches.length === 2 && lastPinchDist.current !== null) {
+        const newDist = getTouchDist(e.touches[0], e.touches[1]);
+        const scale = newDist / lastPinchDist.current;
+        lastPinchDist.current = newDist;
+        setZoom((z) => clampZoom(z * scale));
+      }
+    },
+    [isDragging, isTemplateDragging, clampZoom]
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    setIsDragging(false);
+    lastPinchDist.current = null;
+  }, []);
+
+  const handleDoubleClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.closest('button') ||
+        target.closest('a') ||
+        target.closest('input') ||
+        target.closest('select') ||
+        target.closest('textarea') ||
+        target.closest('[data-drag-handle]')
+      )
+        return;
+      setZoom((z) => (z > 1.1 ? 1 : 2.5));
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!isCanvasFocused) return;
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      switch (e.key) {
+        case '+':
+        case '=':
+          e.preventDefault();
+          handleZoomIn();
+          break;
+        case '-':
+        case '_':
+          e.preventDefault();
+          handleZoomOut();
+          break;
+        case '0':
+          e.preventDefault();
+          handleResetView();
+          break;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isCanvasFocused, handleZoomIn, handleZoomOut, handleResetView]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // TEMPLATE LAYOUT ITEMS
+  // ──────────────────────────────────────────────────────────────────────
+  const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
+    return templates.map((tmpl) => {
+      const childMeta = refChildrenMeta[tmpl.id];
+      const hasChildren = childMeta && childMeta.length > 0;
+
+      return {
+        id: tmpl.id,
+        label: tmpl.name || tmpl.id,
+        children: (
+          <div className='space-y-4'>
+            <div className='flex items-center gap-2'>
+              {hasChildren && (
+                <Badge variant='outline' className='text-xs'>
+                  Parent Template
+                  <span className='text-muted-foreground ml-1.5'>
+                    — {childMeta.length} child
+                    {childMeta.length !== 1 ? 'ren' : ''} from reference
+                  </span>
+                </Badge>
+              )}
+            </div>
+
+            {/* Parent */}
+            <OrderTemplateValues
+              template={tmpl}
+              values={templateValues[tmpl.id] || {}}
+              onChange={(vals) => handleTemplateValuesChange(tmpl.id, vals)}
+              errors={cellErrors[tmpl.id] || {}}
+              disabled={isSubmitting}
+              extraValues={extraValues[tmpl.id] || {}}
+              onExtraValuesChange={(vals) =>
+                handleExtraValuesChange(tmpl.id, vals)
+              }
+              extraErrors={extraFieldErrors[tmpl.id] || {}}
+              discountType={
+                templateDiscounts[tmpl.id]?.discountType || 'PERCENT'
+              }
+              discountValue={templateDiscounts[tmpl.id]?.discountValue || '0'}
+              onDiscountChange={(type, value) =>
+                handleDiscountChange(tmpl.id, type, value)
+              }
+              apiBlocks={tmpl.blocks || []}
+              blockValues={templateBlockValues[tmpl.id] || {}}
+              onBlockValuesChange={(vals) =>
+                handleBlockValuesChange(tmpl.id, vals)
+              }
+            />
+
+            {/* Children */}
+            {hasChildren &&
+              childMeta.map((_, idx) => {
+                const childKey = getChildKey(tmpl.id, idx);
+                return (
+                  <div key={childKey} className='space-y-2'>
+                    <Badge variant='secondary' className='text-xs'>
+                      Child #{idx + 1}
+                    </Badge>
+                    <OrderTemplateValues
+                      template={tmpl}
+                      values={childTemplateValues[childKey] || {}}
+                      onChange={(vals) =>
+                        handleChildValuesChange(childKey, vals)
+                      }
+                      errors={childCellErrors[childKey] || {}}
+                      disabled={isSubmitting}
+                      extraValues={childExtraValues[childKey] || {}}
+                      onExtraValuesChange={(vals) =>
+                        handleChildExtraValuesChange(childKey, vals)
+                      }
+                      extraErrors={childExtraFieldErrors[childKey] || {}}
+                      discountType={
+                        childDiscounts[childKey]?.discountType || 'PERCENT'
+                      }
+                      discountValue={
+                        childDiscounts[childKey]?.discountValue || '0'
+                      }
+                      onDiscountChange={(type, value) =>
+                        handleChildDiscountChange(childKey, type, value)
+                      }
+                      apiBlocks={tmpl.blocks || []}
+                      blockValues={childBlockValues[childKey] || {}}
+                      onBlockValuesChange={(vals) =>
+                        handleChildBlockValuesChange(childKey, vals)
+                      }
+                    />
+                  </div>
+                );
+              })}
+          </div>
+        )
+      };
+    });
+  }, [
+    templates,
+    refChildrenMeta,
+    templateValues,
+    extraValues,
+    cellErrors,
+    extraFieldErrors,
+    templateDiscounts,
+    templateBlockValues,
+    childTemplateValues,
+    childExtraValues,
+    childCellErrors,
+    childExtraFieldErrors,
+    childDiscounts,
+    childBlockValues,
+    isSubmitting,
+    handleTemplateValuesChange,
+    handleExtraValuesChange,
+    handleDiscountChange,
+    handleBlockValuesChange,
+    handleChildValuesChange,
+    handleChildExtraValuesChange,
+    handleChildDiscountChange,
+    handleChildBlockValuesChange
+  ]);
+
+  const zoomPercent = Math.round(zoom * 100);
 
   // ──────────────────────────────────────────────────────────────────────
   // SUBMIT
@@ -1381,104 +1767,121 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 </CardContent>
               </Card>
             ) : (
-              <div className='space-y-6'>
-                {templates.map((tmpl) => {
-                  const childMeta = refChildrenMeta[tmpl.id];
-                  const hasChildren = childMeta && childMeta.length > 0;
+              <>
+                {/* Top toolbar */}
+                <div className='bg-muted/60 flex items-center justify-between rounded-lg border px-4 py-2.5'>
+                  <div className='flex min-w-0 items-center gap-3'>
+                    <h2 className='truncate text-sm font-semibold'>
+                      Edit Template Values
+                    </h2>
+                    <span className='text-muted-foreground hidden text-xs sm:inline'>
+                      Update values for each template. Formula columns are
+                      auto-calculated.
+                    </span>
+                  </div>
+                  <div className='bg-background flex items-center gap-1 rounded-lg border px-1 py-0.5 shadow-sm'>
+                    <CanvasToolbarButton
+                      onClick={handleZoomOut}
+                      disabled={zoom <= MIN_ZOOM}
+                      title='Zoom out (−)'
+                    >
+                      <ZoomOut className='h-4 w-4' />
+                    </CanvasToolbarButton>
+                    <span className='text-muted-foreground w-12 text-center font-mono text-xs tabular-nums select-none'>
+                      {zoomPercent}%
+                    </span>
+                    <CanvasToolbarButton
+                      onClick={handleZoomIn}
+                      disabled={zoom >= MAX_ZOOM}
+                      title='Zoom in (+)'
+                    >
+                      <ZoomIn className='h-4 w-4' />
+                    </CanvasToolbarButton>
+                    <div className='bg-border mx-0.5 h-4 w-px' />
+                    <CanvasToolbarButton
+                      onClick={handleResetView}
+                      title='Reset view (0)'
+                    >
+                      <Maximize2 className='h-3.5 w-3.5' />
+                    </CanvasToolbarButton>
+                  </div>
+                  <div className='w-20' />
+                </div>
 
-                  return (
-                    <div key={tmpl.id} className='space-y-4'>
-                      {hasChildren && (
-                        <Badge variant='outline' className='text-xs'>
-                          Parent Template
-                          <span className='text-muted-foreground ml-1.5'>
-                            — {childMeta.length} child
-                            {childMeta.length !== 1 ? 'ren' : ''} from reference
-                          </span>
-                        </Badge>
-                      )}
+                <div
+                  ref={toolbarPortalRef}
+                  className='bg-muted/40 rounded-lg border px-4 py-2.5'
+                />
 
-                      {/* Parent */}
-                      <OrderTemplateValues
-                        template={tmpl}
-                        values={templateValues[tmpl.id] || {}}
-                        onChange={(vals) =>
-                          handleTemplateValuesChange(tmpl.id, vals)
-                        }
-                        errors={cellErrors[tmpl.id] || {}}
-                        disabled={isSubmitting}
-                        extraValues={extraValues[tmpl.id] || {}}
-                        onExtraValuesChange={(vals) =>
-                          handleExtraValuesChange(tmpl.id, vals)
-                        }
-                        extraErrors={extraFieldErrors[tmpl.id] || {}}
-                        discountType={
-                          templateDiscounts[tmpl.id]?.discountType || 'PERCENT'
-                        }
-                        discountValue={
-                          templateDiscounts[tmpl.id]?.discountValue || '0'
-                        }
-                        onDiscountChange={(type, value) =>
-                          handleDiscountChange(tmpl.id, type, value)
-                        }
-                        apiBlocks={tmpl.blocks || []}
-                        blockValues={templateBlockValues[tmpl.id] || {}}
-                        onBlockValuesChange={(vals) =>
-                          handleBlockValuesChange(tmpl.id, vals)
-                        }
+                <div
+                  className='bg-muted/30 relative isolate overflow-hidden rounded-xl border'
+                  style={{
+                    height: '70vh',
+                    minHeight: '400px',
+                    maxHeight: '80vh'
+                  }}
+                >
+                  <div
+                    ref={containerRef}
+                    tabIndex={0}
+                    className={cn(
+                      'absolute inset-0 overflow-auto outline-none',
+                      isTemplateDragging
+                        ? 'cursor-default'
+                        : isDragging
+                          ? 'cursor-grabbing'
+                          : 'cursor-grab'
+                    )}
+                    onFocus={() => setIsCanvasFocused(true)}
+                    onBlur={() => setIsCanvasFocused(false)}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                    onWheel={handleWheel}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                    onDoubleClick={handleDoubleClick}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <div
+                      className='origin-top-left p-6'
+                      style={{ zoom: zoom } as React.CSSProperties}
+                    >
+                      <TemplateLayoutCanvas
+                        items={templateLayoutItems}
+                        persistKey={`create-${selectedProductId || 'new'}`}
+                        zoom={zoom}
+                        onTemplateDragStart={() => setIsTemplateDragging(true)}
+                        onTemplateDragEnd={() => setIsTemplateDragging(false)}
+                        toolbarPortalTarget={toolbarPortalRef}
                       />
-
-                      {/* Children */}
-                      {hasChildren &&
-                        childMeta.map((_, idx) => {
-                          const childKey = getChildKey(tmpl.id, idx);
-                          return (
-                            <div key={childKey} className='space-y-2'>
-                              <Badge variant='secondary' className='text-xs'>
-                                Child #{idx + 1}
-                              </Badge>
-                              <OrderTemplateValues
-                                template={tmpl}
-                                values={childTemplateValues[childKey] || {}}
-                                onChange={(vals) =>
-                                  handleChildValuesChange(childKey, vals)
-                                }
-                                errors={childCellErrors[childKey] || {}}
-                                disabled={isSubmitting}
-                                extraValues={childExtraValues[childKey] || {}}
-                                onExtraValuesChange={(vals) =>
-                                  handleChildExtraValuesChange(childKey, vals)
-                                }
-                                extraErrors={
-                                  childExtraFieldErrors[childKey] || {}
-                                }
-                                discountType={
-                                  childDiscounts[childKey]?.discountType ||
-                                  'PERCENT'
-                                }
-                                discountValue={
-                                  childDiscounts[childKey]?.discountValue || '0'
-                                }
-                                onDiscountChange={(type, value) =>
-                                  handleChildDiscountChange(
-                                    childKey,
-                                    type,
-                                    value
-                                  )
-                                }
-                                apiBlocks={tmpl.blocks || []}
-                                blockValues={childBlockValues[childKey] || {}}
-                                onBlockValuesChange={(vals) =>
-                                  handleChildBlockValuesChange(childKey, vals)
-                                }
-                              />
-                            </div>
-                          );
-                        })}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                </div>
+
+                <div className='bg-muted/40 flex items-center justify-center rounded-lg border px-4 py-2'>
+                  <p className='text-muted-foreground text-[11px] select-none'>
+                    Scroll or drag to pan · Drag handle to reposition templates
+                    · Double-click to toggle zoom · Pinch to zoom on touch ·{' '}
+                    <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
+                      Ctrl
+                    </kbd>
+                    {' + Scroll to zoom · '}
+                    <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
+                      +
+                    </kbd>{' '}
+                    <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
+                      −
+                    </kbd>{' '}
+                    <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
+                      0
+                    </kbd>{' '}
+                    for zoom controls
+                  </p>
+                </div>
+              </>
             )}
           </>
         )}
