@@ -123,7 +123,7 @@ const blockColors = [
 // =============================================================================
 
 function evaluateFormula(
-  formulaString: string | null,
+  formulaString: string | null | undefined,
   columns: TemplateColumn[],
   rowValues: Record<string, string>,
   _visited?: Set<string>
@@ -371,6 +371,141 @@ export default function OrderTemplateValues({
       return values[rowId] || {};
     },
     [values]
+  );
+
+  /** Evaluate FORMULA columns for every non-TOTAL row across ALL blocks */
+  const computedFormulaValues = useMemo(() => {
+    const result: Record<string, Record<string, string>> = {};
+    const nonTotalRows = rows.filter((r) => r.rowType !== 'TOTAL');
+
+    nonTotalRows.forEach((row) => {
+      const rowVals = values[row.id] || {};
+      const computed: Record<string, string> = {};
+
+      columns.forEach((col) => {
+        if (col.dataType === 'FORMULA') {
+          const evalResult = evaluateFormula(col.formula, columns, rowVals);
+          computed[col.id] = evalResult;
+        }
+      });
+
+      if (Object.keys(computed).length > 0) {
+        result[row.id] = computed;
+      }
+    });
+
+    return result;
+  }, [rows, columns, values]);
+
+  /** Compute TOTAL row values by aggregating non-TOTAL rows (all blocks) */
+  const computedTotalValues = useMemo(() => {
+    const totalRows = rows.filter((r) => r.rowType === 'TOTAL');
+    if (totalRows.length === 0) return {};
+
+    const nonTotalRows = rows.filter((r) => r.rowType !== 'TOTAL');
+    const result: Record<string, Record<string, string>> = {};
+
+    totalRows.forEach((totalRow) => {
+      const computed: Record<string, string> = {};
+
+      // Pass 1: Sum NUMBER and TEXT columns across all non-TOTAL rows
+      columns.forEach((col) => {
+        if (col.dataType === 'NUMBER' || col.dataType === 'TEXT') {
+          let sum = 0;
+          nonTotalRows.forEach((r) => {
+            const val = values[r.id]?.[col.id];
+            if (val) {
+              const num = parseFloat(val);
+              if (!isNaN(num)) sum += num;
+            }
+          });
+          computed[col.id] = sum.toFixed(2);
+        }
+      });
+
+      // Pass 2: Sum FORMULA columns via per-row evaluation
+      columns.forEach((col) => {
+        if (col.dataType === 'FORMULA') {
+          const formula = col.formula;
+          if (!formula) {
+            computed[col.id] = '0';
+            return;
+          }
+          let sum = 0;
+          nonTotalRows.forEach((r) => {
+            // Prefer pre-computed value to avoid re-evaluating
+            const preComputed = computedFormulaValues[r.id]?.[col.id];
+            if (preComputed != null && preComputed !== '—') {
+              const num = parseFloat(preComputed);
+              if (!isNaN(num)) sum += num;
+            } else {
+              const rowVals = values[r.id] || {};
+              const evalResult = evaluateFormula(formula, columns, rowVals);
+              if (evalResult !== '—') {
+                const num = parseFloat(evalResult);
+                if (!isNaN(num)) sum += num;
+              }
+            }
+          });
+          computed[col.id] = sum.toFixed(2);
+        }
+      });
+
+      result[totalRow.id] = computed;
+    });
+
+    return result;
+  }, [rows, columns, values, computedFormulaValues]);
+
+  /**
+   * Unified helper: get the display value for any cell.
+   *
+   * Works for:
+   *  - FORMULA columns in non-TOTAL rows (per-row evaluation)
+   *  - FORMULA columns in TOTAL rows (aggregated sum)
+   *  - NUMBER / TEXT columns in TOTAL rows (aggregated sum)
+   *  - Cross-block formula references (all columns included)
+   */
+  const getComputedCellValue = useCallback(
+    (
+      row: TemplateRow,
+      column: TemplateColumn,
+      rowValues: Record<string, string>
+    ): string => {
+      const isTotal = row.rowType === 'TOTAL';
+
+      if (column.dataType === 'FORMULA') {
+        if (isTotal) {
+          // Primary: use aggregated sum from computedTotalValues
+          const totalVal = computedTotalValues[row.id]?.[column.id];
+          if (totalVal != null) return totalVal;
+          // Fallback: evaluate formula using the aggregated total row values
+          // (includes both NUMBER sums and FORMULA sums so cross-column
+          //  dependencies within the TOTAL row resolve correctly)
+          const totalRowEffective: Record<string, string> = {
+            ...rowValues,
+            ...(computedTotalValues[row.id] || {})
+          };
+          return evaluateFormula(column.formula, columns, totalRowEffective);
+        }
+        // Non-TOTAL: use pre-computed formula value or evaluate fresh
+        const preComputed = computedFormulaValues[row.id]?.[column.id];
+        if (preComputed != null) return preComputed;
+        return evaluateFormula(column.formula, columns, rowValues);
+      }
+
+      if (column.dataType === 'NUMBER' || column.dataType === 'TEXT') {
+        if (isTotal) {
+          const totalVal = computedTotalValues[row.id]?.[column.id];
+          if (totalVal != null) return totalVal;
+          return rowValues[column.id] || '';
+        }
+        return rowValues[column.id] || '';
+      }
+
+      return rowValues[column.id] || '';
+    },
+    [columns, computedTotalValues, computedFormulaValues]
   );
 
   const getErrorKey = (rowId: string, columnId: string) =>
@@ -691,12 +826,14 @@ export default function OrderTemplateValues({
                       const cellKey = getErrorKey(row.id, column.id);
                       const cellError = errors[cellKey];
 
+                      // ── FORMULA column (any row, any block) ──
                       if (column.dataType === 'FORMULA') {
-                        const calculatedValue = evaluateFormula(
-                          column.formula,
-                          columns,
+                        const calculatedValue = getComputedCellValue(
+                          row,
+                          column,
                           rowValues
                         );
+
                         return (
                           <TableCell
                             key={column.id}
@@ -709,20 +846,27 @@ export default function OrderTemplateValues({
                                   {calculatedValue}
                                 </span>
                               </div>
-                              <span className='text-muted-foreground text-[10px] italic'>
-                                {getFormulaText(column)}
-                              </span>
+                              {!isTotal && (
+                                <span className='text-muted-foreground text-[10px] italic'>
+                                  {getFormulaText(column)}
+                                </span>
+                              )}
                             </div>
                           </TableCell>
                         );
                       }
 
-                      // TOTAL rows: display value only (no input)
+                      // ── TOTAL row: NUMBER / TEXT — display computed sum ──
                       if (isTotal) {
+                        const computedVal = getComputedCellValue(
+                          row,
+                          column,
+                          rowValues
+                        );
                         const displayValue =
                           column.dataType === 'NUMBER'
-                            ? formatAmount(getValue(row.id, column.id))
-                            : getValue(row.id, column.id) || '—';
+                            ? formatAmount(computedVal || '')
+                            : computedVal || '—';
                         return (
                           <TableCell
                             key={column.id}
@@ -735,6 +879,7 @@ export default function OrderTemplateValues({
                         );
                       }
 
+                      // ── Regular editable cell ──
                       return (
                         <TableCell key={column.id}>
                           <div className='space-y-1'>

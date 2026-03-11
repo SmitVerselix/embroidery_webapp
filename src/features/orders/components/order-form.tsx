@@ -555,7 +555,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           const valuesMap: TemplateValuesMap = {};
           (tmplData.values || []).forEach((v) => {
             if (!valuesMap[v.rowId]) valuesMap[v.rowId] = {};
-            valuesMap[v.rowId][v.columnId] = v.value ?? v.calculatedValue ?? '';
+            valuesMap[v.rowId][v.columnId] = v.calculatedValue ?? v.value ?? '';
           });
           loadedValues[tid] = valuesMap;
 
@@ -589,7 +589,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               (child.values || []).forEach((v) => {
                 if (!childValMap[v.rowId]) childValMap[v.rowId] = {};
                 childValMap[v.rowId][v.columnId] =
-                  v.value ?? v.calculatedValue ?? '';
+                  v.calculatedValue ?? v.value ?? '';
               });
               loadedChildValues[childKey] = childValMap;
 

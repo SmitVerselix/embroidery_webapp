@@ -279,7 +279,7 @@ export default function OrderEditForm({
           if (!valuesMap[v.rowId]) {
             valuesMap[v.rowId] = {};
           }
-          let raw = v.value ?? v.calculatedValue ?? '';
+          let raw = v.calculatedValue ?? v.value ?? '';
           if (colTypeMap[v.columnId] === 'NUMBER' && raw !== '') {
             const num = parseFloat(raw);
             if (!isNaN(num)) {
