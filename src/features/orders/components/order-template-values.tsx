@@ -58,10 +58,7 @@ import { Label } from '@/components/ui/label';
 // =============================================================================
 
 export type TemplateValuesMap = Record<string, Record<string, string>>;
-// TemplateValuesMap[rowId][columnId] = value
-
 export type BlockValuesMap = Record<number, string>;
-// BlockValuesMap[blockIndex] = templateBlockId
 
 type TemplateBlock = {
   index: number;
@@ -75,16 +72,13 @@ export interface OrderTemplateValuesProps {
   errors?: Record<string, string>;
   disabled?: boolean;
   readOnly?: boolean;
-  // Extra values support
   extraValues?: ExtraValuesMap;
   onExtraValuesChange?: (values: ExtraValuesMap) => void;
   extraErrors?: Record<string, string>;
   summary?: any;
-  // Discount support
   discountType?: DiscountType;
   discountValue?: string;
   onDiscountChange?: (type: DiscountType, value: string) => void;
-  // Block selection support
   apiBlocks?: TemplateBlockApi[];
   blockValues?: BlockValuesMap;
   onBlockValuesChange?: (values: BlockValuesMap) => void;
@@ -94,21 +88,15 @@ export interface OrderTemplateValuesProps {
 // BLOCK HELPERS
 // =============================================================================
 
-/** Derive blocks from columns' blockIndex values */
 function deriveBlocks(columns: TemplateColumn[]): TemplateBlock[] {
   const indices = new Set<number>();
   columns.forEach((col) => indices.add(col.blockIndex));
-
-  if (indices.size === 0) {
-    indices.add(0);
-  }
-
+  if (indices.size === 0) indices.add(0);
   return Array.from(indices)
     .sort((a, b) => a - b)
     .map((index) => ({ index, label: `Block ${index}` }));
 }
 
-// Block header colors (cycle through a set of colors)
 const blockColors = [
   'bg-blue-100 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 border-blue-300 dark:border-blue-800',
   'bg-green-100 dark:bg-green-950/40 text-green-800 dark:text-green-200 border-green-300 dark:border-green-800',
@@ -119,9 +107,71 @@ const blockColors = [
 ];
 
 // =============================================================================
-// FORMULA EVALUATOR (basic client-side for preview)
+// FORMULA HELPERS
 // =============================================================================
 
+/**
+ * Recursively collect the IDs of all NUMBER/TEXT (user-input) columns that a
+ * formula depends on — follows FORMULA-references-FORMULA chains.
+ */
+function getReferencedInputColumnIds(
+  formula: string | null | undefined,
+  columns: TemplateColumn[],
+  _visited = new Set<string>()
+): string[] {
+  if (!formula) return [];
+  const parsed = parseFormula(formula);
+  if (!parsed) return [];
+
+  const keyToCol: Record<string, TemplateColumn> = {};
+  columns.forEach((col) => {
+    keyToCol[col.key] = col;
+  });
+
+  const ids: string[] = [];
+
+  parsed.steps.forEach((step: any) => {
+    if (step.type === 'constant') return;
+    const col = keyToCol[step.columnKey];
+    if (!col) return;
+
+    if (col.dataType === 'NUMBER' || col.dataType === 'TEXT') {
+      if (!ids.includes(col.id)) ids.push(col.id);
+    } else if (
+      col.dataType === 'FORMULA' &&
+      col.formula &&
+      !_visited.has(col.key)
+    ) {
+      _visited.add(col.key);
+      getReferencedInputColumnIds(col.formula, columns, _visited).forEach(
+        (id) => {
+          if (!ids.includes(id)) ids.push(id);
+        }
+      );
+    }
+  });
+
+  return ids;
+}
+
+/**
+ * Returns true only when every NUMBER/TEXT column that this formula depends
+ * on (directly or via nested FORMULA references) has a non-empty value.
+ */
+function areFormulaInputsComplete(
+  formula: string | null | undefined,
+  columns: TemplateColumn[],
+  rowValues: Record<string, string>
+): boolean {
+  const refIds = getReferencedInputColumnIds(formula, columns);
+  if (refIds.length === 0) return false;
+  return refIds.every((id) => {
+    const val = rowValues[id];
+    return val !== undefined && val !== null && val.trim() !== '';
+  });
+}
+
+/** Evaluate a formula expression. Assumes caller has already validated completeness. */
 function evaluateFormula(
   formulaString: string | null | undefined,
   columns: TemplateColumn[],
@@ -129,7 +179,6 @@ function evaluateFormula(
   _visited?: Set<string>
 ): string {
   if (!formulaString) return '—';
-
   const parsed = parseFormula(formulaString);
   if (!parsed || parsed.steps.length === 0) return '—';
 
@@ -138,42 +187,29 @@ function evaluateFormula(
   const keyToValue: Record<string, number> = {};
   columns.forEach((col) => {
     if (col.dataType === 'NUMBER') {
-      const val = rowValues[col.id];
-      keyToValue[col.key] = val ? parseFloat(val) || 0 : 0;
+      keyToValue[col.key] = parseFloat(rowValues[col.id] || '') || 0;
     } else if (col.dataType === 'FORMULA') {
       if (!visited.has(col.key) && col.formula) {
         visited.add(col.key);
-        const evalResult = evaluateFormula(
-          col.formula,
-          columns,
-          rowValues,
-          visited
-        );
-        keyToValue[col.key] =
-          evalResult !== '—' ? parseFloat(evalResult) || 0 : 0;
+        const r = evaluateFormula(col.formula, columns, rowValues, visited);
+        keyToValue[col.key] = r !== '—' ? parseFloat(r) || 0 : 0;
       } else {
         keyToValue[col.key] = 0;
       }
     } else if (col.dataType === 'TEXT') {
-      const val = rowValues[col.id];
-      keyToValue[col.key] = val ? parseFloat(val) || 0 : 0;
+      keyToValue[col.key] = parseFloat(rowValues[col.id] || '') || 0;
     }
   });
 
-  const getStepValue = (step: any): number => {
-    if (step.type === 'constant') {
-      return step.value ?? 0;
-    }
-    return keyToValue[step.columnKey] ?? 0;
-  };
+  const stepVal = (step: any): number =>
+    step.type === 'constant'
+      ? (step.value ?? 0)
+      : (keyToValue[step.columnKey] ?? 0);
 
-  let result = getStepValue(parsed.steps[0]);
-
+  let result = stepVal(parsed.steps[0]);
   for (let i = 1; i < parsed.steps.length; i++) {
-    const op = parsed.operators[i - 1];
-    const val = getStepValue(parsed.steps[i]);
-
-    switch (op) {
+    const val = stepVal(parsed.steps[i]);
+    switch (parsed.operators[i - 1]) {
       case '+':
         result += val;
         break;
@@ -201,38 +237,38 @@ function evaluateFormula(
         const pct = (result * mod.value) / 100;
         switch (mod.operator) {
           case '+':
-            result = result + pct;
+            result += pct;
             break;
           case '-':
-            result = result - pct;
+            result -= pct;
             break;
           case '*':
-            result = result * pct;
+            result *= pct;
             break;
           case '/':
             result = pct !== 0 ? result / pct : 0;
             break;
           default:
-            result = result + pct;
+            result += pct;
         }
         break;
       }
       case 'fixed': {
         switch (mod.operator) {
           case '+':
-            result = result + mod.value;
+            result += mod.value;
             break;
           case '-':
-            result = result - mod.value;
+            result -= mod.value;
             break;
           case '*':
-            result = result * mod.value;
+            result *= mod.value;
             break;
           case '/':
             result = mod.value !== 0 ? result / mod.value : 0;
             break;
           default:
-            result = result + mod.value;
+            result += mod.value;
         }
         break;
       }
@@ -257,9 +293,15 @@ function evaluateFormula(
     }
   }
 
-  if (Number.isInteger(result)) return String(result);
-  return result.toFixed(2);
+  return Number.isInteger(result) ? String(result) : result.toFixed(2);
 }
+
+const formatAmount = (value: string | null | undefined): string => {
+  if (!value) return '0';
+  const num = parseFloat(value);
+  if (isNaN(num)) return '0';
+  return num === 0 ? '0' : num.toFixed(2);
+};
 
 // =============================================================================
 // COMPONENT
@@ -287,12 +329,10 @@ export default function OrderTemplateValues({
     () => [...(template.columns || [])].sort((a, b) => a.orderNo - b.orderNo),
     [template.columns]
   );
-
   const rows = useMemo(
     () => [...(template.rows || [])].sort((a, b) => a.orderNo - b.orderNo),
     [template.rows]
   );
-
   const extras = useMemo(
     () => [...(template.extra || [])].sort((a, b) => a.orderNo - b.orderNo),
     [template.extra]
@@ -311,16 +351,13 @@ export default function OrderTemplateValues({
     [extras]
   );
 
-  // ── Block grouping ──────────────────────────────────────────────────
   const blocks = useMemo(() => deriveBlocks(columns), [columns]);
 
   const orderedBlockColumns = useMemo(() => {
     const grouped: { block: TemplateBlock; columns: TemplateColumn[] }[] = [];
     blocks.forEach((block) => {
       const blockCols = columns.filter((col) => col.blockIndex === block.index);
-      if (blockCols.length > 0) {
-        grouped.push({ block, columns: blockCols });
-      }
+      if (blockCols.length > 0) grouped.push({ block, columns: blockCols });
     });
     return grouped;
   }, [blocks, columns]);
@@ -331,7 +368,6 @@ export default function OrderTemplateValues({
   );
 
   const hasMultipleBlocks = orderedBlockColumns.length > 1;
-
   const hasColumns = columns.length > 0;
   const hasRows = rows.length > 0;
   const hasData = hasColumns && hasRows;
@@ -340,19 +376,150 @@ export default function OrderTemplateValues({
   const hasMediaExtras = mediaExtras.length > 0;
   const hasAnyExtras = hasHeaderExtras || hasFooterExtras || hasMediaExtras;
   const hasApiBlocks = apiBlocks.length > 0;
-
   const hasSummary =
     summary && typeof summary === 'object' && Object.keys(summary).length > 0;
 
+  const nonTotalRows = useMemo(
+    () => rows.filter((r) => r.rowType !== 'TOTAL'),
+    [rows]
+  );
+
   // ──────────────────────────────────────────────────────────────────────
-  // HANDLERS
+  // EDIT-MODE: per-row FORMULA results
+  //
+  // A FORMULA cell shows '—' until every NUMBER/TEXT column that the formula
+  // depends on (across all blocks) has a non-empty value.
   // ──────────────────────────────────────────────────────────────────────
+  const computedFormulaValues = useMemo(() => {
+    if (readOnly) return {};
+
+    const result: Record<string, Record<string, string>> = {};
+    nonTotalRows.forEach((row) => {
+      const rowVals = values[row.id] || {};
+      const computed: Record<string, string> = {};
+
+      columns.forEach((col) => {
+        if (col.dataType !== 'FORMULA') return;
+        const complete = areFormulaInputsComplete(
+          col.formula,
+          columns,
+          rowVals
+        );
+        computed[col.id] = complete
+          ? evaluateFormula(col.formula, columns, rowVals)
+          : '—';
+      });
+
+      if (Object.keys(computed).length > 0) result[row.id] = computed;
+    });
+
+    return result;
+  }, [readOnly, nonTotalRows, columns, values]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // EDIT-MODE: TOTAL row FORMULA results
+  //
+  // Only FORMULA columns are computed here.
+  // NUMBER/TEXT columns in the TOTAL row always come from the API values map
+  // (they are never client-side summed).
+  //
+  // A TOTAL formula shows '—' when no non-TOTAL row has produced a real
+  // per-row formula result yet.
+  // ──────────────────────────────────────────────────────────────────────
+  const computedTotalFormulaValues = useMemo(() => {
+    if (readOnly) return {};
+
+    const totalRows = rows.filter((r) => r.rowType === 'TOTAL');
+    if (totalRows.length === 0) return {};
+
+    const result: Record<string, Record<string, string>> = {};
+
+    totalRows.forEach((totalRow) => {
+      const computed: Record<string, string> = {};
+
+      columns.forEach((col) => {
+        if (col.dataType !== 'FORMULA') return;
+
+        let sum = 0;
+        let anyComplete = false;
+
+        nonTotalRows.forEach((r) => {
+          const perRowVal = computedFormulaValues[r.id]?.[col.id];
+          if (perRowVal != null && perRowVal !== '—') {
+            const num = parseFloat(perRowVal);
+            if (!isNaN(num)) {
+              sum += num;
+              anyComplete = true;
+            }
+          }
+        });
+
+        computed[col.id] = anyComplete ? sum.toFixed(2) : '—';
+      });
+
+      result[totalRow.id] = computed;
+    });
+
+    return result;
+  }, [readOnly, rows, nonTotalRows, columns, computedFormulaValues]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // CELL VALUE RESOLVERS
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** Edit-mode: return the live-calculated formula value for a cell. */
+  const getEditModeFormulaValue = useCallback(
+    (row: TemplateRow, column: TemplateColumn): string => {
+      if (row.rowType === 'TOTAL') {
+        return computedTotalFormulaValues[row.id]?.[column.id] ?? '—';
+      }
+      return computedFormulaValues[row.id]?.[column.id] ?? '—';
+    },
+    [computedFormulaValues, computedTotalFormulaValues]
+  );
+
+  /**
+   * ReadOnly: return the server's calculatedValue stored in the values map.
+   * For TOTAL rows where the API didn't return a stored value, fall back to
+   * summing the non-TOTAL calculatedValues.
+   */
+  const getReadOnlyFormulaValue = useCallback(
+    (row: TemplateRow, column: TemplateColumn): string => {
+      const stored = values[row.id]?.[column.id];
+
+      if (row.rowType !== 'TOTAL') {
+        return stored && stored !== '' ? formatAmount(stored) : '—';
+      }
+
+      // TOTAL row: prefer what the API returned
+      if (stored && stored !== '') return formatAmount(stored);
+
+      // Fallback: sum non-TOTAL stored calculatedValues
+      let sum = 0;
+      let any = false;
+      nonTotalRows.forEach((r) => {
+        const v = values[r.id]?.[column.id];
+        if (v && v !== '—' && v !== '') {
+          const num = parseFloat(v);
+          if (!isNaN(num)) {
+            sum += num;
+            any = true;
+          }
+        }
+      });
+      return any ? sum.toFixed(2) : '—';
+    },
+    [values, nonTotalRows]
+  );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // OTHER HANDLERS
+  // ──────────────────────────────────────────────────────────────────────
+
   const handleValueChange = useCallback(
     (rowId: string, columnId: string, value: string) => {
       const newValues = { ...values };
-      if (!newValues[rowId]) {
-        newValues[rowId] = {};
-      }
+      if (!newValues[rowId]) newValues[rowId] = {};
       newValues[rowId] = { ...newValues[rowId], [columnId]: value };
       onChange(newValues);
     },
@@ -360,152 +527,9 @@ export default function OrderTemplateValues({
   );
 
   const getValue = useCallback(
-    (rowId: string, columnId: string): string => {
-      return values[rowId]?.[columnId] || '';
-    },
+    (rowId: string, columnId: string): string =>
+      values[rowId]?.[columnId] || '',
     [values]
-  );
-
-  const getRowValues = useCallback(
-    (rowId: string): Record<string, string> => {
-      return values[rowId] || {};
-    },
-    [values]
-  );
-
-  /** Evaluate FORMULA columns for every non-TOTAL row across ALL blocks */
-  const computedFormulaValues = useMemo(() => {
-    const result: Record<string, Record<string, string>> = {};
-    const nonTotalRows = rows.filter((r) => r.rowType !== 'TOTAL');
-
-    nonTotalRows.forEach((row) => {
-      const rowVals = values[row.id] || {};
-      const computed: Record<string, string> = {};
-
-      columns.forEach((col) => {
-        if (col.dataType === 'FORMULA') {
-          const evalResult = evaluateFormula(col.formula, columns, rowVals);
-          computed[col.id] = evalResult;
-        }
-      });
-
-      if (Object.keys(computed).length > 0) {
-        result[row.id] = computed;
-      }
-    });
-
-    return result;
-  }, [rows, columns, values]);
-
-  /** Compute TOTAL row values by aggregating non-TOTAL rows (all blocks) */
-  const computedTotalValues = useMemo(() => {
-    const totalRows = rows.filter((r) => r.rowType === 'TOTAL');
-    if (totalRows.length === 0) return {};
-
-    const nonTotalRows = rows.filter((r) => r.rowType !== 'TOTAL');
-    const result: Record<string, Record<string, string>> = {};
-
-    totalRows.forEach((totalRow) => {
-      const computed: Record<string, string> = {};
-
-      // Pass 1: Sum NUMBER and TEXT columns across all non-TOTAL rows
-      columns.forEach((col) => {
-        if (col.dataType === 'NUMBER' || col.dataType === 'TEXT') {
-          let sum = 0;
-          nonTotalRows.forEach((r) => {
-            const val = values[r.id]?.[col.id];
-            if (val) {
-              const num = parseFloat(val);
-              if (!isNaN(num)) sum += num;
-            }
-          });
-          computed[col.id] = sum.toFixed(2);
-        }
-      });
-
-      // Pass 2: Sum FORMULA columns via per-row evaluation
-      columns.forEach((col) => {
-        if (col.dataType === 'FORMULA') {
-          const formula = col.formula;
-          if (!formula) {
-            computed[col.id] = '0';
-            return;
-          }
-          let sum = 0;
-          nonTotalRows.forEach((r) => {
-            // Prefer pre-computed value to avoid re-evaluating
-            const preComputed = computedFormulaValues[r.id]?.[col.id];
-            if (preComputed != null && preComputed !== '—') {
-              const num = parseFloat(preComputed);
-              if (!isNaN(num)) sum += num;
-            } else {
-              const rowVals = values[r.id] || {};
-              const evalResult = evaluateFormula(formula, columns, rowVals);
-              if (evalResult !== '—') {
-                const num = parseFloat(evalResult);
-                if (!isNaN(num)) sum += num;
-              }
-            }
-          });
-          computed[col.id] = sum.toFixed(2);
-        }
-      });
-
-      result[totalRow.id] = computed;
-    });
-
-    return result;
-  }, [rows, columns, values, computedFormulaValues]);
-
-  /**
-   * Unified helper: get the display value for any cell.
-   *
-   * Works for:
-   *  - FORMULA columns in non-TOTAL rows (per-row evaluation)
-   *  - FORMULA columns in TOTAL rows (aggregated sum)
-   *  - NUMBER / TEXT columns in TOTAL rows (aggregated sum)
-   *  - Cross-block formula references (all columns included)
-   */
-  const getComputedCellValue = useCallback(
-    (
-      row: TemplateRow,
-      column: TemplateColumn,
-      rowValues: Record<string, string>
-    ): string => {
-      const isTotal = row.rowType === 'TOTAL';
-
-      if (column.dataType === 'FORMULA') {
-        if (isTotal) {
-          // Primary: use aggregated sum from computedTotalValues
-          const totalVal = computedTotalValues[row.id]?.[column.id];
-          if (totalVal != null) return totalVal;
-          // Fallback: evaluate formula using the aggregated total row values
-          // (includes both NUMBER sums and FORMULA sums so cross-column
-          //  dependencies within the TOTAL row resolve correctly)
-          const totalRowEffective: Record<string, string> = {
-            ...rowValues,
-            ...(computedTotalValues[row.id] || {})
-          };
-          return evaluateFormula(column.formula, columns, totalRowEffective);
-        }
-        // Non-TOTAL: use pre-computed formula value or evaluate fresh
-        const preComputed = computedFormulaValues[row.id]?.[column.id];
-        if (preComputed != null) return preComputed;
-        return evaluateFormula(column.formula, columns, rowValues);
-      }
-
-      if (column.dataType === 'NUMBER' || column.dataType === 'TEXT') {
-        if (isTotal) {
-          const totalVal = computedTotalValues[row.id]?.[column.id];
-          if (totalVal != null) return totalVal;
-          return rowValues[column.id] || '';
-        }
-        return rowValues[column.id] || '';
-      }
-
-      return rowValues[column.id] || '';
-    },
-    [columns, computedTotalValues, computedFormulaValues]
   );
 
   const getErrorKey = (rowId: string, columnId: string) =>
@@ -528,26 +552,13 @@ export default function OrderTemplateValues({
     [onExtraValuesChange]
   );
 
-  const formatAmount = (value: string | null | undefined): string => {
-    if (!value) return '0';
-    const num = parseFloat(value);
-    if (isNaN(num)) return '0';
-    if (num === 0) return '0';
-    return num.toFixed(2);
-  };
-
-  // ── BLOCK VALUE HANDLER ──────────────────────────────────────────────
   const handleBlockValueChange = useCallback(
     (blockIndex: number, templateBlockId: string) => {
-      const newBlockValues = { ...blockValues, [blockIndex]: templateBlockId };
-      onBlockValuesChange?.(newBlockValues);
+      onBlockValuesChange?.({ ...blockValues, [blockIndex]: templateBlockId });
     },
     [blockValues, onBlockValuesChange]
   );
 
-  // ──────────────────────────────────────────────────────────────────────
-  // DISCOUNT HANDLERS
-  // ──────────────────────────────────────────────────────────────────────
   const handleDiscountTypeChange = useCallback(
     (type: string) => {
       onDiscountChange?.(type as DiscountType, discountValue || '0');
@@ -566,9 +577,7 @@ export default function OrderTemplateValues({
   // RENDER: Discount Controls
   // ──────────────────────────────────────────────────────────────────────
   const renderDiscountControls = () => {
-    if (!onDiscountChange && !readOnly) return null;
-    if (readOnly) return null;
-
+    if (!onDiscountChange || readOnly) return null;
     return (
       <div className='rounded-lg border bg-slate-50/50 p-4 dark:bg-slate-950/20'>
         <h4 className='mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300'>
@@ -630,7 +639,7 @@ export default function OrderTemplateValues({
   };
 
   // ──────────────────────────────────────────────────────────────────────
-  // RENDER: Main Value Entry Table
+  // RENDER: Value Table
   // ──────────────────────────────────────────────────────────────────────
   const renderValueTable = () => {
     if (!hasData) {
@@ -648,7 +657,7 @@ export default function OrderTemplateValues({
 
     return (
       <div className='min-w-0 flex-1 overflow-hidden rounded-lg border'>
-        {/* Single-block dropdown */}
+        {/* Single-block selector */}
         {!hasMultipleBlocks && hasApiBlocks && !readOnly && (
           <div className='flex items-center gap-3 border-b px-4 py-2.5'>
             <Layers className='text-muted-foreground h-4 w-4' />
@@ -691,28 +700,25 @@ export default function OrderTemplateValues({
               </Badge>
             </div>
           )}
+
         <div className='overflow-x-auto'>
           <Table>
             <TableHeader>
-              {/* ── Row 1: Block Group Headers (only if multiple blocks) ── */}
+              {/* Block group headers */}
               {hasMultipleBlocks && hasColumns && (
                 <TableRow className='bg-muted/30 border-b-2'>
-                  {/* Row label spacer */}
                   <TableHead
                     className='bg-muted/30 sticky left-0 z-10 min-w-[140px] border-r font-semibold'
                     rowSpan={2}
                   >
                     Row / Item
                   </TableHead>
-
-                  {/* Block group headers with colspan */}
                   {orderedBlockColumns.map((group, idx) => {
                     const selectedBlockId =
                       blockValues[group.block.index] || '';
                     const selectedBlock = apiBlocks.find(
                       (b) => b.id === selectedBlockId
                     );
-
                     return (
                       <TableHead
                         key={group.block.index}
@@ -764,9 +770,8 @@ export default function OrderTemplateValues({
                 </TableRow>
               )}
 
-              {/* ── Row 2: Individual Column Headers ── */}
+              {/* Column headers */}
               <TableRow className='bg-muted/50'>
-                {/* Row label (only if single block) */}
                 {!hasMultipleBlocks && (
                   <TableHead className='bg-muted/50 sticky left-0 z-10 min-w-[140px] font-semibold'>
                     Row / Item
@@ -801,16 +806,17 @@ export default function OrderTemplateValues({
                 ))}
               </TableRow>
             </TableHeader>
+
             <TableBody>
               {rows.map((row) => {
                 const isTotal = row.rowType === 'TOTAL';
-                const rowValues = getRowValues(row.id);
 
                 return (
                   <TableRow
                     key={row.id}
                     className={cn(isTotal && 'bg-muted font-semibold')}
                   >
+                    {/* Row label */}
                     <TableCell className='bg-background sticky left-0 z-10 font-medium'>
                       <div className='flex items-center gap-2'>
                         <span>{row.label}</span>
@@ -826,13 +832,21 @@ export default function OrderTemplateValues({
                       const cellKey = getErrorKey(row.id, column.id);
                       const cellError = errors[cellKey];
 
-                      // ── FORMULA column (any row, any block) ──
+                      // ── FORMULA column ──────────────────────────────────────
+                      //
+                      // readOnly  → server's calculatedValue from API values map.
+                      //             TOTAL rows use stored value or sum fallback.
+                      //
+                      // edit mode → live client-side result, gated by input
+                      //             completeness (shows '—' until all referenced
+                      //             NUMBER/TEXT fields have values).
+                      //             Works across all blocks since keyToValue is
+                      //             built from the full columns array.
+                      // ────────────────────────────────────────────────────────
                       if (column.dataType === 'FORMULA') {
-                        const calculatedValue = getComputedCellValue(
-                          row,
-                          column,
-                          rowValues
-                        );
+                        const displayValue = readOnly
+                          ? getReadOnlyFormulaValue(row, column)
+                          : getEditModeFormulaValue(row, column);
 
                         return (
                           <TableCell
@@ -843,7 +857,7 @@ export default function OrderTemplateValues({
                               <div className='flex items-center gap-1.5'>
                                 <Calculator className='text-muted-foreground h-3 w-3' />
                                 <span className='font-mono text-sm font-medium'>
-                                  {calculatedValue}
+                                  {displayValue}
                                 </span>
                               </div>
                               {!isTotal && (
@@ -856,17 +870,17 @@ export default function OrderTemplateValues({
                         );
                       }
 
-                      // ── TOTAL row: NUMBER / TEXT — display computed sum ──
+                      // ── TOTAL row — NUMBER / TEXT ───────────────────────────
+                      //
+                      // Never compute client-side. Always show the value the API
+                      // returned (stored in the values map).
+                      // ────────────────────────────────────────────────────────
                       if (isTotal) {
-                        const computedVal = getComputedCellValue(
-                          row,
-                          column,
-                          rowValues
-                        );
+                        const apiVal = values[row.id]?.[column.id];
                         const displayValue =
                           column.dataType === 'NUMBER'
-                            ? formatAmount(computedVal || '')
-                            : computedVal || '—';
+                            ? formatAmount(apiVal || '')
+                            : apiVal || '—';
                         return (
                           <TableCell
                             key={column.id}
@@ -879,7 +893,7 @@ export default function OrderTemplateValues({
                         );
                       }
 
-                      // ── Regular editable cell ──
+                      // ── Regular editable / read-only cell ──────────────────
                       return (
                         <TableCell key={column.id}>
                           <div className='space-y-1'>
@@ -1032,7 +1046,6 @@ export default function OrderTemplateValues({
           </div>
         ) : (
           <div className='space-y-4'>
-            {/* Block Legend (only when multiple blocks) */}
             {hasMultipleBlocks && (
               <div className='flex flex-wrap items-center gap-2'>
                 {orderedBlockColumns.map((group, idx) => (
@@ -1057,7 +1070,6 @@ export default function OrderTemplateValues({
               </div>
             )}
 
-            {/* Header Extra Fields */}
             {hasHeaderExtras && (
               <OrderExtraValues
                 extras={extras}
@@ -1070,11 +1082,8 @@ export default function OrderTemplateValues({
               />
             )}
 
-            {/* Main Table + Media sidebar */}
             <div className='flex items-start gap-4'>
               {renderValueTable()}
-
-              {/* Media Extra Fields (sidebar) */}
               {hasMediaExtras && (
                 <div className='w-[220px] flex-shrink-0'>
                   <OrderExtraValues
@@ -1090,10 +1099,8 @@ export default function OrderTemplateValues({
               )}
             </div>
 
-            {/* Discount Controls */}
             {renderDiscountControls()}
 
-            {/* Footer Extra Fields */}
             {hasFooterExtras && (
               <OrderExtraValues
                 extras={extras}
