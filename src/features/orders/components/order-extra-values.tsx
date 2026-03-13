@@ -19,7 +19,9 @@ import {
   Upload,
   X,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ImageViewer from '@/components/ui/image-viewer';
@@ -29,18 +31,21 @@ import ImageViewer from '@/components/ui/image-viewer';
 // =============================================================================
 
 /**
- * Map of extraFieldId → { value, orderExtraValueId? }
- * orderExtraValueId is present for existing values (needed for update API)
- * For IMAGE/FILE types, value stores the uploaded file URL
+ * Single extra-value entry.
+ * For multi-value fields every entry carries its own orderIndex.
  */
-export type ExtraValuesMap = Record<
-  string,
-  {
-    value: string;
-    orderExtraValueId?: string;
-    orderIndex?: number;
-  }
->;
+export type ExtraValueItem = {
+  value: string;
+  orderExtraValueId?: string;
+  orderIndex: number;
+};
+
+/**
+ * Map of templateExtraFieldId → array of value entries.
+ * Single-value fields always have exactly one element.
+ * Multi-value fields (allowMultiple) can have 1 … N elements.
+ */
+export type ExtraValuesMap = Record<string, ExtraValueItem[]>;
 
 export interface OrderExtraValuesProps {
   extras: TemplateExtra[];
@@ -158,6 +163,12 @@ const isImageUrl = (url: string): boolean => {
   return /\.(png|jpe?g|gif|webp|svg|bmp)(\?|$)/.test(lower);
 };
 
+/** Return the next orderIndex to use for a new item in the given array. */
+function nextOrderIndex(items: ExtraValueItem[]): number {
+  if (items.length === 0) return 0;
+  return Math.max(...items.map((i) => i.orderIndex)) + 1;
+}
+
 // =============================================================================
 // COMPONENT
 // =============================================================================
@@ -179,94 +190,135 @@ export default function OrderExtraValues({
     [extras, sectionType]
   );
 
-  // Upload state per field
+  // Upload state per compound key (fieldId or fieldId__idx)
   const [uploadingFields, setUploadingFields] = useState<
     Record<string, boolean>
   >({});
   const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  // ── Text/Number/Date value change ──────────────────────────────────
-  const handleValueChange = useCallback(
-    (extraId: string, newValue: string) => {
-      const existing = values[extraId];
-      onChange({
-        ...values,
-        [extraId]: {
-          value: newValue,
-          orderExtraValueId: existing?.orderExtraValueId,
-          orderIndex: existing?.orderIndex ?? 0
-        }
-      });
+  // ── helpers to get / set items in the map ──────────────────────────
+  const getItems = useCallback(
+    (extraId: string): ExtraValueItem[] => values[extraId] ?? [],
+    [values]
+  );
+
+  const setItems = useCallback(
+    (extraId: string, items: ExtraValueItem[]) => {
+      onChange({ ...values, [extraId]: items });
     },
     [values, onChange]
+  );
+
+  // ── Add a blank entry ──────────────────────────────────────────────
+  const handleAddItem = useCallback(
+    (extraId: string) => {
+      const current = getItems(extraId);
+      const newItem: ExtraValueItem = {
+        value: '',
+        orderIndex: nextOrderIndex(current)
+      };
+      setItems(extraId, [...current, newItem]);
+    },
+    [getItems, setItems]
+  );
+
+  // ── Remove an entry by index-in-array ──────────────────────────────
+  const handleRemoveItem = useCallback(
+    (extraId: string, arrayIdx: number) => {
+      const current = getItems(extraId);
+      if (current.length <= 1) {
+        // Don't remove the last one — just clear its value
+        const updated = [{ ...current[0], value: '' }];
+        setItems(extraId, updated);
+        return;
+      }
+      setItems(
+        extraId,
+        current.filter((_, i) => i !== arrayIdx)
+      );
+    },
+    [getItems, setItems]
+  );
+
+  // ── Text/Number/Date value change (for a specific array slot) ──────
+  const handleValueChange = useCallback(
+    (extraId: string, arrayIdx: number, newValue: string) => {
+      const current = [...getItems(extraId)];
+      if (!current[arrayIdx]) {
+        current[arrayIdx] = { value: newValue, orderIndex: arrayIdx };
+      } else {
+        current[arrayIdx] = { ...current[arrayIdx], value: newValue };
+      }
+      setItems(extraId, current);
+    },
+    [getItems, setItems]
   );
 
   // ── File upload handler ────────────────────────────────────────────
   const handleFileUpload = useCallback(
-    async (extraId: string, file: File) => {
+    async (extraId: string, arrayIdx: number, file: File) => {
+      const uploadKey = `${extraId}__${arrayIdx}`;
       setUploadErrors((prev) => {
         const next = { ...prev };
-        delete next[extraId];
+        delete next[uploadKey];
         return next;
       });
-      setUploadingFields((prev) => ({ ...prev, [extraId]: true }));
+      setUploadingFields((prev) => ({ ...prev, [uploadKey]: true }));
 
       try {
         const result = await uploadSingleFile(file);
-
-        // Store the uploaded URL as the value
-        const existing = values[extraId];
-        onChange({
-          ...values,
-          [extraId]: {
+        const current = [...getItems(extraId)];
+        if (!current[arrayIdx]) {
+          current[arrayIdx] = {
             value: result.url,
-            orderExtraValueId: existing?.orderExtraValueId,
-            orderIndex: existing?.orderIndex ?? 0
-          }
-        });
+            orderIndex: arrayIdx
+          };
+        } else {
+          current[arrayIdx] = { ...current[arrayIdx], value: result.url };
+        }
+        setItems(extraId, current);
       } catch (err) {
         setUploadErrors((prev) => ({
           ...prev,
-          [extraId]: getError(err)
+          [uploadKey]: getError(err)
         }));
       } finally {
-        setUploadingFields((prev) => ({ ...prev, [extraId]: false }));
+        setUploadingFields((prev) => ({ ...prev, [uploadKey]: false }));
       }
     },
-    [values, onChange]
+    [getItems, setItems]
   );
 
   const handleFileInputChange = useCallback(
-    (extraId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+    (
+      extraId: string,
+      arrayIdx: number,
+      event: React.ChangeEvent<HTMLInputElement>
+    ) => {
       const file = event.target.files?.[0];
-      if (file) {
-        handleFileUpload(extraId, file);
-      }
+      if (file) handleFileUpload(extraId, arrayIdx, file);
       event.target.value = '';
     },
     [handleFileUpload]
   );
 
-  // ── Remove file ────────────────────────────────────────────────────
+  // ── Remove file (clear value) ─────────────────────────────────────
   const handleRemoveFile = useCallback(
-    (extraId: string) => {
-      const existing = values[extraId];
-      onChange({
-        ...values,
-        [extraId]: {
-          value: '',
-          orderExtraValueId: existing?.orderExtraValueId,
-          orderIndex: existing?.orderIndex ?? 0
-        }
-      });
+    (extraId: string, arrayIdx: number) => {
+      const current = [...getItems(extraId)];
+      if (current[arrayIdx]) {
+        current[arrayIdx] = { ...current[arrayIdx], value: '' };
+        setItems(extraId, current);
+      }
+      const uploadKey = `${extraId}__${arrayIdx}`;
       setUploadErrors((prev) => {
         const next = { ...prev };
-        delete next[extraId];
+        delete next[uploadKey];
         return next;
       });
     },
-    [values, onChange]
+    [getItems, setItems]
   );
 
   if (sortedExtras.length === 0) return null;
@@ -274,6 +326,233 @@ export default function OrderExtraValues({
   const config = getSectionConfig(sectionType);
   const SectionIcon = config.icon;
 
+  // ────────────────────────────────────────────────────────────────────
+  // RENDER SINGLE ITEM (for a given extra field + array index)
+  // ────────────────────────────────────────────────────────────────────
+  const renderSingleItem = (
+    extra: TemplateExtra,
+    item: ExtraValueItem,
+    arrayIdx: number,
+    allowMultiple: boolean,
+    totalItems: number
+  ) => {
+    const fieldValue = item.value || '';
+    const uploadKey = `${extra.id}__${arrayIdx}`;
+    const fieldError =
+      errors[uploadKey] || (arrayIdx === 0 ? errors[extra.id] : undefined);
+    const isFileType =
+      extra.valueType === 'IMAGE' || extra.valueType === 'FILE';
+    const isUploading = uploadingFields[uploadKey] || false;
+    const uploadError = uploadErrors[uploadKey];
+    const hasValue = !!fieldValue.trim();
+
+    const canRemoveItem = allowMultiple && totalItems > 1;
+    const fileRefKey = uploadKey;
+
+    return (
+      <div key={uploadKey} className='space-y-2'>
+        {/* Multi-item header: show index + remove button */}
+        {allowMultiple && (
+          <div className='flex items-center justify-between'>
+            <span className='text-muted-foreground text-[11px] font-medium'>
+              #{arrayIdx + 1}
+            </span>
+            {!readOnly && canRemoveItem && (
+              <Button
+                type='button'
+                size='icon'
+                variant='ghost'
+                className='text-destructive hover:text-destructive h-6 w-6'
+                onClick={() => handleRemoveItem(extra.id, arrayIdx)}
+                disabled={disabled}
+                title='Remove this item'
+              >
+                <Trash2 className='h-3 w-3' />
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* ── IMAGE / FILE field ─────────────────────────────── */}
+        {isFileType ? (
+          <div className='space-y-2'>
+            {/* Hidden file input */}
+            <input
+              type='file'
+              ref={(el) => {
+                fileInputRefs.current[fileRefKey] = el;
+              }}
+              accept={getAcceptString(extra.valueType)}
+              onChange={(e) => handleFileInputChange(extra.id, arrayIdx, e)}
+              className='hidden'
+              disabled={disabled || readOnly || isUploading}
+            />
+
+            {isUploading ? (
+              <div className='bg-muted/30 flex h-24 flex-col items-center justify-center rounded-md border-2 border-dashed'>
+                <Loader2 className='text-primary mb-1 h-6 w-6 animate-spin' />
+                <span className='text-muted-foreground text-[11px]'>
+                  Uploading...
+                </span>
+              </div>
+            ) : hasValue ? (
+              <div className='overflow-hidden rounded-md border'>
+                {extra.valueType === 'IMAGE' && isImageUrl(fieldValue) ? (
+                  <div>
+                    <ImageViewer
+                      src={fieldValue}
+                      alt={extra.label}
+                      className='h-32 w-full object-cover'
+                    />
+                    {!readOnly && (
+                      <div className='bg-muted/30 flex items-center gap-1 border-t p-1.5'>
+                        <Button
+                          type='button'
+                          size='sm'
+                          variant='ghost'
+                          className='h-7 flex-1 text-xs'
+                          onClick={() =>
+                            fileInputRefs.current[fileRefKey]?.click()
+                          }
+                          disabled={disabled}
+                        >
+                          <Upload className='mr-1 h-3 w-3' />
+                          Replace
+                        </Button>
+                        <Button
+                          type='button'
+                          size='sm'
+                          variant='ghost'
+                          className='text-destructive hover:text-destructive h-7 flex-1 text-xs'
+                          onClick={() => handleRemoveFile(extra.id, arrayIdx)}
+                          disabled={disabled}
+                        >
+                          <X className='mr-1 h-3 w-3' />
+                          Remove
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className='flex items-center gap-2 p-2'>
+                    <Paperclip className='text-muted-foreground h-4 w-4 flex-shrink-0' />
+                    <a
+                      href={fieldValue}
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      className='text-primary flex-1 truncate text-xs hover:underline'
+                      title={fieldValue}
+                    >
+                      {getFileNameFromUrl(fieldValue)}
+                    </a>
+                    <a
+                      href={fieldValue}
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      className='text-muted-foreground hover:text-foreground flex-shrink-0'
+                    >
+                      <ExternalLink className='h-3.5 w-3.5' />
+                    </a>
+                    {!readOnly && (
+                      <Button
+                        type='button'
+                        size='icon'
+                        variant='ghost'
+                        className='h-6 w-6 flex-shrink-0'
+                        onClick={() => handleRemoveFile(extra.id, arrayIdx)}
+                        disabled={disabled}
+                      >
+                        <X className='h-3.5 w-3.5' />
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : readOnly ? (
+              <div className='bg-muted/30 flex h-20 flex-col items-center justify-center rounded-md border-2 border-dashed'>
+                {extra.valueType === 'IMAGE' ? (
+                  <>
+                    <ImageIcon className='text-muted-foreground/40 mb-1 h-6 w-6' />
+                    <span className='text-muted-foreground text-[11px]'>
+                      No image
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Paperclip className='text-muted-foreground/40 mb-1 h-6 w-6' />
+                    <span className='text-muted-foreground text-[11px]'>
+                      No file
+                    </span>
+                  </>
+                )}
+              </div>
+            ) : (
+              <button
+                type='button'
+                onClick={() => fileInputRefs.current[fileRefKey]?.click()}
+                disabled={disabled}
+                className={cn(
+                  'bg-muted/30 flex h-20 w-full flex-col items-center justify-center rounded-md border-2 border-dashed',
+                  'hover:bg-muted/50 hover:border-primary/50 cursor-pointer transition-colors',
+                  'focus:ring-ring focus:ring-2 focus:ring-offset-2 focus:outline-none',
+                  disabled && 'cursor-not-allowed opacity-50',
+                  fieldError && 'border-destructive'
+                )}
+              >
+                <Upload className='text-muted-foreground mb-1 h-5 w-5' />
+                <span className='text-muted-foreground text-[11px]'>
+                  {extra.valueType === 'IMAGE'
+                    ? 'Click to upload image'
+                    : 'Click to attach file'}
+                </span>
+              </button>
+            )}
+
+            {uploadError && (
+              <div className='text-destructive flex items-center gap-1 text-[10px]'>
+                <AlertCircle className='h-3 w-3' />
+                <span>{uploadError}</span>
+              </div>
+            )}
+            {fieldError && (
+              <div className='text-destructive flex items-center gap-1 text-[10px]'>
+                <AlertCircle className='h-3 w-3' />
+                <span>{fieldError}</span>
+              </div>
+            )}
+          </div>
+        ) : readOnly ? (
+          <div className='bg-muted/30 flex h-9 items-center rounded-md border px-3 text-sm'>
+            {fieldValue || <span className='text-muted-foreground'>—</span>}
+          </div>
+        ) : (
+          <div className='space-y-1'>
+            <Input
+              type={getInputType(extra.valueType)}
+              value={fieldValue}
+              onChange={(e) =>
+                handleValueChange(extra.id, arrayIdx, e.target.value)
+              }
+              placeholder={getPlaceholder(extra.valueType)}
+              disabled={disabled}
+              className={cn('h-9', fieldError && 'border-destructive')}
+              step={extra.valueType === 'NUMBER' ? 'any' : undefined}
+            />
+            {fieldError && (
+              <div className='text-destructive flex items-center gap-1 text-[10px]'>
+                <AlertCircle className='h-3 w-3' />
+                <span>{fieldError}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ────────────────────────────────────────────────────────────────────
+  // MAIN RENDER
+  // ────────────────────────────────────────────────────────────────────
   return (
     <div
       className={cn('rounded-lg border', config.bgClass, config.borderClass)}
@@ -304,13 +583,12 @@ export default function OrderExtraValues({
         )}
       >
         {sortedExtras.map((extra) => {
-          const fieldValue = values[extra.id]?.value || '';
-          const fieldError = errors[extra.id];
-          const isFileType =
-            extra.valueType === 'IMAGE' || extra.valueType === 'FILE';
-          const isUploading = uploadingFields[extra.id] || false;
-          const uploadError = uploadErrors[extra.id];
-          const hasValue = !!fieldValue.trim();
+          const allowMultiple = !!(extra as any).allowMultiple;
+          const items = getItems(extra.id);
+
+          // Ensure at least one item exists for rendering
+          const renderItems: ExtraValueItem[] =
+            items.length > 0 ? items : [{ value: '', orderIndex: 0 }];
 
           return (
             <div
@@ -326,193 +604,51 @@ export default function OrderExtraValues({
                 {extra.isRequired && (
                   <span className='text-destructive text-xs font-bold'>*</span>
                 )}
+                {allowMultiple && (
+                  <Badge
+                    variant='outline'
+                    className='ml-1 px-1.5 py-0 text-[9px]'
+                  >
+                    Multiple
+                  </Badge>
+                )}
               </div>
 
-              {/* ── IMAGE / FILE field ─────────────────────────────── */}
-              {isFileType ? (
-                <div className='space-y-2'>
-                  {/* Hidden file input */}
-                  <input
-                    type='file'
-                    ref={(el) => {
-                      fileInputRefs.current[extra.id] = el;
-                    }}
-                    accept={getAcceptString(extra.valueType)}
-                    onChange={(e) => handleFileInputChange(extra.id, e)}
-                    className='hidden'
-                    disabled={disabled || readOnly || isUploading}
-                  />
+              {/* Render each item */}
+              {allowMultiple ? (
+                <div className='space-y-3'>
+                  {renderItems.map((item, idx) =>
+                    renderSingleItem(
+                      extra,
+                      item,
+                      idx,
+                      allowMultiple,
+                      renderItems.length
+                    )
+                  )}
 
-                  {isUploading ? (
-                    /* Uploading spinner */
-                    <div className='bg-muted/30 flex h-24 flex-col items-center justify-center rounded-md border-2 border-dashed'>
-                      <Loader2 className='text-primary mb-1 h-6 w-6 animate-spin' />
-                      <span className='text-muted-foreground text-[11px]'>
-                        Uploading...
-                      </span>
-                    </div>
-                  ) : hasValue ? (
-                    /* ── Preview: image or file link ────────────────── */
-                    <div className='overflow-hidden rounded-md border'>
-                      {extra.valueType === 'IMAGE' && isImageUrl(fieldValue) ? (
-                        /* Image preview — click to open full viewer */
-                        <div>
-                          <ImageViewer
-                            src={fieldValue}
-                            alt={extra.label}
-                            className='h-32 w-full object-cover'
-                          />
-                          {!readOnly && (
-                            <div className='bg-muted/30 flex items-center gap-1 border-t p-1.5'>
-                              <Button
-                                type='button'
-                                size='sm'
-                                variant='ghost'
-                                className='h-7 flex-1 text-xs'
-                                onClick={() =>
-                                  fileInputRefs.current[extra.id]?.click()
-                                }
-                                disabled={disabled}
-                              >
-                                <Upload className='mr-1 h-3 w-3' />
-                                Replace
-                              </Button>
-                              <Button
-                                type='button'
-                                size='sm'
-                                variant='ghost'
-                                className='text-destructive hover:text-destructive h-7 flex-1 text-xs'
-                                onClick={() => handleRemoveFile(extra.id)}
-                                disabled={disabled}
-                              >
-                                <X className='mr-1 h-3 w-3' />
-                                Remove
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        /* File link */
-                        <div className='flex items-center gap-2 p-2'>
-                          <Paperclip className='text-muted-foreground h-4 w-4 flex-shrink-0' />
-                          <a
-                            href={fieldValue}
-                            target='_blank'
-                            rel='noopener noreferrer'
-                            className='text-primary flex-1 truncate text-xs hover:underline'
-                            title={fieldValue}
-                          >
-                            {getFileNameFromUrl(fieldValue)}
-                          </a>
-                          <a
-                            href={fieldValue}
-                            target='_blank'
-                            rel='noopener noreferrer'
-                            className='text-muted-foreground hover:text-foreground flex-shrink-0'
-                          >
-                            <ExternalLink className='h-3.5 w-3.5' />
-                          </a>
-                          {!readOnly && (
-                            <Button
-                              type='button'
-                              size='icon'
-                              variant='ghost'
-                              className='h-6 w-6 flex-shrink-0'
-                              onClick={() => handleRemoveFile(extra.id)}
-                              disabled={disabled}
-                            >
-                              <X className='h-3.5 w-3.5' />
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ) : readOnly ? (
-                    /* Read-only empty */
-                    <div className='bg-muted/30 flex h-20 flex-col items-center justify-center rounded-md border-2 border-dashed'>
-                      {extra.valueType === 'IMAGE' ? (
-                        <>
-                          <ImageIcon className='text-muted-foreground/40 mb-1 h-6 w-6' />
-                          <span className='text-muted-foreground text-[11px]'>
-                            No image
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <Paperclip className='text-muted-foreground/40 mb-1 h-6 w-6' />
-                          <span className='text-muted-foreground text-[11px]'>
-                            No file
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  ) : (
-                    /* Upload button */
-                    <button
+                  {/* Add button */}
+                  {!readOnly && !disabled && (
+                    <Button
                       type='button'
-                      onClick={() => fileInputRefs.current[extra.id]?.click()}
-                      disabled={disabled}
-                      className={cn(
-                        'bg-muted/30 flex h-20 w-full flex-col items-center justify-center rounded-md border-2 border-dashed',
-                        'hover:bg-muted/50 hover:border-primary/50 cursor-pointer transition-colors',
-                        'focus:ring-ring focus:ring-2 focus:ring-offset-2 focus:outline-none',
-                        disabled && 'cursor-not-allowed opacity-50',
-                        fieldError && 'border-destructive'
-                      )}
+                      variant='outline'
+                      size='sm'
+                      className='w-full gap-1.5 border-dashed text-xs'
+                      onClick={() => handleAddItem(extra.id)}
                     >
-                      <Upload className='text-muted-foreground mb-1 h-5 w-5' />
-                      <span className='text-muted-foreground text-[11px]'>
-                        {extra.valueType === 'IMAGE'
-                          ? 'Click to upload image'
-                          : 'Click to attach file'}
-                      </span>
-                    </button>
-                  )}
-
-                  {/* Upload error */}
-                  {uploadError && (
-                    <div className='text-destructive flex items-center gap-1 text-[10px]'>
-                      <AlertCircle className='h-3 w-3' />
-                      <span>{uploadError}</span>
-                    </div>
-                  )}
-
-                  {/* Validation error */}
-                  {fieldError && (
-                    <div className='text-destructive flex items-center gap-1 text-[10px]'>
-                      <AlertCircle className='h-3 w-3' />
-                      <span>{fieldError}</span>
-                    </div>
-                  )}
-                </div>
-              ) : readOnly ? (
-                /* ── Read-only text/number/date ──────────────────── */
-                <div className='bg-muted/30 flex h-9 items-center rounded-md border px-3 text-sm'>
-                  {fieldValue || (
-                    <span className='text-muted-foreground'>—</span>
+                      <Plus className='h-3 w-3' />
+                      Add{' '}
+                      {extra.valueType === 'IMAGE'
+                        ? 'Image'
+                        : extra.valueType === 'FILE'
+                          ? 'File'
+                          : 'Item'}
+                    </Button>
                   )}
                 </div>
               ) : (
-                /* ── Editable text/number/date ───────────────────── */
-                <div className='space-y-1'>
-                  <Input
-                    type={getInputType(extra.valueType)}
-                    value={fieldValue}
-                    onChange={(e) =>
-                      handleValueChange(extra.id, e.target.value)
-                    }
-                    placeholder={getPlaceholder(extra.valueType)}
-                    disabled={disabled}
-                    className={cn('h-9', fieldError && 'border-destructive')}
-                    step={extra.valueType === 'NUMBER' ? 'any' : undefined}
-                  />
-                  {fieldError && (
-                    <div className='text-destructive flex items-center gap-1 text-[10px]'>
-                      <AlertCircle className='h-3 w-3' />
-                      <span>{fieldError}</span>
-                    </div>
-                  )}
-                </div>
+                // Single value — render directly without multi-item chrome
+                renderSingleItem(extra, renderItems[0], 0, false, 1)
               )}
             </div>
           );

@@ -699,14 +699,22 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       });
       loadedValues[orderTemplateId] = valuesMap;
 
+      // ── Extra values: build arrays grouped by templateExtraFieldId ──
       const extValMap: ExtraValuesMap = {};
       (tmplData.extraValues || []).forEach((ev) => {
-        extValMap[ev.templateExtraFieldId] = {
+        if (!extValMap[ev.templateExtraFieldId]) {
+          extValMap[ev.templateExtraFieldId] = [];
+        }
+        extValMap[ev.templateExtraFieldId].push({
           value: ev.value,
           orderExtraValueId: ev.id,
-          orderIndex: ev.orderIndex
-        };
+          orderIndex: ev.orderIndex ?? extValMap[ev.templateExtraFieldId].length
+        });
       });
+      // Sort each array by orderIndex
+      Object.values(extValMap).forEach((arr) =>
+        arr.sort((a, b) => a.orderIndex - b.orderIndex)
+      );
       loadedExtraValues[orderTemplateId] = extValMap;
 
       const bvMap: BlockValuesMap = {};
@@ -839,15 +847,18 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         return vals;
       };
 
+      // ── Build extra values payload from array-based ExtraValuesMap ──
       const buildExtra = (src: ExtraValuesMap) =>
-        Object.entries(src).map(([fid, ev]) => ({
-          templateExtraFieldId: fid,
-          value: ev.value,
-          orderExtraValueId: ev.orderExtraValueId,
-          orderIndex: ev.orderIndex ?? 0
-        }));
+        Object.entries(src).flatMap(([fid, items]) =>
+          items.map((ev) => ({
+            templateExtraFieldId: fid,
+            value: ev.value,
+            orderExtraValueId: ev.orderExtraValueId,
+            orderIndex: ev.orderIndex ?? 0
+          }))
+        );
 
-      const values = buildValues(sourceValues);
+      const values_payload = buildValues(sourceValues);
       const extValues = buildExtra(extraValues[entry.orderTemplateId] || {});
 
       let payload: UpdateOrderValuesData;
@@ -857,12 +868,12 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           templates: [
             {
               templateId: entry.templateId,
-              values,
+              values: values_payload,
               ...(extValues.length > 0 ? { extravalues: extValues } : {}),
               children: [
                 {
                   templateId: entry.templateId,
-                  values,
+                  values: values_payload,
                   ...(extValues.length > 0 ? { extravalues: extValues } : {})
                 }
               ]
@@ -879,7 +890,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
             {
               templateId: entry.templateId,
               parentOrderTemplateId: parentEntry.orderTemplateId,
-              values,
+              values: values_payload,
               ...(extValues.length > 0 ? { extravalues: extValues } : {})
             }
           ]
@@ -956,7 +967,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     return () => container.removeEventListener('wheel', preventNativeZoom);
   }, [entries.length]);
 
-  // ── DRAG-TO-SCROLL (with movement threshold) ───────────────────────
+  // ── DRAG-TO-SCROLL ──────────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
@@ -1462,6 +1473,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 entries={entries}
                 templateValues={templateValues}
                 extraValues={extraValues}
+                blockValues={blockValues}
                 finalCalc={finalCalcData}
               />
               <Button

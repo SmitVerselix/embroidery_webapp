@@ -152,10 +152,6 @@ const ZOOM_STEP = 0.25;
 const SCROLL_ZOOM_FACTOR = 0.001;
 const DRAG_THRESHOLD = 3;
 
-// =============================================================================
-// Interactive-element check shared by mouse & touch handlers
-// =============================================================================
-
 function isInteractiveTarget(target: HTMLElement): boolean {
   return !!(
     target.closest('button') ||
@@ -172,10 +168,6 @@ function isInteractiveTarget(target: HTMLElement): boolean {
     target.closest('[data-radix-collection-item]')
   );
 }
-
-// =============================================================================
-// CANVAS TOOLBAR BUTTON
-// =============================================================================
 
 function CanvasToolbarButton({
   onClick,
@@ -208,6 +200,35 @@ function CanvasToolbarButton({
       {children}
     </button>
   );
+}
+
+// =============================================================================
+// HELPER: Build array-based ExtraValuesMap from API extraValues array
+// =============================================================================
+
+function buildExtraValuesMap(
+  extraValues: {
+    templateExtraFieldId: string;
+    value: string;
+    id?: string;
+    orderIndex?: number;
+  }[]
+): ExtraValuesMap {
+  const map: ExtraValuesMap = {};
+  (extraValues || []).forEach((ev) => {
+    if (!map[ev.templateExtraFieldId]) {
+      map[ev.templateExtraFieldId] = [];
+    }
+    map[ev.templateExtraFieldId].push({
+      value: ev.value,
+      orderExtraValueId: ev.id,
+      orderIndex: ev.orderIndex ?? map[ev.templateExtraFieldId].length
+    });
+  });
+  Object.values(map).forEach((arr) =>
+    arr.sort((a, b) => a.orderIndex - b.orderIndex)
+  );
+  return map;
 }
 
 // =============================================================================
@@ -306,12 +327,12 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // ── Zoom state ──────────────────────────────────────────────────────
+  // Zoom state
   const [zoom, setZoom] = useState(1);
   const [isCanvasFocused, setIsCanvasFocused] = useState(false);
   const [isTemplateDragging, setIsTemplateDragging] = useState(false);
 
-  // ── Drag-to-scroll state ────────────────────────────────────────────
+  // Drag-to-scroll state
   const [isDragging, setIsDragging] = useState(false);
   const dragPending = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
@@ -346,9 +367,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   const isReferenceMode = !!referencedOrder;
 
-  // ──────────────────────────────────────────────────────────────────────
-  // FETCH CUSTOMERS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── FETCH CUSTOMERS ─────────────────────────────────────────────────
   useEffect(() => {
     const fetchCustomers = async () => {
       setIsLoadingCustomers(true);
@@ -370,9 +389,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     if (companyId) fetchCustomers();
   }, [companyId]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // FETCH PRODUCTS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── FETCH PRODUCTS ──────────────────────────────────────────────────
   useEffect(() => {
     const fetchProducts = async () => {
       setIsLoadingProducts(true);
@@ -394,9 +411,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     if (companyId) fetchProducts();
   }, [companyId]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // FETCH ORDERS (for referenceNo picker)
-  // ──────────────────────────────────────────────────────────────────────
+  // ── FETCH ORDERS (for referenceNo picker) ───────────────────────────
   useEffect(() => {
     const fetchOrders = async () => {
       setIsLoadingOrders(true);
@@ -411,7 +426,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         });
         setOrdersList(res.rows);
       } catch {
-        // Silently fail
+        /* Silently fail */
       } finally {
         setIsLoadingOrders(false);
       }
@@ -419,12 +434,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     if (companyId) fetchOrders();
   }, [companyId, debouncedOrdersSearch]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // FETCH TEMPLATES WHEN PRODUCT IS MANUALLY SELECTED
-  // ──────────────────────────────────────────────────────────────────────
+  // ── FETCH TEMPLATES WHEN PRODUCT IS MANUALLY SELECTED ───────────────
   useEffect(() => {
     if (isReferenceModeRef.current) return;
-
     const fetchTemplatesForProduct = async () => {
       if (!selectedProductId) {
         setTemplates([]);
@@ -437,7 +449,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         clearChildState();
         return;
       }
-
       setIsLoadingTemplates(true);
       setTemplateError(null);
       setTemplates([]);
@@ -448,60 +459,47 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       setCellErrors({});
       setExtraFieldErrors({});
       clearChildState();
-
       try {
         const product = await getProduct(companyId, selectedProductId);
         const fullTemplates = (product.templates ||
           []) as TemplateWithDetails[];
-
         if (fullTemplates.length === 0) {
           setTemplates([]);
           setIsLoadingTemplates(false);
           return;
         }
-
         setTemplates(fullTemplates);
-
-        const initialValues: Record<string, TemplateValuesMap> = {};
-        const initialExtraValues: Record<string, ExtraValuesMap> = {};
-        const initialDiscounts: Record<
+        const iv: Record<string, TemplateValuesMap> = {};
+        const ie: Record<string, ExtraValuesMap> = {};
+        const id: Record<
           string,
           { discountType: DiscountType; discountValue: string }
         > = {};
-        const initialBlockValues: Record<string, BlockValuesMap> = {};
-
-        fullTemplates.forEach((tmpl) => {
-          initialValues[tmpl.id] = {};
-          initialExtraValues[tmpl.id] = {};
-          initialDiscounts[tmpl.id] = {
-            discountType: 'PERCENT',
-            discountValue: '0'
-          };
-          initialBlockValues[tmpl.id] = {};
+        const ib: Record<string, BlockValuesMap> = {};
+        fullTemplates.forEach((t) => {
+          iv[t.id] = {};
+          ie[t.id] = {};
+          id[t.id] = { discountType: 'PERCENT', discountValue: '0' };
+          ib[t.id] = {};
         });
-        setTemplateValues(initialValues);
-        setExtraValues(initialExtraValues);
-        setTemplateDiscounts(initialDiscounts);
-        setTemplateBlockValues(initialBlockValues);
+        setTemplateValues(iv);
+        setExtraValues(ie);
+        setTemplateDiscounts(id);
+        setTemplateBlockValues(ib);
       } catch (err) {
         setTemplateError(getError(err));
       } finally {
         setIsLoadingTemplates(false);
       }
     };
-
     fetchTemplatesForProduct();
   }, [companyId, selectedProductId]);
 
   useEffect(() => {
-    if (selectedOrderType === 'SAMPLE') {
-      setValue('customerId', '');
-    }
+    if (selectedOrderType === 'SAMPLE') setValue('customerId', '');
   }, [selectedOrderType, setValue]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // CLEAR CHILD STATE
-  // ──────────────────────────────────────────────────────────────────────
+  // ── CLEAR CHILD STATE ───────────────────────────────────────────────
   const clearChildState = useCallback(() => {
     setRefChildrenMeta({});
     setChildTemplateValues({});
@@ -512,23 +510,18 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     setChildExtraFieldErrors({});
   }, []);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // SELECT REFERENCE ORDER
-  // ──────────────────────────────────────────────────────────────────────
+  // ── SELECT REFERENCE ORDER ──────────────────────────────────────────
   const handleSelectReferenceOrder = useCallback(
     async (order: Order) => {
       setIsOrdersPopoverOpen(false);
       setOrdersSearch('');
       setReferenceError(null);
-
       setValue('referenceNo', order.orderNo);
       setReferencedOrderId(order.id);
       setIsLoadingReference(true);
-
       try {
         const orderData = await getOrder(companyId, order.id);
         setReferencedOrder(orderData);
-
         isReferenceModeRef.current = true;
         setValue('productId', orderData.productId);
 
@@ -536,10 +529,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         const templateCache: Record<string, TemplateWithDetails> = {};
         const fullTemplates = (product.templates ||
           []) as TemplateWithDetails[];
-
         if (fullTemplates.length > 0) {
-          fullTemplates.forEach((tmpl) => {
-            templateCache[tmpl.id] = tmpl;
+          fullTemplates.forEach((t) => {
+            templateCache[t.id] = t;
           });
           setTemplates(fullTemplates);
         } else {
@@ -562,14 +554,14 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         > = {};
         const loadedChildBlockValues: Record<string, BlockValuesMap> = {};
 
-        Object.values(templateCache).forEach((tmpl) => {
-          loadedValues[tmpl.id] = {};
-          loadedExtraValues[tmpl.id] = {};
-          loadedDiscounts[tmpl.id] = {
+        Object.values(templateCache).forEach((t) => {
+          loadedValues[t.id] = {};
+          loadedExtraValues[t.id] = {};
+          loadedDiscounts[t.id] = {
             discountType: 'PERCENT',
             discountValue: '0'
           };
-          loadedBlockValues[tmpl.id] = {};
+          loadedBlockValues[t.id] = {};
         });
 
         (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
@@ -582,14 +574,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           });
           loadedValues[tid] = valuesMap;
 
-          const extValMap: ExtraValuesMap = {};
-          (tmplData.extraValues || []).forEach((ev) => {
-            extValMap[ev.templateExtraFieldId] = {
-              value: ev.value,
-              orderIndex: ev.orderIndex
-            };
-          });
-          loadedExtraValues[tid] = extValMap;
+          // ── Array-based extra values ────────────────────────────
+          loadedExtraValues[tid] = buildExtraValuesMap(
+            tmplData.extraValues || []
+          );
 
           const rawSummary = tmplData.summary;
           if (rawSummary) {
@@ -602,7 +590,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
           if (tmplData.children && tmplData.children.length > 0) {
             loadedChildMeta[tid] = [];
-
             tmplData.children.forEach((child, idx) => {
               const childKey = getChildKey(tid, idx);
               loadedChildMeta[tid].push({ templateId: child.templateId });
@@ -615,14 +602,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               });
               loadedChildValues[childKey] = childValMap;
 
-              const childExtMap: ExtraValuesMap = {};
-              (child.extraValues || []).forEach((ev) => {
-                childExtMap[ev.templateExtraFieldId] = {
-                  value: ev.value,
-                  orderIndex: ev.orderIndex
-                };
-              });
-              loadedChildExtras[childKey] = childExtMap;
+              // ── Array-based child extra values ──────────────────
+              loadedChildExtras[childKey] = buildExtraValuesMap(
+                child.extraValues || []
+              );
 
               const childSummary = child.summary;
               loadedChildDiscounts[childKey] = {
@@ -630,7 +613,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   (childSummary?.discountType as DiscountType) || 'PERCENT',
                 discountValue: childSummary?.discount ?? '0'
               };
-
               loadedChildBlockValues[childKey] = {};
             });
           }
@@ -662,9 +644,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     [companyId, setValue]
   );
 
-  // ──────────────────────────────────────────────────────────────────────
-  // CLEAR REFERENCE
-  // ──────────────────────────────────────────────────────────────────────
+  // ── CLEAR REFERENCE ─────────────────────────────────────────────────
   const handleClearReference = useCallback(() => {
     setValue('referenceNo', '');
     setValue('productId', '');
@@ -672,7 +652,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     setReferencedOrderId(null);
     setReferenceError(null);
     isReferenceModeRef.current = false;
-
     setTemplates([]);
     setTemplateValues({});
     setExtraValues({});
@@ -683,81 +662,69 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     clearChildState();
   }, [setValue, clearChildState]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // PARENT VALUE HANDLERS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── PARENT VALUE HANDLERS ───────────────────────────────────────────
   const handleTemplateValuesChange = useCallback(
     (templateId: string, values: TemplateValuesMap) => {
-      setTemplateValues((prev) => ({ ...prev, [templateId]: values }));
-      setCellErrors((prev) => ({ ...prev, [templateId]: {} }));
+      setTemplateValues((p) => ({ ...p, [templateId]: values }));
+      setCellErrors((p) => ({ ...p, [templateId]: {} }));
     },
     []
   );
-
   const handleExtraValuesChange = useCallback(
     (templateId: string, values: ExtraValuesMap) => {
-      setExtraValues((prev) => ({ ...prev, [templateId]: values }));
-      setExtraFieldErrors((prev) => ({ ...prev, [templateId]: {} }));
+      setExtraValues((p) => ({ ...p, [templateId]: values }));
+      setExtraFieldErrors((p) => ({ ...p, [templateId]: {} }));
     },
     []
   );
-
   const handleDiscountChange = useCallback(
     (templateId: string, type: DiscountType, value: string) => {
-      setTemplateDiscounts((prev) => ({
-        ...prev,
+      setTemplateDiscounts((p) => ({
+        ...p,
         [templateId]: { discountType: type, discountValue: value }
       }));
     },
     []
   );
-
   const handleBlockValuesChange = useCallback(
     (templateId: string, values: BlockValuesMap) => {
-      setTemplateBlockValues((prev) => ({ ...prev, [templateId]: values }));
+      setTemplateBlockValues((p) => ({ ...p, [templateId]: values }));
     },
     []
   );
 
-  // ──────────────────────────────────────────────────────────────────────
-  // CHILD VALUE HANDLERS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── CHILD VALUE HANDLERS ────────────────────────────────────────────
   const handleChildValuesChange = useCallback(
     (childKey: string, values: TemplateValuesMap) => {
-      setChildTemplateValues((prev) => ({ ...prev, [childKey]: values }));
-      setChildCellErrors((prev) => ({ ...prev, [childKey]: {} }));
+      setChildTemplateValues((p) => ({ ...p, [childKey]: values }));
+      setChildCellErrors((p) => ({ ...p, [childKey]: {} }));
     },
     []
   );
-
   const handleChildExtraValuesChange = useCallback(
     (childKey: string, values: ExtraValuesMap) => {
-      setChildExtraValues((prev) => ({ ...prev, [childKey]: values }));
-      setChildExtraFieldErrors((prev) => ({ ...prev, [childKey]: {} }));
+      setChildExtraValues((p) => ({ ...p, [childKey]: values }));
+      setChildExtraFieldErrors((p) => ({ ...p, [childKey]: {} }));
     },
     []
   );
-
   const handleChildDiscountChange = useCallback(
     (childKey: string, type: DiscountType, value: string) => {
-      setChildDiscounts((prev) => ({
-        ...prev,
+      setChildDiscounts((p) => ({
+        ...p,
         [childKey]: { discountType: type, discountValue: value }
       }));
     },
     []
   );
-
   const handleChildBlockValuesChange = useCallback(
     (childKey: string, values: BlockValuesMap) => {
-      setChildBlockValues((prev) => ({ ...prev, [childKey]: values }));
+      setChildBlockValues((p) => ({ ...p, [childKey]: values }));
     },
     []
   );
 
-  // ──────────────────────────────────────────────────────────────────────
-  // VALIDATION
-  // ──────────────────────────────────────────────────────────────────────
+  // ── VALIDATION ──────────────────────────────────────────────────────
   const validateTemplateValues = useCallback((): boolean => {
     let isValid = true;
 
@@ -776,7 +743,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           if (col.dataType === 'FORMULA') return;
           const value = vals[row.id]?.[col.id] || '';
           const cellKey = `${row.id}-${col.id}`;
-
           if (col.isRequired && !value.trim()) {
             cErrors[cellKey] = 'Required';
             isValid = false;
@@ -792,43 +758,48 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       });
 
       (tmpl.extra || []).forEach((extra) => {
-        const val = exVals[extra.id]?.value || '';
-        if (extra.isRequired && !val.trim()) {
-          eErrors[extra.id] = 'Required';
-          isValid = false;
-          return;
-        }
-        if (extra.valueType === 'NUMBER' && val.trim()) {
-          if (isNaN(Number(val))) {
-            eErrors[extra.id] = 'Must be a number';
+        const items = exVals[extra.id] || [];
+        // Required: at least one non-empty value
+        if (extra.isRequired) {
+          const hasValue = items.some((i) => i.value.trim() !== '');
+          if (!hasValue) {
+            eErrors[extra.id] = 'Required';
             isValid = false;
           }
+        }
+        // Type validation per item
+        if (extra.valueType === 'NUMBER') {
+          items.forEach((item, idx) => {
+            if (item.value.trim() && isNaN(Number(item.value))) {
+              eErrors[`${extra.id}__${idx}`] = 'Must be a number';
+              isValid = false;
+            }
+          });
         }
       });
 
       return { cErrors, eErrors };
     };
 
-    const newCellErrors: Record<string, Record<string, string>> = {};
-    const newExtraErrors: Record<string, Record<string, string>> = {};
-    templates.forEach((tmpl) => {
+    const newCE: Record<string, Record<string, string>> = {};
+    const newEE: Record<string, Record<string, string>> = {};
+    templates.forEach((t) => {
       const { cErrors, eErrors } = validateValues(
-        tmpl,
-        templateValues[tmpl.id] || {},
-        extraValues[tmpl.id] || {}
+        t,
+        templateValues[t.id] || {},
+        extraValues[t.id] || {}
       );
-      newCellErrors[tmpl.id] = cErrors;
-      newExtraErrors[tmpl.id] = eErrors;
+      newCE[t.id] = cErrors;
+      newEE[t.id] = eErrors;
     });
-    setCellErrors(newCellErrors);
-    setExtraFieldErrors(newExtraErrors);
+    setCellErrors(newCE);
+    setExtraFieldErrors(newEE);
 
-    const newChildCellErrors: Record<string, Record<string, string>> = {};
-    const newChildExtraErrors: Record<string, Record<string, string>> = {};
+    const newCCE: Record<string, Record<string, string>> = {};
+    const newCEE: Record<string, Record<string, string>> = {};
     Object.entries(refChildrenMeta).forEach(([parentTmplId, children]) => {
       const parentTmpl = templates.find((t) => t.id === parentTmplId);
       if (!parentTmpl) return;
-
       children.forEach((_, idx) => {
         const childKey = getChildKey(parentTmplId, idx);
         const { cErrors, eErrors } = validateValues(
@@ -836,12 +807,12 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           childTemplateValues[childKey] || {},
           childExtraValues[childKey] || {}
         );
-        newChildCellErrors[childKey] = cErrors;
-        newChildExtraErrors[childKey] = eErrors;
+        newCCE[childKey] = cErrors;
+        newCEE[childKey] = eErrors;
       });
     });
-    setChildCellErrors(newChildCellErrors);
-    setChildExtraFieldErrors(newChildExtraErrors);
+    setChildCellErrors(newCCE);
+    setChildExtraFieldErrors(newCEE);
 
     return isValid;
   }, [
@@ -853,41 +824,30 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     childExtraValues
   ]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // HELPER: Build blockvalues array from BlockValuesMap
-  // ──────────────────────────────────────────────────────────────────────
+  // ── Build blockvalues ───────────────────────────────────────────────
   const buildBlockValuesPayload = useCallback(
     (bvMap: BlockValuesMap): OrderBlockValuePayload[] => {
       const result: OrderBlockValuePayload[] = [];
       Object.entries(bvMap).forEach(([blockIdx, templateBlockId]) => {
-        if (templateBlockId) {
-          result.push({
-            templateBlockId,
-            blockIndex: `block_${blockIdx}`
-          });
-        }
+        if (templateBlockId)
+          result.push({ templateBlockId, blockIndex: `block_${blockIdx}` });
       });
       return result;
     },
     []
   );
 
-  // ──────────────────────────────────────────────────────────────────────
-  // ZOOM HELPERS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── ZOOM HELPERS ────────────────────────────────────────────────────
   const clampZoom = useCallback(
     (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)),
     []
   );
-
   const handleZoomIn = useCallback(() => {
     setZoom((z) => clampZoom(z + ZOOM_STEP));
   }, [clampZoom]);
-
   const handleZoomOut = useCallback(() => {
     setZoom((z) => clampZoom(z - ZOOM_STEP));
   }, [clampZoom]);
-
   const handleResetView = useCallback(() => {
     setZoom(1);
     if (containerRef.current) {
@@ -895,7 +855,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       containerRef.current.scrollTop = 0;
     }
   }, []);
-
   const handleWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
       if (!e.ctrlKey && !e.metaKey) return;
@@ -917,13 +876,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     return () => container.removeEventListener('wheel', preventNativeZoom);
   }, [templates.length]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // DRAG-TO-SCROLL (with movement threshold)
-  // ──────────────────────────────────────────────────────────────────────
+  // ── DRAG-TO-SCROLL ──────────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (isTemplateDragging) return;
-      if (e.button !== 0) return;
+      if (isTemplateDragging || e.button !== 0) return;
       if (isInteractiveTarget(e.target as HTMLElement)) return;
       e.preventDefault();
       dragPending.current = true;
@@ -935,28 +891,22 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     },
     [isTemplateDragging]
   );
-
   const handleMouseMove = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (isTemplateDragging || !containerRef.current) return;
       if (!isDragging && !dragPending.current) return;
-
       const dx = e.clientX - dragStart.current.x;
       const dy = e.clientY - dragStart.current.y;
-
       if (!isDragging) {
-        if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD) {
+        if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD)
           setIsDragging(true);
-        }
         return;
       }
-
       containerRef.current.scrollLeft = scrollStart.current.left - dx;
       containerRef.current.scrollTop = scrollStart.current.top - dy;
     },
     [isDragging, isTemplateDragging]
   );
-
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
     dragPending.current = false;
@@ -967,7 +917,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     const dy = t1.clientY - t2.clientY;
     return Math.sqrt(dx * dx + dy * dy);
   };
-
   const handleTouchStart = useCallback(
     (e: ReactTouchEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
@@ -988,26 +937,18 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     },
     [isTemplateDragging]
   );
-
   const handleTouchMove = useCallback(
     (e: ReactTouchEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
       if (e.touches.length === 1 && containerRef.current) {
         if (!isDragging && !dragPending.current) return;
-
         const dx = e.touches[0].clientX - dragStart.current.x;
         const dy = e.touches[0].clientY - dragStart.current.y;
-
         if (!isDragging) {
-          if (
-            Math.abs(dx) >= DRAG_THRESHOLD ||
-            Math.abs(dy) >= DRAG_THRESHOLD
-          ) {
+          if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD)
             setIsDragging(true);
-          }
           return;
         }
-
         containerRef.current.scrollLeft = scrollStart.current.left - dx;
         containerRef.current.scrollTop = scrollStart.current.top - dy;
       } else if (e.touches.length === 2 && lastPinchDist.current !== null) {
@@ -1019,13 +960,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     },
     [isDragging, isTemplateDragging, clampZoom]
   );
-
   const handleTouchEnd = useCallback(() => {
     setIsDragging(false);
     dragPending.current = false;
     lastPinchDist.current = null;
   }, []);
-
   const handleDoubleClick = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (isInteractiveTarget(e.target as HTMLElement)) return;
@@ -1060,14 +999,33 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     return () => window.removeEventListener('keydown', handler);
   }, [isCanvasFocused, handleZoomIn, handleZoomOut, handleResetView]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // TEMPLATE LAYOUT ITEMS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── HELPER: Flatten ExtraValuesMap to payload array ─────────────────
+  const flattenExtraValues = useCallback(
+    (tmplExtras: any[], exVals: ExtraValuesMap): OrderExtraValuePayload[] => {
+      const result: OrderExtraValuePayload[] = [];
+      tmplExtras.forEach((extra: any) => {
+        const items = exVals[extra.id] || [];
+        items.forEach((item) => {
+          if (item.value.trim()) {
+            result.push({
+              templateExtraFieldId: extra.id,
+              value: item.value.trim(),
+              meta: null,
+              orderIndex: item.orderIndex
+            });
+          }
+        });
+      });
+      return result;
+    },
+    []
+  );
+
+  // ── TEMPLATE LAYOUT ITEMS ───────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
     return templates.map((tmpl) => {
       const childMeta = refChildrenMeta[tmpl.id];
       const hasChildren = childMeta && childMeta.length > 0;
-
       return {
         id: tmpl.id,
         label: tmpl.name || tmpl.id,
@@ -1084,8 +1042,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 </Badge>
               )}
             </div>
-
-            {/* Parent */}
             <OrderTemplateValues
               template={tmpl}
               values={templateValues[tmpl.id] || {}}
@@ -1110,8 +1066,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 handleBlockValuesChange(tmpl.id, vals)
               }
             />
-
-            {/* Children */}
             {hasChildren &&
               childMeta.map((_, idx) => {
                 const childKey = getChildKey(tmpl.id, idx);
@@ -1183,56 +1137,41 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   const zoomPercent = Math.round(zoom * 100);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // SUBMIT
-  // ──────────────────────────────────────────────────────────────────────
+  // ── SUBMIT ──────────────────────────────────────────────────────────
   const onSubmit = async (data: OrderFormData) => {
     setSubmitError(null);
-
     if (!validateTemplateValues()) {
       setSubmitError(
         'Please fix the validation errors in the template values below.'
       );
       return;
     }
-
     setIsSubmitting(true);
-
     try {
       const templatesPayload: OrderTemplatePayload[] = templates.map((tmpl) => {
         const tmplValues = templateValues[tmpl.id] || {};
         const columns = tmpl.columns || [];
         const rows = tmpl.rows || [];
+        const tmplExtras = tmpl.extra || [];
 
         const values: { value: string; rowId: string; columnId: string }[] = [];
         rows.forEach((row) => {
           columns.forEach((col) => {
             if (col.dataType === 'FORMULA') return;
             const value = tmplValues[row.id]?.[col.id] || '';
-            if (value.trim()) {
+            if (value.trim())
               values.push({
                 value: value.trim(),
                 rowId: row.id,
                 columnId: col.id
               });
-            }
           });
         });
 
-        const tmplExtras = tmpl.extra || [];
-        const tmplExtraValues = extraValues[tmpl.id] || {};
-        const extravalues: OrderExtraValuePayload[] = [];
-        tmplExtras.forEach((extra) => {
-          const val = tmplExtraValues[extra.id]?.value || '';
-          if (val.trim()) {
-            extravalues.push({
-              templateExtraFieldId: extra.id,
-              value: val.trim(),
-              meta: null,
-              orderIndex: tmplExtraValues[extra.id]?.orderIndex ?? 0
-            });
-          }
-        });
+        const extravalues = flattenExtraValues(
+          tmplExtras,
+          extraValues[tmpl.id] || {}
+        );
 
         const discount = templateDiscounts[tmpl.id] || {
           discountType: 'PERCENT' as DiscountType,
@@ -1242,7 +1181,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           discountType: discount.discountType,
           discountValue: discount.discountValue || '0'
         };
-
         const blockvalues = buildBlockValuesPayload(
           templateBlockValues[tmpl.id] || {}
         );
@@ -1275,34 +1213,20 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               columns.forEach((col) => {
                 if (col.dataType === 'FORMULA') return;
                 const v = childVals[row.id]?.[col.id] || '';
-                if (v.trim()) {
+                if (v.trim())
                   cValues.push({
                     value: v.trim(),
                     rowId: row.id,
                     columnId: col.id
                   });
-                }
               });
             });
 
-            const cExtras: OrderExtraValuePayload[] = [];
-            tmplExtras.forEach((extra) => {
-              const v = childExVals[extra.id]?.value || '';
-              if (v.trim()) {
-                cExtras.push({
-                  templateExtraFieldId: extra.id,
-                  value: v.trim(),
-                  meta: null,
-                  orderIndex: childExVals[extra.id]?.orderIndex ?? 0
-                });
-              }
-            });
-
+            const cExtras = flattenExtraValues(tmplExtras, childExVals);
             const cSummary: TemplateSummaryPayload = {
               discountType: childDisc.discountType,
               discountValue: childDisc.discountValue || '0'
             };
-
             const cBlockvalues = buildBlockValuesPayload(
               childBlockValues[childKey] || {}
             );
@@ -1314,16 +1238,13 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               ...(cBlockvalues.length > 0 ? { blockvalues: cBlockvalues } : {})
             };
             if (cExtras.length > 0) childPayload.extravalues = cExtras;
-
             return childPayload;
           });
         }
-
         return payload;
       });
 
       const productId = data.productId || referencedOrder?.productId || '';
-
       const createData: CreateOrderData = {
         orderNo: data.orderNo,
         productId,
@@ -1335,7 +1256,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       };
 
       await createOrder(companyId, createData);
-
       router.push(`/dashboard/${companyId}/orders`);
       router.refresh();
     } catch (err) {
@@ -1367,9 +1287,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const hasTemplates = templates.length > 0;
   const showTemplateSection = isReferenceMode ? true : !!selectedProductId;
 
-  // ──────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ──────────────────────────────────────────────────────────────────────
+  // ── RENDER ──────────────────────────────────────────────────────────
   return (
     <div className='space-y-6'>
       <Link
@@ -1381,7 +1299,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       </Link>
 
       <form onSubmit={handleSubmit(onSubmit)} className='space-y-6'>
-        {/* ORDER DETAILS CARD */}
         <Card>
           <CardHeader>
             <CardTitle>Design Details</CardTitle>
@@ -1415,7 +1332,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   </p>
                 )}
               </div>
-
               <div className='space-y-2'>
                 <Label>
                   Design Type <span className='text-destructive'>*</span>
@@ -1549,7 +1465,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   </PopoverContent>
                 </Popover>
               )}
-
               {referenceError && (
                 <p className='text-destructive text-sm'>{referenceError}</p>
               )}
@@ -1582,14 +1497,14 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                     <SelectContent>
                       {products.length === 0 ? (
                         <div className='text-muted-foreground px-2 py-3 text-center text-sm'>
-                          No products available. Create a product first.
+                          No products available.
                         </div>
                       ) : (
-                        products.map((product) => (
-                          <SelectItem key={product.id} value={product.id}>
+                        products.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
                             <span className='flex items-center gap-2'>
                               <Package className='h-3 w-3' />
-                              {product.name}
+                              {p.name}
                             </span>
                           </SelectItem>
                         ))
@@ -1627,16 +1542,16 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                     <SelectContent>
                       {customers.length === 0 ? (
                         <div className='text-muted-foreground px-2 py-3 text-center text-sm'>
-                          No customers available. Create a customer first.
+                          No customers available.
                         </div>
                       ) : (
-                        customers.map((customer) => (
-                          <SelectItem key={customer.id} value={customer.id}>
+                        customers.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
                             <span className='flex items-center gap-2'>
                               <Users className='h-3 w-3' />
-                              {customer.name}
+                              {c.name}
                               <span className='text-muted-foreground text-xs'>
-                                ({customer.referenceCode})
+                                ({c.referenceCode})
                               </span>
                             </span>
                           </SelectItem>
@@ -1669,7 +1584,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           </CardContent>
         </Card>
 
-        {/* REFERENCED ORDER INFO CARD */}
+        {/* Referenced Order Info */}
         {isReferenceMode && referencedOrder && (
           <Card className='border-primary/20 bg-primary/5'>
             <CardHeader className='pb-3'>
@@ -1711,7 +1626,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           </Card>
         )}
 
-        {/* Loading reference */}
         {isLoadingReference && (
           <div className='flex items-center justify-center rounded-lg border py-8'>
             <div className='flex flex-col items-center gap-2'>
@@ -1727,7 +1641,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         {showTemplateSection && !isLoadingReference && (
           <>
             <Separator />
-
             <div className='space-y-2'>
               <h2 className='text-lg font-semibold'>Template Values</h2>
               <p className='text-muted-foreground text-sm'>
@@ -1745,8 +1658,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
                 <span>
                   {totalCellErrors} validation error
-                  {totalCellErrors !== 1 ? 's' : ''} found. Please fix them
-                  before submitting.
+                  {totalCellErrors !== 1 ? 's' : ''} found.
                 </span>
               </div>
             )}
@@ -1776,15 +1688,13 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   <div className='flex flex-col items-center justify-center text-center'>
                     <AlertCircle className='text-muted-foreground mb-2 h-8 w-8' />
                     <p className='text-muted-foreground text-sm'>
-                      No templates found for this product. Please add templates
-                      to the product first.
+                      No templates found for this product.
                     </p>
                   </div>
                 </CardContent>
               </Card>
             ) : (
               <>
-                {/* Top toolbar */}
                 <div className='bg-muted/60 flex items-center justify-between rounded-lg border px-4 py-2.5'>
                   <div className='flex min-w-0 items-center gap-3'>
                     <h2 className='truncate text-sm font-semibold'>
@@ -1902,7 +1812,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           </>
         )}
 
-        {/* SUBMIT */}
         <div className='flex items-center gap-4 pt-2'>
           <Button
             type='submit'

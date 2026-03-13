@@ -199,8 +199,13 @@ export default function OrderEditForm({
   const [originalValueIds, setOriginalValueIds] = useState<
     Record<string, Record<string, string>>
   >({});
-  const [originalExtraValueIds, setOriginalExtraValueIds] = useState<
-    Record<string, Record<string, string>>
+
+  /**
+   * Flat set of ALL original orderExtraValueIds per orderTemplate.
+   * Used to compute which extra-values to delete on save.
+   */
+  const [originalExtraValueIdSets, setOriginalExtraValueIdSets] = useState<
+    Record<string, Set<string>>
   >({});
 
   // Discount per template
@@ -266,7 +271,7 @@ export default function OrderEditForm({
       const loadedValues: Record<string, TemplateValuesMap> = {};
       const loadedExtraValues: Record<string, ExtraValuesMap> = {};
       const valueIdMap: Record<string, Record<string, string>> = {};
-      const extraValueIdMap: Record<string, Record<string, string>> = {};
+      const extraIdSets: Record<string, Set<string>> = {};
       const discountMap: Record<
         string,
         { discountType: DiscountType; discountValue: string }
@@ -315,18 +320,27 @@ export default function OrderEditForm({
         loadedValues[orderTemplateId] = valuesMap;
         valueIdMap[orderTemplateId] = vIdMap;
 
+        // ── Extra values: array-based ─────────────────────────────────
         const extValMap: ExtraValuesMap = {};
-        const evIdMap: Record<string, string> = {};
+        const evIdSet = new Set<string>();
         (tmplData.extraValues || []).forEach((ev) => {
-          extValMap[ev.templateExtraFieldId] = {
+          if (!extValMap[ev.templateExtraFieldId]) {
+            extValMap[ev.templateExtraFieldId] = [];
+          }
+          extValMap[ev.templateExtraFieldId].push({
             value: ev.value,
             orderExtraValueId: ev.id,
-            orderIndex: ev.orderIndex
-          };
-          evIdMap[ev.templateExtraFieldId] = ev.id;
+            orderIndex:
+              ev.orderIndex ?? extValMap[ev.templateExtraFieldId].length
+          });
+          evIdSet.add(ev.id);
         });
+        // Sort each array by orderIndex
+        Object.values(extValMap).forEach((arr) =>
+          arr.sort((a, b) => a.orderIndex - b.orderIndex)
+        );
         loadedExtraValues[orderTemplateId] = extValMap;
-        extraValueIdMap[orderTemplateId] = evIdMap;
+        extraIdSets[orderTemplateId] = evIdSet;
 
         const bvMap: BlockValuesMap = {};
         ((tmplData as any).blockValues || []).forEach((bv: any) => {
@@ -378,7 +392,7 @@ export default function OrderEditForm({
           loadedValues[tempKey] = {};
           loadedExtraValues[tempKey] = {};
           valueIdMap[tempKey] = {};
-          extraValueIdMap[tempKey] = {};
+          extraIdSets[tempKey] = new Set();
           discountMap[tempKey] = {
             discountType: 'PERCENT',
             discountValue: '0'
@@ -391,7 +405,7 @@ export default function OrderEditForm({
       setTemplateValues(loadedValues);
       setExtraValues(loadedExtraValues);
       setOriginalValueIds(valueIdMap);
-      setOriginalExtraValueIds(extraValueIdMap);
+      setOriginalExtraValueIdSets(extraIdSets);
       setTemplateDiscounts(discountMap);
       setTemplateBlockValues(loadedBlockValues);
     } catch (err) {
@@ -493,18 +507,28 @@ export default function OrderEditForm({
       const tmplExtraValues = extraValues[entry.orderTemplateId] || {};
 
       extras.forEach((extra) => {
-        const val = tmplExtraValues[extra.id]?.value || '';
-        if (extra.isRequired && !val.trim()) {
-          extErrors[extra.id] = 'Required';
-          isValid = false;
-          return;
-        }
-        if (extra.valueType === 'NUMBER' && val.trim()) {
-          const num = Number(val);
-          if (isNaN(num)) {
-            extErrors[extra.id] = 'Must be a number';
+        const items = tmplExtraValues[extra.id] || [];
+
+        // Required check: at least one non-empty value
+        if (extra.isRequired) {
+          const hasValue = items.some((i) => i.value.trim() !== '');
+          if (!hasValue) {
+            extErrors[extra.id] = 'Required';
             isValid = false;
           }
+        }
+
+        // Type validation per item
+        if (extra.valueType === 'NUMBER') {
+          items.forEach((item, idx) => {
+            if (item.value.trim()) {
+              const num = Number(item.value);
+              if (isNaN(num)) {
+                extErrors[`${extra.id}__${idx}`] = 'Must be a number';
+                isValid = false;
+              }
+            }
+          });
         }
       });
       newExtraErrors[entry.orderTemplateId] = extErrors;
@@ -560,9 +584,10 @@ export default function OrderEditForm({
         const columns = tmpl.columns || [];
         const rows = tmpl.rows || [];
         const origIds = originalValueIds[entry.orderTemplateId] || {};
-        const origExIds = originalExtraValueIds[entry.orderTemplateId] || {};
         const tmplExtras = tmpl.extra || [];
         const tmplExtraValues = extraValues[entry.orderTemplateId] || {};
+        const originalExIdSet =
+          originalExtraValueIdSets[entry.orderTemplateId] || new Set();
 
         const values: UpdateOrderValueItem[] = [];
         const usedOriginalIds = new Set<string>();
@@ -597,34 +622,35 @@ export default function OrderEditForm({
           });
         }
 
+        // ── Extra values: flatten array-based map into payload ──────
         const extravalues: OrderExtraValuePayload[] = [];
         const usedExtraIds = new Set<string>();
 
         tmplExtras.forEach((extra) => {
-          const val = tmplExtraValues[extra.id]?.value || '';
-          const existingId =
-            tmplExtraValues[extra.id]?.orderExtraValueId || origExIds[extra.id];
-          const orderIndex = tmplExtraValues[extra.id]?.orderIndex ?? 0;
-
-          if (val.trim() || existingId) {
-            extravalues.push({
-              ...(existingId ? { orderExtraValueId: existingId } : {}),
-              templateExtraFieldId: extra.id,
-              value: val.trim(),
-              meta: null,
-              orderIndex
-            });
-            if (existingId) {
-              usedExtraIds.add(existingId);
+          const items = tmplExtraValues[extra.id] || [];
+          items.forEach((item) => {
+            if (item.value.trim() || item.orderExtraValueId) {
+              extravalues.push({
+                ...(item.orderExtraValueId
+                  ? { orderExtraValueId: item.orderExtraValueId }
+                  : {}),
+                templateExtraFieldId: extra.id,
+                value: item.value.trim(),
+                meta: null,
+                orderIndex: item.orderIndex
+              });
+              if (item.orderExtraValueId) {
+                usedExtraIds.add(item.orderExtraValueId);
+              }
             }
-          }
+          });
         });
 
         const deleteOrderExtraValueIds: string[] = [];
         if (!entry.isNew) {
-          Object.entries(origExIds).forEach(([, exValueId]) => {
-            if (!usedExtraIds.has(exValueId)) {
-              deleteOrderExtraValueIds.push(exValueId);
+          originalExIdSet.forEach((exId) => {
+            if (!usedExtraIds.has(exId)) {
+              deleteOrderExtraValueIds.push(exId);
             }
           });
         }
@@ -737,7 +763,7 @@ export default function OrderEditForm({
   }, [entries.length]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // DRAG-TO-SCROLL (with movement threshold)
+  // DRAG-TO-SCROLL
   // ──────────────────────────────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
@@ -759,17 +785,13 @@ export default function OrderEditForm({
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (isTemplateDragging || !containerRef.current) return;
       if (!isDragging && !dragPending.current) return;
-
       const dx = e.clientX - dragStart.current.x;
       const dy = e.clientY - dragStart.current.y;
-
       if (!isDragging) {
-        if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD) {
+        if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD)
           setIsDragging(true);
-        }
         return;
       }
-
       containerRef.current.scrollLeft = scrollStart.current.left - dx;
       containerRef.current.scrollTop = scrollStart.current.top - dy;
     },
@@ -813,20 +835,13 @@ export default function OrderEditForm({
       if (isTemplateDragging) return;
       if (e.touches.length === 1 && containerRef.current) {
         if (!isDragging && !dragPending.current) return;
-
         const dx = e.touches[0].clientX - dragStart.current.x;
         const dy = e.touches[0].clientY - dragStart.current.y;
-
         if (!isDragging) {
-          if (
-            Math.abs(dx) >= DRAG_THRESHOLD ||
-            Math.abs(dy) >= DRAG_THRESHOLD
-          ) {
+          if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD)
             setIsDragging(true);
-          }
           return;
         }
-
         containerRef.current.scrollLeft = scrollStart.current.left - dx;
         containerRef.current.scrollTop = scrollStart.current.top - dy;
       } else if (e.touches.length === 2 && lastPinchDist.current !== null) {

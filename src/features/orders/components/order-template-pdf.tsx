@@ -25,9 +25,13 @@ import {
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import type { OrderWithDetails, TemplateWithDetails } from '@/lib/api/types';
+import type {
+  OrderWithDetails,
+  TemplateWithDetails,
+  TemplateBlock as TemplateBlockApi
+} from '@/lib/api/types';
 import type { TemplateValuesMap } from './order-template-values';
-import type { ExtraValuesMap } from './order-extra-values';
+import type { ExtraValuesMap, ExtraValueItem } from './order-extra-values';
 
 // =============================================================================
 // TYPES
@@ -75,6 +79,9 @@ export type FinalCalcData = {
   hasAnyChildren: boolean;
 };
 
+/** BlockValuesMap: blockIndex → templateBlockId */
+type BlockValuesMap = Record<number, string>;
+
 /** Sentinel ID used to represent the Final Calculation page in selectedIds */
 const FINAL_CALC_ID = '__final_calculation__';
 
@@ -90,9 +97,79 @@ interface OrderTemplatePDFProps {
   entries: PDFTemplateEntry[];
   templateValues: Record<string, TemplateValuesMap>;
   extraValues: Record<string, ExtraValuesMap>;
+  /** Block values per orderTemplateId — maps blockIndex→templateBlockId */
+  blockValues: Record<string, BlockValuesMap>;
   /** Pass this to include Final Calculation as a selectable page */
   finalCalc?: FinalCalcData;
   className?: string;
+}
+
+// =============================================================================
+// EXTRA VALUES HELPERS — array-based access
+// =============================================================================
+
+/** Get the first (or only) value for an extra field, or fallback */
+function getFirstExtraValue(
+  extVals: ExtraValuesMap,
+  fieldId: string,
+  fallback = '—'
+): string {
+  const items = extVals[fieldId];
+  if (!items || items.length === 0) return fallback;
+  const val = items[0]?.value;
+  return val && val.trim() ? val : fallback;
+}
+
+/** Get ALL values for an extra field as a flat array of strings */
+function getAllExtraValues(extVals: ExtraValuesMap, fieldId: string): string[] {
+  const items = extVals[fieldId];
+  if (!items || items.length === 0) return [];
+  return items.map((i) => i.value).filter((v) => v && v.trim());
+}
+
+/** Get all image URLs for a media field (supports allowMultiple) */
+function getAllMediaUrls(extVals: ExtraValuesMap, fieldId: string): string[] {
+  const items = extVals[fieldId];
+  if (!items || items.length === 0) return [];
+  return items
+    .map((i) => i.value)
+    .filter((v) => v && v.trim() && v.startsWith('http'));
+}
+
+/** Join all values for display (comma-separated) */
+function joinExtraValues(
+  extVals: ExtraValuesMap,
+  fieldId: string,
+  fallback = '—'
+): string {
+  const vals = getAllExtraValues(extVals, fieldId);
+  return vals.length > 0 ? vals.join(', ') : fallback;
+}
+
+// =============================================================================
+// BLOCK NAME HELPERS
+// =============================================================================
+
+/** Resolve block name from apiBlocks + blockValues */
+function getBlockName(
+  apiBlocks: TemplateBlockApi[],
+  bvMap: BlockValuesMap,
+  blockIndex: number
+): string | null {
+  const templateBlockId = bvMap[blockIndex];
+  if (!templateBlockId) return null;
+  const block = apiBlocks.find((b) => b.id === templateBlockId);
+  return block?.name ?? null;
+}
+
+/** Build a display label for a block: "Block 0 — 4 SS Silver Diamond" */
+function getBlockLabel(
+  apiBlocks: TemplateBlockApi[],
+  bvMap: BlockValuesMap,
+  blockIndex: number
+): string {
+  const name = getBlockName(apiBlocks, bvMap, blockIndex);
+  return name ? `Block ${blockIndex} — ${name}` : `Block ${blockIndex}`;
 }
 
 // =============================================================================
@@ -139,7 +216,53 @@ function deriveBlockColumns(columns: any[]): ColumnBlock[] {
 // IMAGE UTILITIES — fetch remote images for PDF embedding
 // =============================================================================
 
+/**
+ * Fetches a remote image as a base64 data URL for embedding in jsPDF.
+ *
+ * Strategy:
+ *  1. Load via HTMLImageElement with crossOrigin="anonymous" and draw to
+ *     an offscreen canvas. This works when the server sends CORS headers
+ *     (DigitalOcean Spaces does so by default for GET requests).
+ *  2. Fall back to the fetch API if the canvas approach fails.
+ */
 async function fetchImageAsDataURL(url: string): Promise<string | null> {
+  // Strategy 1: Image element + canvas (preferred — avoids streaming the
+  // entire blob through JS when the browser already has CORS access).
+  const canvasResult = await new Promise<string | null>((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || 200;
+        canvas.height = img.naturalHeight || 200;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        // Use JPEG for photos (smaller), PNG is the safe fallback
+        resolve(canvas.toDataURL('image/jpeg', 0.92));
+      } catch {
+        // Canvas taint or other error
+        resolve(null);
+      }
+    };
+
+    img.onerror = () => resolve(null);
+
+    // Cache-bust so the browser makes a fresh request that includes the
+    // Origin header (needed for CORS handshake on some CDNs).
+    img.src = url.includes('?')
+      ? `${url}&_cb=${Date.now()}`
+      : `${url}?_cb=${Date.now()}`;
+  });
+
+  if (canvasResult) return canvasResult;
+
+  // Strategy 2: fetch API fallback
   try {
     const response = await fetch(url, { mode: 'cors' });
     if (!response.ok) return null;
@@ -185,13 +308,20 @@ interface PreviewTableProps {
   entry: PDFTemplateEntry;
   values: TemplateValuesMap;
   extras: ExtraValuesMap;
+  blockValues: BlockValuesMap;
 }
 
-function PreviewTable({ entry, values, extras }: PreviewTableProps) {
+function PreviewTable({
+  entry,
+  values,
+  extras,
+  blockValues
+}: PreviewTableProps) {
   const { template, summary } = entry;
   const columns = template.columns ?? [];
   const rows = template.rows ?? [];
   const extraFields = template.extra ?? [];
+  const apiBlocks = template.blocks ?? [];
   const headerExtras = extraFields.filter((f) => f.sectionType === 'HEADER');
   const footerExtras = extraFields.filter((f) => f.sectionType === 'FOOTER');
 
@@ -211,6 +341,27 @@ function PreviewTable({ entry, values, extras }: PreviewTableProps) {
 
   return (
     <div className='space-y-2.5 text-xs'>
+      {/* Block selectors (show which block is selected) */}
+      {apiBlocks.length > 0 && (
+        <div className='flex flex-wrap gap-2'>
+          {blockGroups.map((bg, idx) => {
+            const name = getBlockName(apiBlocks, blockValues, bg.index);
+            if (!name) return null;
+            return (
+              <div
+                key={bg.index}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-medium',
+                  blockColorClasses[idx % blockColorClasses.length]
+                )}
+              >
+                Block {bg.index}: {name}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Header extra values */}
       {headerExtras.length > 0 && (
         <div className='bg-muted/30 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border px-3 py-2'>
@@ -219,7 +370,7 @@ function PreviewTable({ entry, values, extras }: PreviewTableProps) {
               <span className='text-muted-foreground font-medium'>
                 {f.label}:
               </span>
-              <span>{extras[f.id]?.value ?? '—'}</span>
+              <span>{joinExtraValues(extras, f.id)}</span>
             </div>
           ))}
         </div>
@@ -245,7 +396,7 @@ function PreviewTable({ entry, values, extras }: PreviewTableProps) {
                         blockColorClasses[idx % blockColorClasses.length]
                       )}
                     >
-                      Block {bg.index}
+                      {getBlockLabel(apiBlocks, blockValues, bg.index)}
                     </th>
                   ))}
                 </tr>
@@ -344,7 +495,7 @@ function PreviewTable({ entry, values, extras }: PreviewTableProps) {
               <span className='text-muted-foreground font-medium'>
                 {f.label}:
               </span>
-              <span>{extras[f.id]?.value ?? '—'}</span>
+              <span>{joinExtraValues(extras, f.id)}</span>
             </div>
           ))}
         </div>
@@ -480,6 +631,7 @@ async function generateMultiPDF(
   selectedEntries: PDFTemplateEntry[],
   templateValues: Record<string, TemplateValuesMap>,
   extraValues: Record<string, ExtraValuesMap>,
+  allBlockValues: Record<string, BlockValuesMap>,
   finalCalc: FinalCalcData | null,
   includeFinalCalc: boolean,
   finalCalcOptions: FinalCalcPDFOptions
@@ -511,15 +663,24 @@ async function generateMultiPDF(
 
   // Block header colours (matching the UI palette)
   const BLOCK_COLORS: [number, number, number][] = [
-    [37, 99, 235], // blue-600
-    [22, 163, 74], // green-600
-    [147, 51, 234], // purple-600
-    [217, 119, 6], // amber-600
-    [219, 39, 119], // pink-600
-    [13, 148, 136] // teal-600
+    [37, 99, 235],
+    [22, 163, 74],
+    [147, 51, 234],
+    [217, 119, 6],
+    [219, 39, 119],
+    [13, 148, 136]
   ];
 
-  // Section label colours (header=green, media=purple, footer=green)
+  const BLOCK_BG_COLORS: [number, number, number][] = [
+    [219, 234, 254], // blue-200
+    [187, 247, 208], // green-200
+    [233, 213, 255], // purple-200
+    [253, 230, 138], // amber-200
+    [251, 207, 232], // pink-200
+    [153, 246, 228] // teal-200
+  ];
+
+  // Section label colours
   const SEC = {
     header: {
       bg: [220, 252, 231] as [number, number, number],
@@ -538,7 +699,7 @@ async function generateMultiPDF(
     }
   } as const;
 
-  // ── Pre-fetch all media images ──────────────────────────────────────
+  // ── Pre-fetch all media images (supports multiple per field) ────────
   const mediaImageCache: Record<
     string,
     { dataUrl: string; w: number; h: number }
@@ -551,9 +712,10 @@ async function generateMultiPDF(
       (f) => f.sectionType === 'MEDIA' && f.valueType === 'IMAGE'
     );
     for (const mf of mediaExtras) {
-      const url = extVals[mf.id]?.value;
-      if (url && typeof url === 'string' && url.startsWith('http')) {
-        const cacheKey = `${entry.orderTemplateId}_${mf.id}`;
+      const urls = getAllMediaUrls(extVals, mf.id);
+      for (let urlIdx = 0; urlIdx < urls.length; urlIdx++) {
+        const url = urls[urlIdx];
+        const cacheKey = `${entry.orderTemplateId}_${mf.id}_${urlIdx}`;
         try {
           const dataUrl = await fetchImageAsDataURL(url);
           if (dataUrl) {
@@ -567,7 +729,7 @@ async function generateMultiPDF(
     }
   }
 
-  // ── Draw section label pill (like the UI badges) ────────────────────
+  // ── Draw section label pill ─────────────────────────────────────────
   function drawSectionLabel(
     label: string,
     count: number,
@@ -584,11 +746,9 @@ async function generateMultiPDF(
     const pillW = labelW + badgeW + 16;
     const pillH = 18;
 
-    // Pill background
     doc.setFillColor(...color.bg);
     doc.roundedRect(MARGIN, y, pillW, pillH, 4, 4, 'F');
 
-    // Section icon placeholder (small square)
     doc.setFillColor(...color.badge);
     doc.roundedRect(MARGIN + 6, y + 4, 10, 10, 2, 2, 'F');
     doc.setFont('helvetica', 'bold');
@@ -596,13 +756,11 @@ async function generateMultiPDF(
     doc.setTextColor(...C.white);
     doc.text('⊞', MARGIN + 8.5, y + 11.5);
 
-    // Label text
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(...color.fg);
     doc.text(label, MARGIN + 20, y + 12);
 
-    // Field count badge
     const badgeX = MARGIN + labelW + 4;
     doc.setFillColor(...color.badge);
     doc.roundedRect(badgeX, y + 3, badgeW, 12, 3, 3, 'F');
@@ -732,7 +890,6 @@ async function generateMultiPDF(
       hasAnyChildren
     } = fc;
 
-    // Banner
     doc.setFillColor(...C.primary);
     doc.rect(0, 0, PAGE_W, 72, 'F');
     doc.setFillColor(...C.accent);
@@ -768,7 +925,6 @@ async function generateMultiPDF(
     let y = 90;
     y = drawInfoCard(y, 'Final Calculation');
 
-    // Section label
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(...C.accent);
@@ -779,7 +935,6 @@ async function generateMultiPDF(
     doc.setLineWidth(0.5);
     y += 16;
 
-    // Build column list
     const headCols = ['Template', 'Total (₹)'];
     if (hasAnyChildren) headCols.push('Child Total (₹)');
     headCols.push('Notes');
@@ -860,11 +1015,9 @@ async function generateMultiPDF(
 
     y = (doc as any).lastAutoTable.finalY + 20;
 
-    // Summary card (right-aligned)
     const summaryW = 260;
     const summaryX = PAGE_W - MARGIN - summaryW;
 
-    // Build summary rows dynamically based on options
     const sRows: [string, string, boolean][] = [['Total', fc.total, false]];
     if (finalCalcOptions.includeMarginDiscount) {
       sRows.push([
@@ -934,7 +1087,7 @@ async function generateMultiPDF(
     });
   }
 
-  // ── Determine total page count (entries + optional final calc) ──────
+  // ── Determine total page count ──────────────────────────────────────
   const totalPageCount =
     selectedEntries.length + (includeFinalCalc && finalCalc ? 1 : 0);
 
@@ -947,8 +1100,10 @@ async function generateMultiPDF(
     const columns = template.columns ?? [];
     const rows = template.rows ?? [];
     const extra = template.extra ?? [];
+    const apiBlocks = template.blocks ?? [];
     const vals = templateValues[entry.orderTemplateId] ?? {};
     const extVals = extraValues[entry.orderTemplateId] ?? {};
+    const bvMap = allBlockValues[entry.orderTemplateId] ?? {};
 
     const headerExtras = extra.filter((f) => f.sectionType === 'HEADER');
     const footerExtras = extra.filter((f) => f.sectionType === 'FOOTER');
@@ -964,11 +1119,24 @@ async function generateMultiPDF(
     if (headerExtras.length > 0) {
       y = drawSectionLabel('Header Fields', headerExtras.length, SEC.header, y);
 
+      const headerBody: string[][] = [];
+      headerExtras.forEach((f) => {
+        const vals_arr = getAllExtraValues(extVals, f.id);
+        if (vals_arr.length <= 1) {
+          headerBody.push([f.label, vals_arr[0] ?? '—']);
+        } else {
+          // Multiple values — one row per value
+          vals_arr.forEach((v, idx) => {
+            headerBody.push([idx === 0 ? f.label : '', v]);
+          });
+        }
+      });
+
       autoTable(doc, {
         startY: y,
         margin: { left: MARGIN, right: MARGIN },
         head: [['Field', 'Value']],
-        body: headerExtras.map((f) => [f.label, extVals[f.id]?.value ?? '—']),
+        body: headerBody,
         theme: 'plain',
         headStyles: {
           fillColor: SEC.header.bg,
@@ -1003,9 +1171,9 @@ async function generateMultiPDF(
     doc.setLineWidth(0.5);
     y += 16;
 
-    // ── Main values table (block-aware) ───────────────────────────────
+    // ── Main values table (block-aware with selected names) ───────────
+    const blockGroups = deriveBlockColumns(columns);
     if (columns.length > 0 && rows.length > 0) {
-      const blockGroups = deriveBlockColumns(columns);
       const flatCols = blockGroups.flatMap((bg) => bg.columns);
       const hasMultipleBlocks = blockGroups.length > 1;
 
@@ -1023,8 +1191,10 @@ async function generateMultiPDF(
           }
         ];
         blockGroups.forEach((bg, idx) => {
+          // Show "Block N — Selected Name" in the header
+          const blockLabel = getBlockLabel(apiBlocks, bvMap, bg.index);
           headerRow1.push({
-            content: `Block ${bg.index}`,
+            content: blockLabel,
             colSpan: bg.columns.length,
             styles: {
               halign: 'center' as const,
@@ -1043,7 +1213,15 @@ async function generateMultiPDF(
         );
         head = [headerRow1, headerRow2];
       } else {
-        head = [['Description', ...flatCols.map((c: any) => c.label)]];
+        // Single block — show block name in section title if selected
+        const singleBlockName =
+          apiBlocks.length > 0
+            ? getBlockName(apiBlocks, bvMap, blockGroups[0]?.index ?? 0)
+            : null;
+        const descHeader = singleBlockName
+          ? `Description (${singleBlockName})`
+          : 'Description';
+        head = [[descHeader, ...flatCols.map((c: any) => c.label)]];
       }
 
       const body = rows.map((row) => {
@@ -1097,7 +1275,7 @@ async function generateMultiPDF(
       y = (doc as any).lastAutoTable.finalY + 16;
     }
 
-    // ── SUMMARY CARD (all fields, right-aligned) ──────────────────────
+    // ── SUMMARY CARD ──────────────────────────────────────────────────
     if (summary) {
       const summaryW = 240;
       const summaryX = PAGE_W - MARGIN - summaryW;
@@ -1155,85 +1333,121 @@ async function generateMultiPDF(
       y = (doc as any).lastAutoTable.finalY + 14;
     }
 
-    // ── MEDIA FIELDS ──────────────────────────────────────────────────
+    // ── MEDIA FIELDS (supports multiple images per field) ─────────────
     if (mediaExtras.length > 0) {
-      const mediaWithImages = mediaExtras.filter((mf) => {
-        const cacheKey = `${entry.orderTemplateId}_${mf.id}`;
-        return (
-          mediaImageCache[cacheKey] ||
-          (extVals[mf.id]?.value && mf.valueType !== 'IMAGE')
-        );
+      const hasAnyMedia = mediaExtras.some((mf) => {
+        if (mf.valueType === 'IMAGE') {
+          const urls = getAllMediaUrls(extVals, mf.id);
+          return urls.length > 0;
+        }
+        const vals_arr = getAllExtraValues(extVals, mf.id);
+        return vals_arr.length > 0;
       });
-
-      // Only render section if there's actual content
-      const hasAnyMedia =
-        mediaWithImages.length > 0 ||
-        mediaExtras.some(
-          (mf) => mf.valueType !== 'IMAGE' && extVals[mf.id]?.value
-        );
 
       if (hasAnyMedia || mediaExtras.length > 0) {
         y = ensureSpace(y, 100);
         y = drawSectionLabel('Media Fields', mediaExtras.length, SEC.media, y);
 
-        // Render each media extra field
         for (const mf of mediaExtras) {
-          const cacheKey = `${entry.orderTemplateId}_${mf.id}`;
-          const cached = mediaImageCache[cacheKey];
+          if (mf.valueType === 'IMAGE') {
+            // Get ALL image urls for this field (supports allowMultiple)
+            const urls = getAllMediaUrls(extVals, mf.id);
+            if (urls.length === 0) {
+              // No images — show placeholder
+              doc.setFont('helvetica', 'bold');
+              doc.setFontSize(7.5);
+              doc.setTextColor(...C.muted);
+              doc.text(`${mf.label}:`, MARGIN, y + 4);
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(8);
+              doc.text('—', MARGIN + 60, y + 4);
+              y += 14;
+              continue;
+            }
 
-          if (cached) {
-            // Draw image label
+            // Draw label
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(7.5);
             doc.setTextColor(...C.muted);
-            doc.text(mf.label, MARGIN, y + 4);
+            doc.text(
+              `${mf.label}${urls.length > 1 ? ` (${urls.length} images)` : ''}`,
+              MARGIN,
+              y + 4
+            );
             y += 10;
 
-            // Draw image with border — INCREASED SIZE
-            const MAX_IMG_W = 320;
-            const MAX_IMG_H = 240;
-            const fit = fitImage(cached.w, cached.h, MAX_IMG_W, MAX_IMG_H);
+            // Render each image
+            for (let urlIdx = 0; urlIdx < urls.length; urlIdx++) {
+              const cacheKey = `${entry.orderTemplateId}_${mf.id}_${urlIdx}`;
+              const cached = mediaImageCache[cacheKey];
 
-            y = ensureSpace(y, fit.h + 16);
+              if (cached) {
+                const MAX_IMG_W = 320;
+                const MAX_IMG_H = 240;
+                const fit = fitImage(cached.w, cached.h, MAX_IMG_W, MAX_IMG_H);
 
-            // Image border/frame
-            doc.setDrawColor(...SEC.media.badge);
-            doc.setLineWidth(1);
-            doc.roundedRect(MARGIN, y, fit.w + 8, fit.h + 8, 3, 3, 'D');
-            doc.setLineWidth(0.5);
+                y = ensureSpace(y, fit.h + 16);
 
-            // Determine image format from dataUrl
-            const isJpeg =
-              cached.dataUrl.includes('image/jpeg') ||
-              cached.dataUrl.includes('image/jpg');
-            const imgFormat = isJpeg ? 'JPEG' : 'PNG';
+                doc.setDrawColor(...SEC.media.badge);
+                doc.setLineWidth(1);
+                doc.roundedRect(MARGIN, y, fit.w + 8, fit.h + 8, 3, 3, 'D');
+                doc.setLineWidth(0.5);
 
-            try {
-              doc.addImage(
-                cached.dataUrl,
-                imgFormat,
-                MARGIN + 4,
-                y + 4,
-                fit.w,
-                fit.h
-              );
-            } catch {
-              // If addImage fails, draw a placeholder
-              doc.setFillColor(...C.rowAlt);
-              doc.rect(MARGIN + 4, y + 4, fit.w, fit.h, 'F');
-              doc.setFont('helvetica', 'normal');
-              doc.setFontSize(7);
-              doc.setTextColor(...C.muted);
-              doc.text(
-                'Image could not be loaded',
-                MARGIN + 8,
-                y + fit.h / 2 + 4
-              );
+                // Detect format from data URL
+                const isJpeg =
+                  cached.dataUrl.startsWith('data:image/jpeg') ||
+                  cached.dataUrl.startsWith('data:image/jpg');
+                const imgFormat = isJpeg ? 'JPEG' : 'PNG';
+
+                try {
+                  doc.addImage(
+                    cached.dataUrl,
+                    imgFormat,
+                    MARGIN + 4,
+                    y + 4,
+                    fit.w,
+                    fit.h
+                  );
+                } catch {
+                  doc.setFillColor(...C.rowAlt);
+                  doc.rect(MARGIN + 4, y + 4, fit.w, fit.h, 'F');
+                  doc.setFont('helvetica', 'normal');
+                  doc.setFontSize(7);
+                  doc.setTextColor(...C.muted);
+                  doc.text(
+                    'Image could not be embedded',
+                    MARGIN + 8,
+                    y + fit.h / 2 + 4
+                  );
+                }
+
+                y += fit.h + 16;
+              } else {
+                // Couldn't fetch — show a small placeholder box instead of URL
+                y = ensureSpace(y, 40);
+                const PH_W = 120;
+                const PH_H = 32;
+                doc.setFillColor(...C.rowAlt);
+                doc.setDrawColor(...C.border);
+                doc.setLineWidth(0.5);
+                doc.roundedRect(MARGIN, y, PH_W, PH_H, 3, 3, 'FD');
+                doc.setFont('helvetica', 'italic');
+                doc.setFontSize(7);
+                doc.setTextColor(...C.muted);
+                doc.text(
+                  'Image unavailable',
+                  MARGIN + PH_W / 2,
+                  y + PH_H / 2 + 2,
+                  {
+                    align: 'center'
+                  }
+                );
+                y += PH_H + 10;
+              }
             }
-
-            y += fit.h + 16;
-          } else if (mf.valueType !== 'IMAGE' && extVals[mf.id]?.value) {
+          } else {
             // Non-image media field (text etc.)
+            const vals_arr = getAllExtraValues(extVals, mf.id);
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(7.5);
             doc.setTextColor(...C.muted);
@@ -1241,28 +1455,11 @@ async function generateMultiPDF(
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(8);
             doc.setTextColor(...C.primary);
-            doc.text(extVals[mf.id].value, MARGIN + 60, y + 4);
-            y += 14;
-          } else {
-            // Image field but image couldn't be loaded — show URL
-            const url = extVals[mf.id]?.value;
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(7.5);
-            doc.setTextColor(...C.muted);
-            doc.text(`${mf.label}:`, MARGIN, y + 4);
-            if (url) {
-              doc.setFont('helvetica', 'normal');
-              doc.setFontSize(7);
-              doc.setTextColor(...C.accent);
-              const truncUrl =
-                url.length > 80 ? url.substring(0, 77) + '...' : url;
-              doc.text(truncUrl, MARGIN + 60, y + 4);
-            } else {
-              doc.setFont('helvetica', 'normal');
-              doc.setFontSize(8);
-              doc.setTextColor(...C.muted);
-              doc.text('—', MARGIN + 60, y + 4);
-            }
+            doc.text(
+              vals_arr.length > 0 ? vals_arr.join(', ') : '—',
+              MARGIN + 60,
+              y + 4
+            );
             y += 14;
           }
         }
@@ -1276,11 +1473,23 @@ async function generateMultiPDF(
       y = ensureSpace(y, 60);
       y = drawSectionLabel('Footer Fields', footerExtras.length, SEC.footer, y);
 
+      const footerBody: string[][] = [];
+      footerExtras.forEach((f) => {
+        const vals_arr = getAllExtraValues(extVals, f.id);
+        if (vals_arr.length <= 1) {
+          footerBody.push([f.label, vals_arr[0] ?? '—']);
+        } else {
+          vals_arr.forEach((v, idx) => {
+            footerBody.push([idx === 0 ? f.label : '', v]);
+          });
+        }
+      });
+
       autoTable(doc, {
         startY: y,
         margin: { left: MARGIN, right: MARGIN },
         head: [['Field', 'Value']],
-        body: footerExtras.map((f) => [f.label, extVals[f.id]?.value ?? '—']),
+        body: footerBody,
         theme: 'plain',
         headStyles: {
           fillColor: SEC.footer.bg,
@@ -1312,7 +1521,7 @@ async function generateMultiPDF(
     renderFinalCalcPage(finalCalc, totalPageCount, totalPageCount);
   }
 
-  // ── Per-page footer (page number + section name) ────────────────────
+  // ── Per-page footer ─────────────────────────────────────────────────
   const totalPages: number =
     (doc.internal as any).getNumberOfPages?.() ?? totalPageCount;
 
@@ -1337,7 +1546,6 @@ async function generateMultiPDF(
     });
   }
 
-  // ── Save ─────────────────────────────────────────────────────────────
   doc.save(`order_${order.orderNo}_templates.pdf`);
 }
 
@@ -1373,6 +1581,7 @@ export default function OrderTemplatePDF({
   entries,
   templateValues,
   extraValues,
+  blockValues: allBlockValues,
   finalCalc,
   className
 }: OrderTemplatePDFProps) {
@@ -1399,21 +1608,16 @@ export default function OrderTemplatePDF({
   const noneSelected = selectedIds.size === 0;
   const someSelected = !noneSelected && !allSelected;
 
-  // Total item count (templates + optional final calc)
   const totalItemCount = labelledEntries.length + (finalCalc ? 1 : 0);
 
-  // Open dialog — pre-select only non-duplicate templates that have a non-zero total
   const openDialog = useCallback(() => {
     const defaultSelected = new Set<string>();
     for (const { entry } of labelledEntries) {
-      // Skip new (no values yet) and child (duplicate) templates
       if (entry.isNew || entry.isChild) continue;
-      // Skip templates with no summary or a zero/missing total
       const total = parseFloat(entry.summary?.finalPayableAmount ?? '0');
       if (!entry.summary || isNaN(total) || total === 0) continue;
       defaultSelected.add(entry.orderTemplateId);
     }
-    // Include Final Calculation by default only when there are selected templates
     if (finalCalc && defaultSelected.size > 0) {
       defaultSelected.add(FINAL_CALC_ID);
     }
@@ -1451,6 +1655,7 @@ export default function OrderTemplatePDF({
         toExport,
         templateValues,
         extraValues,
+        allBlockValues,
         finalCalc ?? null,
         includeFinalCalc,
         {
@@ -1471,6 +1676,7 @@ export default function OrderTemplatePDF({
     order,
     templateValues,
     extraValues,
+    allBlockValues,
     finalCalc,
     includeAddonDiscount,
     includeMarginDiscount,
@@ -1619,6 +1825,7 @@ export default function OrderTemplatePDF({
                             entry={entry}
                             values={templateValues[id] ?? {}}
                             extras={extraValues[id] ?? {}}
+                            blockValues={allBlockValues[id] ?? {}}
                           />
                         </div>
                       </>
@@ -1747,7 +1954,6 @@ export default function OrderTemplatePDF({
           </ScrollArea>
 
           <DialogFooter className='items-center gap-2 sm:gap-2'>
-            {/* Left-side info */}
             <p className='text-muted-foreground mr-auto text-xs'>
               {selectedCount > 0
                 ? `${selectedCount} template${selectedCount > 1 ? 's' : ''} → 1 PDF (${selectedCount} page${selectedCount > 1 ? 's' : ''})`
