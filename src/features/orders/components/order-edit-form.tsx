@@ -95,6 +95,28 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.25;
 const SCROLL_ZOOM_FACTOR = 0.001;
+const DRAG_THRESHOLD = 3;
+
+// =============================================================================
+// Interactive-element check shared by mouse & touch handlers
+// =============================================================================
+
+function isInteractiveTarget(target: HTMLElement): boolean {
+  return !!(
+    target.closest('button') ||
+    target.closest('a') ||
+    target.closest('input') ||
+    target.closest('select') ||
+    target.closest('textarea') ||
+    target.closest('[data-drag-handle]') ||
+    target.closest('[role="combobox"]') ||
+    target.closest('[role="listbox"]') ||
+    target.closest('[role="option"]') ||
+    target.closest('[role="dialog"]') ||
+    target.closest('[data-radix-select-trigger]') ||
+    target.closest('[data-radix-collection-item]')
+  );
+}
 
 // =============================================================================
 // INTERNAL TYPES
@@ -215,6 +237,7 @@ export default function OrderEditForm({
 
   // Drag-to-scroll state
   const [isDragging, setIsDragging] = useState(false);
+  const dragPending = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const scrollStart = useRef({ left: 0, top: 0 });
 
@@ -305,8 +328,6 @@ export default function OrderEditForm({
         loadedExtraValues[orderTemplateId] = extValMap;
         extraValueIdMap[orderTemplateId] = evIdMap;
 
-        // Parse blockValues from API: [{ templateBlockId, blockIndex: "block_0" }]
-        // Convert to BlockValuesMap: { 0: templateBlockId }
         const bvMap: BlockValuesMap = {};
         ((tmplData as any).blockValues || []).forEach((bv: any) => {
           const idx = parseInt(
@@ -372,7 +393,6 @@ export default function OrderEditForm({
       setOriginalValueIds(valueIdMap);
       setOriginalExtraValueIds(extraValueIdMap);
       setTemplateDiscounts(discountMap);
-      // Use parsed block values from API instead of resetting to {}
       setTemplateBlockValues(loadedBlockValues);
     } catch (err) {
       setError(getError(err));
@@ -544,7 +564,6 @@ export default function OrderEditForm({
         const tmplExtras = tmpl.extra || [];
         const tmplExtraValues = extraValues[entry.orderTemplateId] || {};
 
-        // Build main values
         const values: UpdateOrderValueItem[] = [];
         const usedOriginalIds = new Set<string>();
 
@@ -578,7 +597,6 @@ export default function OrderEditForm({
           });
         }
 
-        // Build extra values
         const extravalues: OrderExtraValuePayload[] = [];
         const usedExtraIds = new Set<string>();
 
@@ -611,7 +629,6 @@ export default function OrderEditForm({
           });
         }
 
-        // Build summary
         const discount = templateDiscounts[entry.orderTemplateId] || {
           discountType: 'PERCENT' as DiscountType,
           discountValue: '0'
@@ -621,12 +638,10 @@ export default function OrderEditForm({
           discountValue: discount.discountValue || '0'
         };
 
-        // Build block values — same format as order creation: "block_0", "block_1" etc.
         const blockvalues = buildBlockValuesPayload(
           templateBlockValues[entry.orderTemplateId] || {}
         );
 
-        // Find children
         const childEntries = entries.filter(
           (e) => e.parentOrderTemplateId === entry.orderTemplateId
         );
@@ -722,24 +737,15 @@ export default function OrderEditForm({
   }, [entries.length]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // DRAG-TO-SCROLL
+  // DRAG-TO-SCROLL (with movement threshold)
   // ──────────────────────────────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
       if (e.button !== 0) return;
-      const target = e.target as HTMLElement;
-      if (
-        target.closest('button') ||
-        target.closest('a') ||
-        target.closest('input') ||
-        target.closest('select') ||
-        target.closest('textarea') ||
-        target.closest('[data-drag-handle]')
-      )
-        return;
+      if (isInteractiveTarget(e.target as HTMLElement)) return;
       e.preventDefault();
-      setIsDragging(true);
+      dragPending.current = true;
       dragStart.current = { x: e.clientX, y: e.clientY };
       scrollStart.current = {
         left: containerRef.current?.scrollLeft ?? 0,
@@ -751,16 +757,29 @@ export default function OrderEditForm({
 
   const handleMouseMove = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (!isDragging || isTemplateDragging || !containerRef.current) return;
+      if (isTemplateDragging || !containerRef.current) return;
+      if (!isDragging && !dragPending.current) return;
+
       const dx = e.clientX - dragStart.current.x;
       const dy = e.clientY - dragStart.current.y;
+
+      if (!isDragging) {
+        if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD) {
+          setIsDragging(true);
+        }
+        return;
+      }
+
       containerRef.current.scrollLeft = scrollStart.current.left - dx;
       containerRef.current.scrollTop = scrollStart.current.top - dy;
     },
     [isDragging, isTemplateDragging]
   );
 
-  const handleMouseUp = useCallback(() => setIsDragging(false), []);
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+    dragPending.current = false;
+  }, []);
 
   const getTouchDist = (t1: React.Touch, t2: React.Touch): number => {
     const dx = t1.clientX - t2.clientX;
@@ -772,17 +791,8 @@ export default function OrderEditForm({
     (e: ReactTouchEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
       if (e.touches.length === 1) {
-        const target = e.target as HTMLElement;
-        if (
-          target.closest('button') ||
-          target.closest('a') ||
-          target.closest('input') ||
-          target.closest('select') ||
-          target.closest('textarea') ||
-          target.closest('[data-drag-handle]')
-        )
-          return;
-        setIsDragging(true);
+        if (isInteractiveTarget(e.target as HTMLElement)) return;
+        dragPending.current = true;
         dragStart.current = {
           x: e.touches[0].clientX,
           y: e.touches[0].clientY
@@ -801,9 +811,22 @@ export default function OrderEditForm({
   const handleTouchMove = useCallback(
     (e: ReactTouchEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
-      if (e.touches.length === 1 && isDragging && containerRef.current) {
+      if (e.touches.length === 1 && containerRef.current) {
+        if (!isDragging && !dragPending.current) return;
+
         const dx = e.touches[0].clientX - dragStart.current.x;
         const dy = e.touches[0].clientY - dragStart.current.y;
+
+        if (!isDragging) {
+          if (
+            Math.abs(dx) >= DRAG_THRESHOLD ||
+            Math.abs(dy) >= DRAG_THRESHOLD
+          ) {
+            setIsDragging(true);
+          }
+          return;
+        }
+
         containerRef.current.scrollLeft = scrollStart.current.left - dx;
         containerRef.current.scrollTop = scrollStart.current.top - dy;
       } else if (e.touches.length === 2 && lastPinchDist.current !== null) {
@@ -818,21 +841,13 @@ export default function OrderEditForm({
 
   const handleTouchEnd = useCallback(() => {
     setIsDragging(false);
+    dragPending.current = false;
     lastPinchDist.current = null;
   }, []);
 
   const handleDoubleClick = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
-      const target = e.target as HTMLElement;
-      if (
-        target.closest('button') ||
-        target.closest('a') ||
-        target.closest('input') ||
-        target.closest('select') ||
-        target.closest('textarea') ||
-        target.closest('[data-drag-handle]')
-      )
-        return;
+      if (isInteractiveTarget(e.target as HTMLElement)) return;
       setZoom((z) => (z > 1.1 ? 1 : 2.5));
     },
     []

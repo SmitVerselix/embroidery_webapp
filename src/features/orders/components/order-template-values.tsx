@@ -107,26 +107,26 @@ const blockColors = [
 ];
 
 // =============================================================================
-// FORMULA HELPERS
+// FORMULA HELPERS — OPTIMISED
 // =============================================================================
 
 /**
  * Recursively collect the IDs of all NUMBER/TEXT (user-input) columns that a
- * formula depends on — follows FORMULA-references-FORMULA chains.
+ * formula depends on — follows FORMULA→FORMULA chains.
+ *
+ * NOTE: The shared `_visited` set is CORRECT here because we are collecting a
+ * union of input-column IDs. Re-visiting a formula key would only yield the
+ * same IDs again, so skipping it is both safe and desirable.
  */
 function getReferencedInputColumnIds(
   formula: string | null | undefined,
   columns: TemplateColumn[],
+  keyToCol: Record<string, TemplateColumn>,
   _visited = new Set<string>()
 ): string[] {
   if (!formula) return [];
   const parsed = parseFormula(formula);
   if (!parsed) return [];
-
-  const keyToCol: Record<string, TemplateColumn> = {};
-  columns.forEach((col) => {
-    keyToCol[col.key] = col;
-  });
 
   const ids: string[] = [];
 
@@ -143,11 +143,14 @@ function getReferencedInputColumnIds(
       !_visited.has(col.key)
     ) {
       _visited.add(col.key);
-      getReferencedInputColumnIds(col.formula, columns, _visited).forEach(
-        (id) => {
-          if (!ids.includes(id)) ids.push(id);
-        }
-      );
+      getReferencedInputColumnIds(
+        col.formula,
+        columns,
+        keyToCol,
+        _visited
+      ).forEach((id) => {
+        if (!ids.includes(id)) ids.push(id);
+      });
     }
   });
 
@@ -155,51 +158,96 @@ function getReferencedInputColumnIds(
 }
 
 /**
- * Returns true only when every NUMBER/TEXT column that this formula depends
- * on (directly or via nested FORMULA references) has a non-empty value.
+ * Topologically sort formula columns so that dependencies are evaluated first.
+ * Uses Kahn's algorithm. Handles cycles gracefully by appending remaining
+ * columns at the end.
  */
-function areFormulaInputsComplete(
-  formula: string | null | undefined,
-  columns: TemplateColumn[],
-  rowValues: Record<string, string>
-): boolean {
-  const refIds = getReferencedInputColumnIds(formula, columns);
-  if (refIds.length === 0) return false;
-  return refIds.every((id) => {
-    const val = rowValues[id];
-    return val !== undefined && val !== null && val.trim() !== '';
+function topologicalSortFormulas(
+  formulaCols: TemplateColumn[],
+  allColumns: TemplateColumn[]
+): TemplateColumn[] {
+  if (formulaCols.length === 0) return [];
+
+  const formulaKeySet = new Set(formulaCols.map((c) => c.key));
+  const keyToFormulaCol: Record<string, TemplateColumn> = {};
+  formulaCols.forEach((c) => {
+    keyToFormulaCol[c.key] = c;
   });
+
+  // deps[key] = set of *formula* keys this formula directly depends on
+  const deps: Record<string, Set<string>> = {};
+  formulaCols.forEach((col) => {
+    deps[col.key] = new Set();
+    if (!col.formula) return;
+    const parsed = parseFormula(col.formula);
+    if (!parsed) return;
+    parsed.steps.forEach((step: any) => {
+      if (
+        step.type !== 'constant' &&
+        formulaKeySet.has(step.columnKey) &&
+        step.columnKey !== col.key
+      ) {
+        deps[col.key].add(step.columnKey);
+      }
+    });
+  });
+
+  // reverseDeps[key] = set of formula keys that depend ON this key
+  const reverseDeps: Record<string, Set<string>> = {};
+  formulaCols.forEach((c) => {
+    reverseDeps[c.key] = new Set();
+  });
+  formulaCols.forEach((c) => {
+    deps[c.key].forEach((depKey) => {
+      reverseDeps[depKey]?.add(c.key);
+    });
+  });
+
+  // In-degree = number of formula dependencies
+  const inDegree: Record<string, number> = {};
+  formulaCols.forEach((c) => {
+    inDegree[c.key] = deps[c.key].size;
+  });
+
+  const queue: string[] = [];
+  formulaCols.forEach((c) => {
+    if (inDegree[c.key] === 0) queue.push(c.key);
+  });
+
+  const sorted: TemplateColumn[] = [];
+  const visited = new Set<string>();
+
+  while (queue.length > 0) {
+    const key = queue.shift()!;
+    if (visited.has(key)) continue;
+    visited.add(key);
+    sorted.push(keyToFormulaCol[key]);
+
+    reverseDeps[key]?.forEach((depKey) => {
+      inDegree[depKey]--;
+      if (inDegree[depKey] <= 0 && !visited.has(depKey)) {
+        queue.push(depKey);
+      }
+    });
+  }
+
+  // Handle cycles – append any remaining formula columns
+  formulaCols.forEach((c) => {
+    if (!visited.has(c.key)) sorted.push(c);
+  });
+
+  return sorted;
 }
 
-/** Evaluate a formula expression. Assumes caller has already validated completeness. */
-function evaluateFormula(
-  formulaString: string | null | undefined,
-  columns: TemplateColumn[],
-  rowValues: Record<string, string>,
-  _visited?: Set<string>
-): string {
-  if (!formulaString) return '—';
-  const parsed = parseFormula(formulaString);
-  if (!parsed || parsed.steps.length === 0) return '—';
-
-  const visited = _visited ?? new Set<string>();
-
-  const keyToValue: Record<string, number> = {};
-  columns.forEach((col) => {
-    if (col.dataType === 'NUMBER') {
-      keyToValue[col.key] = parseFloat(rowValues[col.id] || '') || 0;
-    } else if (col.dataType === 'FORMULA') {
-      if (!visited.has(col.key) && col.formula) {
-        visited.add(col.key);
-        const r = evaluateFormula(col.formula, columns, rowValues, visited);
-        keyToValue[col.key] = r !== '—' ? parseFloat(r) || 0 : 0;
-      } else {
-        keyToValue[col.key] = 0;
-      }
-    } else if (col.dataType === 'TEXT') {
-      keyToValue[col.key] = parseFloat(rowValues[col.id] || '') || 0;
-    }
-  });
+/**
+ * Evaluate a SINGLE pre-parsed formula using the provided key→value map.
+ * No recursion — caller must ensure dependencies are already in keyToValue.
+ */
+function evaluateParsedFormula(
+  parsed: ReturnType<typeof parseFormula>,
+  keyToValue: Record<string, number>
+): number {
+  if (!parsed || parsed.steps.length === 0) return 0;
 
   const stepVal = (step: any): number =>
     step.type === 'constant'
@@ -293,7 +341,7 @@ function evaluateFormula(
     }
   }
 
-  return Number.isInteger(result) ? String(result) : result.toFixed(2);
+  return result;
 }
 
 const formatAmount = (value: string | null | undefined): string => {
@@ -385,46 +433,134 @@ export default function OrderTemplateValues({
   );
 
   // ──────────────────────────────────────────────────────────────────────
-  // EDIT-MODE: per-row FORMULA results
+  // PERFORMANCE-CRITICAL MEMOISED FORMULA DATA
   //
-  // A FORMULA cell shows '—' until every NUMBER/TEXT column that the formula
-  // depends on (across all blocks) has a non-empty value.
+  // These memos depend ONLY on `columns` (template structure), NOT on
+  // `values`. They are recomputed only when the template itself changes,
+  // not on every keystroke.
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** key → TemplateColumn lookup (stable across value changes) */
+  const keyToCol = useMemo(() => {
+    const map: Record<string, TemplateColumn> = {};
+    columns.forEach((col) => {
+      map[col.key] = col;
+    });
+    return map;
+  }, [columns]);
+
+  /** Pre-parsed formulas keyed by column key. Parsed ONCE, reused every row. */
+  const parsedFormulas = useMemo(() => {
+    const map: Record<string, ReturnType<typeof parseFormula>> = {};
+    columns.forEach((col) => {
+      if (col.dataType === 'FORMULA' && col.formula) {
+        map[col.key] = parseFormula(col.formula);
+      }
+    });
+    return map;
+  }, [columns]);
+
+  /**
+   * For each formula column, the list of NUMBER/TEXT column *IDs* it
+   * transitively depends on. Used to gate "show result vs show —".
+   */
+  const formulaInputDeps = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    columns.forEach((col) => {
+      if (col.dataType === 'FORMULA' && col.formula) {
+        map[col.key] = getReferencedInputColumnIds(
+          col.formula,
+          columns,
+          keyToCol
+        );
+      }
+    });
+    return map;
+  }, [columns, keyToCol]);
+
+  /** Formula columns in topological (dependency-first) order. */
+  const sortedFormulaColumns = useMemo(() => {
+    const formulaCols = columns.filter((c) => c.dataType === 'FORMULA');
+    return topologicalSortFormulas(formulaCols, columns);
+  }, [columns]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // EDIT-MODE: per-row FORMULA results — SINGLE PASS per row
+  //
+  // For each row we build keyToValue ONCE with all NUMBER/TEXT values,
+  // then evaluate every formula in topological order. Each formula's
+  // result feeds into keyToValue so later formulas can reference it.
+  //
+  // This replaces the old approach that called evaluateFormula() per cell,
+  // where each call rebuilt keyToValue from scratch and recursively
+  // evaluated ALL other formulas — O(F² × R) vs. the new O(F × R).
   // ──────────────────────────────────────────────────────────────────────
   const computedFormulaValues = useMemo(() => {
     if (readOnly) return {};
 
     const result: Record<string, Record<string, string>> = {};
+
     nonTotalRows.forEach((row) => {
       const rowVals = values[row.id] || {};
+
+      // 1. Seed key→value with NUMBER / TEXT inputs
+      const kv: Record<string, number> = {};
+      columns.forEach((col) => {
+        if (col.dataType === 'NUMBER' || col.dataType === 'TEXT') {
+          kv[col.key] = parseFloat(rowVals[col.id] || '') || 0;
+        }
+      });
+
+      // 2. Evaluate formulas in dependency order
       const computed: Record<string, string> = {};
 
-      columns.forEach((col) => {
-        if (col.dataType !== 'FORMULA') return;
-        const complete = areFormulaInputsComplete(
-          col.formula,
-          columns,
-          rowVals
-        );
-        computed[col.id] = complete
-          ? evaluateFormula(col.formula, columns, rowVals)
-          : '—';
+      sortedFormulaColumns.forEach((col) => {
+        const deps = formulaInputDeps[col.key];
+        const complete =
+          deps &&
+          deps.length > 0 &&
+          deps.every((id) => {
+            const v = rowVals[id];
+            return v !== undefined && v !== null && v.trim() !== '';
+          });
+
+        if (complete) {
+          const parsed = parsedFormulas[col.key];
+          if (parsed) {
+            const val = evaluateParsedFormula(parsed, kv);
+            kv[col.key] = val;
+            computed[col.id] = Number.isInteger(val)
+              ? String(val)
+              : val.toFixed(2);
+          } else {
+            computed[col.id] = '—';
+            kv[col.key] = 0;
+          }
+        } else {
+          computed[col.id] = '—';
+          kv[col.key] = 0;
+        }
       });
 
       if (Object.keys(computed).length > 0) result[row.id] = computed;
     });
 
     return result;
-  }, [readOnly, nonTotalRows, columns, values]);
+  }, [
+    readOnly,
+    nonTotalRows,
+    columns,
+    values,
+    sortedFormulaColumns,
+    formulaInputDeps,
+    parsedFormulas
+  ]);
 
   // ──────────────────────────────────────────────────────────────────────
   // EDIT-MODE: TOTAL row FORMULA results
   //
-  // Only FORMULA columns are computed here.
-  // NUMBER/TEXT columns in the TOTAL row always come from the API values map
-  // (they are never client-side summed).
-  //
-  // A TOTAL formula shows '—' when no non-TOTAL row has produced a real
-  // per-row formula result yet.
+  // FORMULA columns are summed from per-row results above.
+  // NUMBER/TEXT columns in TOTAL rows come from the API values map.
   // ──────────────────────────────────────────────────────────────────────
   const computedTotalFormulaValues = useMemo(() => {
     if (readOnly) return {};
@@ -832,17 +968,7 @@ export default function OrderTemplateValues({
                       const cellKey = getErrorKey(row.id, column.id);
                       const cellError = errors[cellKey];
 
-                      // ── FORMULA column ──────────────────────────────────────
-                      //
-                      // readOnly  → server's calculatedValue from API values map.
-                      //             TOTAL rows use stored value or sum fallback.
-                      //
-                      // edit mode → live client-side result, gated by input
-                      //             completeness (shows '—' until all referenced
-                      //             NUMBER/TEXT fields have values).
-                      //             Works across all blocks since keyToValue is
-                      //             built from the full columns array.
-                      // ────────────────────────────────────────────────────────
+                      // ── FORMULA column ──────────────────────────────────
                       if (column.dataType === 'FORMULA') {
                         const displayValue = readOnly
                           ? getReadOnlyFormulaValue(row, column)
@@ -870,11 +996,7 @@ export default function OrderTemplateValues({
                         );
                       }
 
-                      // ── TOTAL row — NUMBER / TEXT ───────────────────────────
-                      //
-                      // Never compute client-side. Always show the value the API
-                      // returned (stored in the values map).
-                      // ────────────────────────────────────────────────────────
+                      // ── TOTAL row — NUMBER / TEXT ───────────────────────
                       if (isTotal) {
                         const apiVal = values[row.id]?.[column.id];
                         const displayValue =
@@ -893,7 +1015,7 @@ export default function OrderTemplateValues({
                         );
                       }
 
-                      // ── Regular editable / read-only cell ──────────────────
+                      // ── Regular editable / read-only cell ──────────────
                       return (
                         <TableCell key={column.id}>
                           <div className='space-y-1'>

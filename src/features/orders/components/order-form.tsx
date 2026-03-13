@@ -150,6 +150,28 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.25;
 const SCROLL_ZOOM_FACTOR = 0.001;
+const DRAG_THRESHOLD = 3;
+
+// =============================================================================
+// Interactive-element check shared by mouse & touch handlers
+// =============================================================================
+
+function isInteractiveTarget(target: HTMLElement): boolean {
+  return !!(
+    target.closest('button') ||
+    target.closest('a') ||
+    target.closest('input') ||
+    target.closest('select') ||
+    target.closest('textarea') ||
+    target.closest('[data-drag-handle]') ||
+    target.closest('[role="combobox"]') ||
+    target.closest('[role="listbox"]') ||
+    target.closest('[role="option"]') ||
+    target.closest('[role="dialog"]') ||
+    target.closest('[data-radix-select-trigger]') ||
+    target.closest('[data-radix-collection-item]')
+  );
+}
 
 // =============================================================================
 // CANVAS TOOLBAR BUTTON
@@ -291,6 +313,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   // ── Drag-to-scroll state ────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false);
+  const dragPending = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const scrollStart = useRef({ left: 0, top: 0 });
 
@@ -577,7 +600,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             };
           }
 
-          // Children
           if (tmplData.children && tmplData.children.length > 0) {
             loadedChildMeta[tid] = [];
 
@@ -896,24 +918,15 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   }, [templates.length]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // DRAG-TO-SCROLL
+  // DRAG-TO-SCROLL (with movement threshold)
   // ──────────────────────────────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
       if (e.button !== 0) return;
-      const target = e.target as HTMLElement;
-      if (
-        target.closest('button') ||
-        target.closest('a') ||
-        target.closest('input') ||
-        target.closest('select') ||
-        target.closest('textarea') ||
-        target.closest('[data-drag-handle]')
-      )
-        return;
+      if (isInteractiveTarget(e.target as HTMLElement)) return;
       e.preventDefault();
-      setIsDragging(true);
+      dragPending.current = true;
       dragStart.current = { x: e.clientX, y: e.clientY };
       scrollStart.current = {
         left: containerRef.current?.scrollLeft ?? 0,
@@ -925,16 +938,29 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   const handleMouseMove = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (!isDragging || isTemplateDragging || !containerRef.current) return;
+      if (isTemplateDragging || !containerRef.current) return;
+      if (!isDragging && !dragPending.current) return;
+
       const dx = e.clientX - dragStart.current.x;
       const dy = e.clientY - dragStart.current.y;
+
+      if (!isDragging) {
+        if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD) {
+          setIsDragging(true);
+        }
+        return;
+      }
+
       containerRef.current.scrollLeft = scrollStart.current.left - dx;
       containerRef.current.scrollTop = scrollStart.current.top - dy;
     },
     [isDragging, isTemplateDragging]
   );
 
-  const handleMouseUp = useCallback(() => setIsDragging(false), []);
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+    dragPending.current = false;
+  }, []);
 
   const getTouchDist = (t1: React.Touch, t2: React.Touch): number => {
     const dx = t1.clientX - t2.clientX;
@@ -946,17 +972,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     (e: ReactTouchEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
       if (e.touches.length === 1) {
-        const target = e.target as HTMLElement;
-        if (
-          target.closest('button') ||
-          target.closest('a') ||
-          target.closest('input') ||
-          target.closest('select') ||
-          target.closest('textarea') ||
-          target.closest('[data-drag-handle]')
-        )
-          return;
-        setIsDragging(true);
+        if (isInteractiveTarget(e.target as HTMLElement)) return;
+        dragPending.current = true;
         dragStart.current = {
           x: e.touches[0].clientX,
           y: e.touches[0].clientY
@@ -975,9 +992,22 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const handleTouchMove = useCallback(
     (e: ReactTouchEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
-      if (e.touches.length === 1 && isDragging && containerRef.current) {
+      if (e.touches.length === 1 && containerRef.current) {
+        if (!isDragging && !dragPending.current) return;
+
         const dx = e.touches[0].clientX - dragStart.current.x;
         const dy = e.touches[0].clientY - dragStart.current.y;
+
+        if (!isDragging) {
+          if (
+            Math.abs(dx) >= DRAG_THRESHOLD ||
+            Math.abs(dy) >= DRAG_THRESHOLD
+          ) {
+            setIsDragging(true);
+          }
+          return;
+        }
+
         containerRef.current.scrollLeft = scrollStart.current.left - dx;
         containerRef.current.scrollTop = scrollStart.current.top - dy;
       } else if (e.touches.length === 2 && lastPinchDist.current !== null) {
@@ -992,21 +1022,13 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   const handleTouchEnd = useCallback(() => {
     setIsDragging(false);
+    dragPending.current = false;
     lastPinchDist.current = null;
   }, []);
 
   const handleDoubleClick = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
-      const target = e.target as HTMLElement;
-      if (
-        target.closest('button') ||
-        target.closest('a') ||
-        target.closest('input') ||
-        target.closest('select') ||
-        target.closest('textarea') ||
-        target.closest('[data-drag-handle]')
-      )
-        return;
+      if (isInteractiveTarget(e.target as HTMLElement)) return;
       setZoom((z) => (z > 1.1 ? 1 : 2.5));
     },
     []
@@ -1182,7 +1204,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         const columns = tmpl.columns || [];
         const rows = tmpl.rows || [];
 
-        // Main values
         const values: { value: string; rowId: string; columnId: string }[] = [];
         rows.forEach((row) => {
           columns.forEach((col) => {
@@ -1198,7 +1219,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           });
         });
 
-        // Extra values
         const tmplExtras = tmpl.extra || [];
         const tmplExtraValues = extraValues[tmpl.id] || {};
         const extravalues: OrderExtraValuePayload[] = [];
@@ -1214,7 +1234,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           }
         });
 
-        // Summary
         const discount = templateDiscounts[tmpl.id] || {
           discountType: 'PERCENT' as DiscountType,
           discountValue: '0'
@@ -1224,7 +1243,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           discountValue: discount.discountValue || '0'
         };
 
-        // Block values
         const blockvalues = buildBlockValuesPayload(
           templateBlockValues[tmpl.id] || {}
         );
@@ -1237,7 +1255,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         };
         if (extravalues.length > 0) payload.extravalues = extravalues;
 
-        // Children
         const childMeta = refChildrenMeta[tmpl.id];
         if (childMeta && childMeta.length > 0) {
           payload.children = childMeta.map((meta, idx) => {
@@ -1286,7 +1303,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               discountValue: childDisc.discountValue || '0'
             };
 
-            // Child block values
             const cBlockvalues = buildBlockValuesPayload(
               childBlockValues[childKey] || {}
             );

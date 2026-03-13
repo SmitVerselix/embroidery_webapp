@@ -504,7 +504,10 @@ export default function TemplateBuilder({
     try {
       if (editingColumn) {
         const generatedKey =
-          data.label.toLowerCase().replace(/\s+/g, '_') + '_0';
+          data.label
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_|_$/g, '') + '_0';
         const oldKey = editingColumn.key;
         const keyChanged = oldKey !== generatedKey;
         await updateColumn(companyId, productId, templateId, editingColumn.id, {

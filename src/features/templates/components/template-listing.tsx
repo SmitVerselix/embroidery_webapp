@@ -942,7 +942,10 @@ export default function TemplateListing({
     try {
       if (editingColumn) {
         const generatedKey =
-          data.label.toLowerCase().replace(/\s+/g, '_') + `_${data.blockIndex}`;
+          data.label
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_|_$/g, '') + `_${data.blockIndex}`;
         const oldKey = editingColumn.key;
         const keyChanged = oldKey !== generatedKey;
         const tid = columnTemplateId;
@@ -994,11 +997,16 @@ export default function TemplateListing({
           [tid]: { ...prev[tid], columns: updatedColumns }
         }));
       } else {
+        const generatedKey =
+          data.label
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_|_$/g, '') + `_${data.blockIndex}`;
         const newCol = await createColumn(
           companyId,
           productId,
           columnTemplateId,
-          data
+          { ...data, key: generatedKey }
         );
         setExpandedData((prev) => ({
           ...prev,
@@ -1184,6 +1192,7 @@ export default function TemplateListing({
           extraTemplateId,
           editingExtra.id,
           {
+            key: data.key,
             label: data.label,
             sectionType: data.sectionType,
             valueType: data.valueType,

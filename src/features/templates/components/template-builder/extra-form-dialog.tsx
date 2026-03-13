@@ -160,7 +160,10 @@ export default function ExtraFormDialog({
     setSubmitError(null);
 
     try {
-      const key = (isEditing && initialData?.key) || generateKey(data.label);
+      const key =
+        isEditing && initialData?.key && data.label === initialData.label
+          ? initialData.key
+          : generateKey(data.label);
 
       await onSubmit({
         key,

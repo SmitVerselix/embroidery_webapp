@@ -133,6 +133,28 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.25;
 const SCROLL_ZOOM_FACTOR = 0.001;
+const DRAG_THRESHOLD = 3;
+
+// =============================================================================
+// Interactive-element check shared by mouse & touch handlers
+// =============================================================================
+
+function isInteractiveTarget(target: HTMLElement): boolean {
+  return !!(
+    target.closest('button') ||
+    target.closest('a') ||
+    target.closest('input') ||
+    target.closest('select') ||
+    target.closest('textarea') ||
+    target.closest('[data-drag-handle]') ||
+    target.closest('[role="combobox"]') ||
+    target.closest('[role="listbox"]') ||
+    target.closest('[role="option"]') ||
+    target.closest('[role="dialog"]') ||
+    target.closest('[data-radix-select-trigger]') ||
+    target.closest('[data-radix-collection-item]')
+  );
+}
 
 // =============================================================================
 // INTERNAL TYPES
@@ -246,11 +268,9 @@ function FinalCalculationTable({
   orderId,
   onSaved
 }: FinalCalculationTableProps) {
-  // ── Edit mode state ────────────────────────────────────────────────
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Form values
   const [formDiscount, setFormDiscount] = useState(discount);
   const [formDiscountType, setFormDiscountType] = useState<DiscountType>(
     (orderDiscountType as DiscountType) || 'AMOUNT'
@@ -269,7 +289,6 @@ function FinalCalculationTable({
     )
   );
 
-  // Sync form values when external data changes (e.g. after save)
   useEffect(() => {
     if (!isEditing) {
       setFormDiscount(discount);
@@ -293,9 +312,7 @@ function FinalCalculationTable({
     setIsEditing(true);
   };
 
-  const handleCancel = () => {
-    setIsEditing(false);
-  };
+  const handleCancel = () => setIsEditing(false);
 
   const handleSubmit = async () => {
     setIsSaving(true);
@@ -327,7 +344,6 @@ function FinalCalculationTable({
     }
   };
 
-  // ── Handle Enter key on inputs ─────────────────────────────────────
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -337,7 +353,6 @@ function FinalCalculationTable({
 
   return (
     <div className='w-full min-w-[520px]'>
-      {/* Header row */}
       <div className='my-2 flex items-center justify-between px-4'>
         <h3 className='text-sm font-semibold'>Final Calculation</h3>
         {!isEditing ? (
@@ -390,12 +405,10 @@ function FinalCalculationTable({
                   Child Total
                 </th>
               )}
-              {/* Notes column — always visible */}
               <th className='px-4 py-2.5 text-left font-medium'>Notes</th>
             </tr>
           </thead>
           <tbody>
-            {/* ── Template rows ──────────────────────────────────────── */}
             {templateRows.map((row) => (
               <tr key={row.orderTemplateId} className='border-b'>
                 <td className='px-4 py-2 font-medium'>{row.label}</td>
@@ -407,7 +420,6 @@ function FinalCalculationTable({
                     {row.childTotal ?? '—'}
                   </td>
                 )}
-                {/* Notes cell */}
                 <td className='px-4 py-2'>
                   {isEditing ? (
                     <Input
@@ -431,7 +443,6 @@ function FinalCalculationTable({
               </tr>
             ))}
 
-            {/* ── Total ──────────────────────────────────────────── */}
             <tr className='border-t-2 border-b font-semibold'>
               <td className='px-4 py-2'>Total</td>
               <td
@@ -440,11 +451,10 @@ function FinalCalculationTable({
               >
                 {total}
               </td>
-              {/* Empty notes cell */}
               <td className='px-4 py-2' />
             </tr>
 
-            {/* ── Margin Discount ────────────────────────────────────── */}
+            {/* Margin Discount */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Margin Discount</td>
               <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
@@ -480,11 +490,9 @@ function FinalCalculationTable({
                   </span>
                 )}
               </td>
-              {/* Empty notes cell */}
               <td className='px-4 py-2' />
             </tr>
 
-            {/* ── Margin Total ───────────────────────────────────── */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Margin Total</td>
               <td
@@ -493,11 +501,10 @@ function FinalCalculationTable({
               >
                 {marginTotal}
               </td>
-              {/* Empty notes cell */}
               <td className='px-4 py-2' />
             </tr>
 
-            {/* ── Discount ───────────────────────────────────────────── */}
+            {/* Discount */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Discount</td>
               <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
@@ -533,11 +540,10 @@ function FinalCalculationTable({
                   </span>
                 )}
               </td>
-              {/* Empty notes cell */}
               <td className='px-4 py-2' />
             </tr>
 
-            {/* ── Addon Discount ─────────────────────────────────────── */}
+            {/* Addon Discount */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Addon Discount</td>
               <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
@@ -571,11 +577,9 @@ function FinalCalculationTable({
                   </span>
                 )}
               </td>
-              {/* Empty notes cell */}
               <td className='px-4 py-2' />
             </tr>
 
-            {/* ── Final Payable Amount ───────────────────────────────── */}
             <tr className='border-t-2 font-semibold'>
               <td className='px-4 py-2'>Final Payable Amount</td>
               <td
@@ -584,7 +588,6 @@ function FinalCalculationTable({
               >
                 {finalPayableAmount}
               </td>
-              {/* Empty notes cell */}
               <td className='px-4 py-2' />
             </tr>
           </tbody>
@@ -616,10 +619,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const [duplicatingIds, setDuplicatingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
-  // ── Recalculate state ───────────────────────────────────────────────
   const [isRecalculating, setIsRecalculating] = useState(false);
-
-  // ── Duplicate confirmation dialog ───────────────────────────────────
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
   const [pendingDuplicateEntry, setPendingDuplicateEntry] =
     useState<OrderTemplateEntry | null>(null);
@@ -631,22 +631,18 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
 
   // ── Drag-to-scroll state ────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false);
+  const dragPending = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const scrollStart = useRef({ left: 0, top: 0 });
 
   const containerRef = useRef<HTMLDivElement>(null);
   const lastPinchDist = useRef<number | null>(null);
-
-  /** Layout toolbar portals into this div (sits outside the canvas). */
   const toolbarPortalRef = useRef<HTMLDivElement>(null);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // PROCESS TEMPLATE DATA
-  // ──────────────────────────────────────────────────────────────────────
+  // ── PROCESS TEMPLATE DATA ───────────────────────────────────────────
   const processOrderTemplates = useCallback((orderData: OrderWithDetails) => {
     const productTemplates = (orderData.product?.templates ||
       []) as TemplateWithDetails[];
-
     if (productTemplates.length === 0) {
       setEntries([]);
       setTemplateValues({});
@@ -672,7 +668,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       const orderTemplateId = tmplData.id;
       const fullTemplate = templateCache[tmplData.templateId];
       if (!fullTemplate) return;
-
       processedTemplateIds.add(tmplData.templateId);
 
       const rawSummary = (tmplData as any).summary;
@@ -714,25 +709,20 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       });
       loadedExtraValues[orderTemplateId] = extValMap;
 
-      // Parse blockValues: API returns [{ templateBlockId, blockIndex: "block_0" }]
-      // Convert to BlockValuesMap: { 0: templateBlockId }
       const bvMap: BlockValuesMap = {};
       ((tmplData as any).blockValues || []).forEach((bv: any) => {
         const idx = parseInt(
           (bv.blockIndex as string).replace('block_', ''),
           10
         );
-        if (!isNaN(idx)) {
-          bvMap[idx] = bv.templateBlockId;
-        }
+        if (!isNaN(idx)) bvMap[idx] = bv.templateBlockId;
       });
       loadedBlockValues[orderTemplateId] = bvMap;
 
-      if (tmplData.children && tmplData.children.length > 0) {
+      if (tmplData.children && tmplData.children.length > 0)
         tmplData.children.forEach((child) =>
           processTemplate(child, orderTemplateId, true)
         );
-      }
     };
 
     (orderData.templates || []).forEach((tmplData: OrderTemplateData) =>
@@ -782,7 +772,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     fetchOrder();
   }, [fetchOrder]);
 
-  // ── Refresh order (used after saving final calculation) ─────────────
   const refreshOrder = useCallback(async () => {
     try {
       const orderData = await getOrder(companyId, orderId);
@@ -793,9 +782,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     }
   }, [companyId, orderId, processOrderTemplates]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // RECALCULATE ORDER
-  // ──────────────────────────────────────────────────────────────────────
+  // ── RECALCULATE ORDER ───────────────────────────────────────────────
   const handleRecalculate = useCallback(async () => {
     setIsRecalculating(true);
     try {
@@ -811,9 +798,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     }
   }, [companyId, orderId, processOrderTemplates]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // DUPLICATE: confirm → execute
-  // ──────────────────────────────────────────────────────────────────────
+  // ── DUPLICATE ───────────────────────────────────────────────────────
   const requestDuplicate = useCallback(
     (entry: OrderTemplateEntry) => {
       const count = entries.filter(
@@ -931,22 +916,17 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     setPendingDuplicateEntry(null);
   }, []);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // ZOOM HELPERS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── ZOOM HELPERS ────────────────────────────────────────────────────
   const clampZoom = useCallback(
     (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)),
     []
   );
-
   const handleZoomIn = useCallback(() => {
     setZoom((z) => clampZoom(z + ZOOM_STEP));
   }, [clampZoom]);
-
   const handleZoomOut = useCallback(() => {
     setZoom((z) => clampZoom(z - ZOOM_STEP));
   }, [clampZoom]);
-
   const handleResetView = useCallback(() => {
     setZoom(1);
     if (containerRef.current) {
@@ -955,7 +935,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     }
   }, []);
 
-  // ── CTRL + SCROLL WHEEL ZOOM ────────────────────────────────────────
   const handleWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
       if (!e.ctrlKey && !e.metaKey) return;
@@ -977,25 +956,14 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     return () => container.removeEventListener('wheel', preventNativeZoom);
   }, [entries.length]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // DRAG-TO-SCROLL
-  // ──────────────────────────────────────────────────────────────────────
+  // ── DRAG-TO-SCROLL (with movement threshold) ───────────────────────
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
       if (e.button !== 0) return;
-      const target = e.target as HTMLElement;
-      if (
-        target.closest('button') ||
-        target.closest('a') ||
-        target.closest('input') ||
-        target.closest('select') ||
-        target.closest('textarea') ||
-        target.closest('[data-drag-handle]')
-      )
-        return;
+      if (isInteractiveTarget(e.target as HTMLElement)) return;
       e.preventDefault();
-      setIsDragging(true);
+      dragPending.current = true;
       dragStart.current = { x: e.clientX, y: e.clientY };
       scrollStart.current = {
         left: containerRef.current?.scrollLeft ?? 0,
@@ -1007,18 +975,26 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
 
   const handleMouseMove = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (!isDragging || isTemplateDragging || !containerRef.current) return;
+      if (isTemplateDragging || !containerRef.current) return;
+      if (!isDragging && !dragPending.current) return;
       const dx = e.clientX - dragStart.current.x;
       const dy = e.clientY - dragStart.current.y;
+      if (!isDragging) {
+        if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD)
+          setIsDragging(true);
+        return;
+      }
       containerRef.current.scrollLeft = scrollStart.current.left - dx;
       containerRef.current.scrollTop = scrollStart.current.top - dy;
     },
     [isDragging, isTemplateDragging]
   );
 
-  const handleMouseUp = useCallback(() => setIsDragging(false), []);
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+    dragPending.current = false;
+  }, []);
 
-  // ── TOUCH PAN + PINCH-TO-ZOOM ──────────────────────────────────────
   const getTouchDist = (t1: React.Touch, t2: React.Touch): number => {
     const dx = t1.clientX - t2.clientX;
     const dy = t1.clientY - t2.clientY;
@@ -1029,17 +1005,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     (e: ReactTouchEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
       if (e.touches.length === 1) {
-        const target = e.target as HTMLElement;
-        if (
-          target.closest('button') ||
-          target.closest('a') ||
-          target.closest('input') ||
-          target.closest('select') ||
-          target.closest('textarea') ||
-          target.closest('[data-drag-handle]')
-        )
-          return;
-        setIsDragging(true);
+        if (isInteractiveTarget(e.target as HTMLElement)) return;
+        dragPending.current = true;
         dragStart.current = {
           x: e.touches[0].clientX,
           y: e.touches[0].clientY
@@ -1058,9 +1025,15 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const handleTouchMove = useCallback(
     (e: ReactTouchEvent<HTMLDivElement>) => {
       if (isTemplateDragging) return;
-      if (e.touches.length === 1 && isDragging && containerRef.current) {
+      if (e.touches.length === 1 && containerRef.current) {
+        if (!isDragging && !dragPending.current) return;
         const dx = e.touches[0].clientX - dragStart.current.x;
         const dy = e.touches[0].clientY - dragStart.current.y;
+        if (!isDragging) {
+          if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD)
+            setIsDragging(true);
+          return;
+        }
         containerRef.current.scrollLeft = scrollStart.current.left - dx;
         containerRef.current.scrollTop = scrollStart.current.top - dy;
       } else if (e.touches.length === 2 && lastPinchDist.current !== null) {
@@ -1075,28 +1048,18 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
 
   const handleTouchEnd = useCallback(() => {
     setIsDragging(false);
+    dragPending.current = false;
     lastPinchDist.current = null;
   }, []);
 
-  // ── DOUBLE-CLICK ZOOM TOGGLE ────────────────────────────────────────
   const handleDoubleClick = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
-      const target = e.target as HTMLElement;
-      if (
-        target.closest('button') ||
-        target.closest('a') ||
-        target.closest('input') ||
-        target.closest('select') ||
-        target.closest('textarea') ||
-        target.closest('[data-drag-handle]')
-      )
-        return;
+      if (isInteractiveTarget(e.target as HTMLElement)) return;
       setZoom((z) => (z > 1.1 ? 1 : 2.5));
     },
     []
   );
 
-  // ── KEYBOARD SHORTCUTS ──────────────────────────────────────────────
   useEffect(() => {
     if (!isCanvasFocused) return;
     const handler = (e: KeyboardEvent) => {
@@ -1123,9 +1086,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     return () => window.removeEventListener('keydown', handler);
   }, [isCanvasFocused, handleZoomIn, handleZoomOut, handleResetView]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // HELPERS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── HELPERS ─────────────────────────────────────────────────────────
   const canDuplicate = useCallback(
     (templateId: string) =>
       entries.filter((e) => e.templateId === templateId).length < 2,
@@ -1141,16 +1102,12 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     return grouped;
   }, [entries]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // FINAL CALC DATA — passed to PDF component
-  // ──────────────────────────────────────────────────────────────────────
+  // ── FINAL CALC DATA ─────────────────────────────────────────────────
   const finalCalcData: FinalCalcData | undefined = useMemo(() => {
     if (!order || entries.length === 0) return undefined;
-
-    const hasAnyChildren = Object.values(groupedByTemplate).some(
-      (templateEntries) => templateEntries.some((e) => e.isChild)
+    const hasAnyChildren = Object.values(groupedByTemplate).some((te) =>
+      te.some((e) => e.isChild)
     );
-
     const templateRows = Object.entries(groupedByTemplate).map(
       ([templateId, templateEntries]) => {
         const parentEntry = templateEntries.find((e) => !e.isChild);
@@ -1159,10 +1116,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           parentEntry?.template?.name ||
           childEntries[0]?.template?.name ||
           templateId;
-
         const parentTotal =
           parentEntry?.summary?.finalPayableAmount ?? '0.0000';
-
         let childTotal: string | null = null;
         if (childEntries.length > 0) {
           const sum = childEntries.reduce(
@@ -1172,7 +1127,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           );
           childTotal = formatAmount(String(sum));
         }
-
         return {
           label: templateName,
           orderTemplateId:
@@ -1185,7 +1139,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         };
       }
     );
-
     return {
       templateRows,
       total: formatAmount((order as any).total),
@@ -1201,9 +1154,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     };
   }, [order, entries, groupedByTemplate]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // TEMPLATE LAYOUT ITEMS
-  // ──────────────────────────────────────────────────────────────────────
+  // ── TEMPLATE LAYOUT ITEMS ───────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(
     () =>
       Object.entries(groupedByTemplate).map(([templateId, templateEntries]) => {
@@ -1279,7 +1230,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                   />
                 </div>
               )}
-
               {childEntries.map((childEntry, idx) => (
                 <div key={childEntry.orderTemplateId}>
                   <div className='mb-2 flex items-center gap-2'>
@@ -1316,17 +1266,13 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     ]
   );
 
-  // ──────────────────────────────────────────────────────────────────────
-  // FINAL CALCULATION LAYOUT ITEM
-  // ──────────────────────────────────────────────────────────────────────
+  // ── FINAL CALCULATION LAYOUT ITEM ───────────────────────────────────
   const finalCalcLayoutItem: TemplateLayoutItem | null = useMemo(() => {
     if (!order || entries.length === 0) return null;
-
-    const hasAnyChildren = Object.values(groupedByTemplate).some(
-      (templateEntries) => templateEntries.some((e) => e.isChild)
+    const hasAnyChildren = Object.values(groupedByTemplate).some((te) =>
+      te.some((e) => e.isChild)
     );
 
-    // Build per-template rows — now include orderTemplateId for notes
     const templateRows: FinalCalcTemplateRow[] = Object.entries(
       groupedByTemplate
     ).map(([templateId, templateEntries]) => {
@@ -1336,20 +1282,18 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         parentEntry?.template?.name ||
         childEntries[0]?.template?.name ||
         templateId;
-
       const parentTotal = parentEntry?.summary?.finalPayableAmount ?? '0.0000';
-
       let childTotal: string | null = null;
       if (childEntries.length > 0) {
-        const sum = childEntries.reduce((acc, child) => {
-          return acc + parseFloat(child.summary?.finalPayableAmount || '0');
-        }, 0);
+        const sum = childEntries.reduce(
+          (acc, child) =>
+            acc + parseFloat(child.summary?.finalPayableAmount || '0'),
+          0
+        );
         childTotal = formatAmount(String(sum));
       }
-
       return {
         label: templateName,
-        // Use parent's orderTemplateId; fall back to child's if parent is "new"
         orderTemplateId:
           parentEntry && !parentEntry.isNew
             ? parentEntry.orderTemplateId
@@ -1384,9 +1328,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     };
   }, [order, entries, groupedByTemplate, companyId, orderId, refreshOrder]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // COMBINED LAYOUT ITEMS
-  // ──────────────────────────────────────────────────────────────────────
   const layoutItems: TemplateLayoutItem[] = useMemo(() => {
     const items = [...templateLayoutItems];
     if (finalCalcLayoutItem) items.push(finalCalcLayoutItem);
@@ -1397,9 +1338,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const editUrl = `/dashboard/${companyId}/orders/${orderId}/edit`;
   const zoomPercent = Math.round(zoom * 100);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // LOADING
-  // ──────────────────────────────────────────────────────────────────────
+  // ── LOADING ─────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className='space-y-6'>
@@ -1419,9 +1358,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     );
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  // ERROR
-  // ──────────────────────────────────────────────────────────────────────
+  // ── ERROR ───────────────────────────────────────────────────────────
   if (error || !order) {
     return (
       <div className='space-y-6'>
@@ -1450,12 +1387,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     );
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ──────────────────────────────────────────────────────────────────────
+  // ── RENDER ──────────────────────────────────────────────────────────
   return (
     <div className='space-y-6'>
-      {/* ── Duplicate Confirmation Dialog ─────────────────────────── */}
       <AlertDialog
         open={duplicateDialogOpen}
         onOpenChange={setDuplicateDialogOpen}
@@ -1483,7 +1417,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Back */}
       <Link
         href={backUrl}
         className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
@@ -1492,7 +1425,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         Back to Designs
       </Link>
 
-      {/* Order Info Card */}
       <Card>
         <CardHeader>
           <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
@@ -1525,7 +1457,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 )}
                 Recalculate
               </Button>
-
               <OrderTemplatePDF
                 order={order}
                 entries={entries}
@@ -1533,7 +1464,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 extraValues={extraValues}
                 finalCalc={finalCalcData}
               />
-
               <Button
                 variant='outline'
                 size='sm'
@@ -1543,7 +1473,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 <Pencil className='h-4 w-4' />
                 Edit Design
               </Button>
-
               <Button
                 variant='outline'
                 size='sm'
@@ -1598,14 +1527,10 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         </CardContent>
       </Card>
 
-      {/* ────────────────────────────────────────────────────────────────
-          TEMPLATE VALUES SECTION
-      ──────────────────────────────────────────────────────────────── */}
       {entries.length > 0 && (
         <>
           <Separator />
 
-          {/* ── Top toolbar: zoom controls ─────────────────────────── */}
           <div className='bg-muted/60 flex items-center justify-between rounded-lg border px-4 py-2.5'>
             <div className='flex min-w-0 items-center gap-3'>
               <h2 className='truncate text-sm font-semibold'>
@@ -1615,7 +1540,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 Values entered for this order&apos;s templates
               </span>
             </div>
-
             <div className='bg-background flex items-center gap-1 rounded-lg border px-1 py-0.5 shadow-sm'>
               <CanvasToolbarButton
                 onClick={handleZoomOut}
@@ -1624,11 +1548,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
               >
                 <ZoomOut className='h-4 w-4' />
               </CanvasToolbarButton>
-
               <span className='text-muted-foreground w-12 text-center font-mono text-xs tabular-nums select-none'>
                 {zoomPercent}%
               </span>
-
               <CanvasToolbarButton
                 onClick={handleZoomIn}
                 disabled={zoom >= MAX_ZOOM}
@@ -1636,9 +1558,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
               >
                 <ZoomIn className='h-4 w-4' />
               </CanvasToolbarButton>
-
               <div className='bg-border mx-0.5 h-4 w-px' />
-
               <CanvasToolbarButton
                 onClick={handleResetView}
                 title='Reset view (0)'
@@ -1646,11 +1566,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                 <Maximize2 className='h-3.5 w-3.5' />
               </CanvasToolbarButton>
             </div>
-
             <div className='w-20' />
           </div>
 
-          {/* ── Layout toolbar portal (OUTSIDE the canvas) ─────────── */}
           <div
             ref={toolbarPortalRef}
             className='bg-muted/40 rounded-lg border px-4 py-2.5'
@@ -1700,7 +1618,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
             </div>
           </div>
 
-          {/* ── Bottom hint bar ───────────────────────────────────── */}
           <div className='bg-muted/40 flex items-center justify-center rounded-lg border px-4 py-2'>
             <p className='text-muted-foreground text-[11px] select-none'>
               Scroll or drag to pan · Drag handle to reposition templates ·
