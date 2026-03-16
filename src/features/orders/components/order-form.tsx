@@ -1,15 +1,6 @@
 'use client';
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-  useRef,
-  type MouseEvent as ReactMouseEvent,
-  type WheelEvent as ReactWheelEvent,
-  type TouchEvent as ReactTouchEvent
-} from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -69,10 +60,7 @@ import {
   Search,
   FileText,
   X,
-  Link2,
-  ZoomIn,
-  ZoomOut,
-  Maximize2
+  Link2
 } from 'lucide-react';
 import Link from 'next/link';
 import OrderTemplateValues, {
@@ -80,15 +68,13 @@ import OrderTemplateValues, {
   type BlockValuesMap
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
-import TemplateLayoutCanvas, {
-  type TemplateLayoutItem
-} from './template-layout-canvas';
+import type { TemplateLayoutItem } from './template-layout-canvas';
+import TemplateCanvasContainer from './template-canvas-container';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger
 } from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/use-debounce';
 
 // =============================================================================
@@ -120,87 +106,24 @@ const orderFormSchema = z
     if (
       (!data.referenceNo || data.referenceNo.trim() === '') &&
       (!data.productId || data.productId.trim() === '')
-    ) {
+    )
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Please select a product',
         path: ['productId']
       });
-    }
-
     if (
       data.orderType !== 'SAMPLE' &&
       (!data.customerId || data.customerId.trim() === '')
-    ) {
+    )
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Please select a customer',
         path: ['customerId']
       });
-    }
   });
 
 type OrderFormData = z.infer<typeof orderFormSchema>;
-
-// =============================================================================
-// ZOOM CONSTANTS
-// =============================================================================
-
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 5;
-const ZOOM_STEP = 0.25;
-const SCROLL_ZOOM_FACTOR = 0.001;
-const DRAG_THRESHOLD = 3;
-
-function isInteractiveTarget(target: HTMLElement): boolean {
-  return !!(
-    target.closest('button') ||
-    target.closest('a') ||
-    target.closest('input') ||
-    target.closest('select') ||
-    target.closest('textarea') ||
-    target.closest('[data-drag-handle]') ||
-    target.closest('[role="combobox"]') ||
-    target.closest('[role="listbox"]') ||
-    target.closest('[role="option"]') ||
-    target.closest('[role="dialog"]') ||
-    target.closest('[data-radix-select-trigger]') ||
-    target.closest('[data-radix-collection-item]')
-  );
-}
-
-function CanvasToolbarButton({
-  onClick,
-  disabled = false,
-  title,
-  children
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type='button'
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      disabled={disabled}
-      title={title}
-      className={cn(
-        'inline-flex h-8 w-8 items-center justify-center rounded-md',
-        'text-muted-foreground hover:text-foreground hover:bg-accent',
-        'transition-colors duration-150',
-        'focus-visible:ring-ring focus:outline-none focus-visible:ring-2',
-        'disabled:pointer-events-none disabled:opacity-30'
-      )}
-    >
-      {children}
-    </button>
-  );
-}
 
 // =============================================================================
 // HELPER: Build array-based ExtraValuesMap from API extraValues array
@@ -216,9 +139,7 @@ function buildExtraValuesMap(
 ): ExtraValuesMap {
   const map: ExtraValuesMap = {};
   (extraValues || []).forEach((ev) => {
-    if (!map[ev.templateExtraFieldId]) {
-      map[ev.templateExtraFieldId] = [];
-    }
+    if (!map[ev.templateExtraFieldId]) map[ev.templateExtraFieldId] = [];
     map[ev.templateExtraFieldId].push({
       value: ev.value,
       orderExtraValueId: ev.id,
@@ -246,24 +167,17 @@ interface OrderFormProps {
 export default function OrderForm({ companyId }: OrderFormProps) {
   const router = useRouter();
 
-  // Products
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [productError, setProductError] = useState<string | null>(null);
-
-  // Customers
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
   const [customerError, setCustomerError] = useState<string | null>(null);
-
-  // Orders (for referenceNo picker)
   const [ordersList, setOrdersList] = useState<Order[]>([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [ordersSearch, setOrdersSearch] = useState('');
   const [isOrdersPopoverOpen, setIsOrdersPopoverOpen] = useState(false);
   const debouncedOrdersSearch = useDebounce(ordersSearch, 300);
-
-  // Reference Order State
   const [referencedOrder, setReferencedOrder] =
     useState<OrderWithDetails | null>(null);
   const [referencedOrderId, setReferencedOrderId] = useState<string | null>(
@@ -271,19 +185,13 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   );
   const [isLoadingReference, setIsLoadingReference] = useState(false);
   const [referenceError, setReferenceError] = useState<string | null>(null);
-
   const [refChildrenMeta, setRefChildrenMeta] = useState<
     Record<string, { templateId: string }[]>
   >({});
-
   const isReferenceModeRef = useRef(false);
-
-  // Templates
   const [templates, setTemplates] = useState<TemplateWithDetails[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
-
-  // Parent template editable state
   const [templateValues, setTemplateValues] = useState<
     Record<string, TemplateValuesMap>
   >({});
@@ -302,8 +210,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const [extraFieldErrors, setExtraFieldErrors] = useState<
     Record<string, Record<string, string>>
   >({});
-
-  // Child template editable state
   const [childTemplateValues, setChildTemplateValues] = useState<
     Record<string, TemplateValuesMap>
   >({});
@@ -322,25 +228,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const [childExtraFieldErrors, setChildExtraFieldErrors] = useState<
     Record<string, Record<string, string>>
   >({});
-
-  // Submit
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-
-  // Zoom state
-  const [zoom, setZoom] = useState(1);
-  const [isCanvasFocused, setIsCanvasFocused] = useState(false);
-  const [isTemplateDragging, setIsTemplateDragging] = useState(false);
-
-  // Drag-to-scroll state
-  const [isDragging, setIsDragging] = useState(false);
-  const dragPending = useRef(false);
-  const dragStart = useRef({ x: 0, y: 0 });
-  const scrollStart = useRef({ left: 0, top: 0 });
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const lastPinchDist = useRef<number | null>(null);
-  const toolbarPortalRef = useRef<HTMLDivElement>(null);
 
   const {
     register,
@@ -364,12 +253,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const selectedOrderType = watch('orderType');
   const selectedCustomerId = watch('customerId');
   const referenceNoValue = watch('referenceNo');
-
   const isReferenceMode = !!referencedOrder;
 
-  // ── FETCH CUSTOMERS ─────────────────────────────────────────────────
   useEffect(() => {
-    const fetchCustomers = async () => {
+    const f = async () => {
       setIsLoadingCustomers(true);
       setCustomerError(null);
       try {
@@ -386,12 +273,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         setIsLoadingCustomers(false);
       }
     };
-    if (companyId) fetchCustomers();
+    if (companyId) f();
   }, [companyId]);
-
-  // ── FETCH PRODUCTS ──────────────────────────────────────────────────
   useEffect(() => {
-    const fetchProducts = async () => {
+    const f = async () => {
       setIsLoadingProducts(true);
       setProductError(null);
       try {
@@ -408,12 +293,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         setIsLoadingProducts(false);
       }
     };
-    if (companyId) fetchProducts();
+    if (companyId) f();
   }, [companyId]);
-
-  // ── FETCH ORDERS (for referenceNo picker) ───────────────────────────
   useEffect(() => {
-    const fetchOrders = async () => {
+    const f = async () => {
       setIsLoadingOrders(true);
       try {
         const res = await getOrders(companyId, {
@@ -426,15 +309,13 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         });
         setOrdersList(res.rows);
       } catch {
-        /* Silently fail */
       } finally {
         setIsLoadingOrders(false);
       }
     };
-    if (companyId) fetchOrders();
+    if (companyId) f();
   }, [companyId, debouncedOrdersSearch]);
 
-  // ── FETCH TEMPLATES WHEN PRODUCT IS MANUALLY SELECTED ───────────────
   useEffect(() => {
     if (isReferenceModeRef.current) return;
     const fetchTemplatesForProduct = async () => {
@@ -499,7 +380,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     if (selectedOrderType === 'SAMPLE') setValue('customerId', '');
   }, [selectedOrderType, setValue]);
 
-  // ── CLEAR CHILD STATE ───────────────────────────────────────────────
   const clearChildState = useCallback(() => {
     setRefChildrenMeta({});
     setChildTemplateValues({});
@@ -510,7 +390,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     setChildExtraFieldErrors({});
   }, []);
 
-  // ── SELECT REFERENCE ORDER ──────────────────────────────────────────
   const handleSelectReferenceOrder = useCallback(
     async (order: Order) => {
       setIsOrdersPopoverOpen(false);
@@ -524,7 +403,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         setReferencedOrder(orderData);
         isReferenceModeRef.current = true;
         setValue('productId', orderData.productId);
-
         const product = await getProduct(companyId, orderData.productId);
         const templateCache: Record<string, TemplateWithDetails> = {};
         const fullTemplates = (product.templates ||
@@ -537,7 +415,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         } else {
           setTemplates([]);
         }
-
         const loadedValues: Record<string, TemplateValuesMap> = {};
         const loadedExtraValues: Record<string, ExtraValuesMap> = {};
         const loadedDiscounts: Record<
@@ -553,7 +430,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           { discountType: DiscountType; discountValue: string }
         > = {};
         const loadedChildBlockValues: Record<string, BlockValuesMap> = {};
-
         Object.values(templateCache).forEach((t) => {
           loadedValues[t.id] = {};
           loadedExtraValues[t.id] = {};
@@ -563,22 +439,17 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           };
           loadedBlockValues[t.id] = {};
         });
-
         (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
           const tid = tmplData.templateId;
-
           const valuesMap: TemplateValuesMap = {};
           (tmplData.values || []).forEach((v) => {
             if (!valuesMap[v.rowId]) valuesMap[v.rowId] = {};
             valuesMap[v.rowId][v.columnId] = v.calculatedValue ?? v.value ?? '';
           });
           loadedValues[tid] = valuesMap;
-
-          // ── Array-based extra values ────────────────────────────
           loadedExtraValues[tid] = buildExtraValuesMap(
             tmplData.extraValues || []
           );
-
           const rawSummary = tmplData.summary;
           if (rawSummary) {
             loadedDiscounts[tid] = {
@@ -587,13 +458,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               discountValue: rawSummary.discount ?? '0'
             };
           }
-
           if (tmplData.children && tmplData.children.length > 0) {
             loadedChildMeta[tid] = [];
             tmplData.children.forEach((child, idx) => {
               const childKey = getChildKey(tid, idx);
               loadedChildMeta[tid].push({ templateId: child.templateId });
-
               const childValMap: TemplateValuesMap = {};
               (child.values || []).forEach((v) => {
                 if (!childValMap[v.rowId]) childValMap[v.rowId] = {};
@@ -601,12 +470,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   v.calculatedValue ?? v.value ?? '';
               });
               loadedChildValues[childKey] = childValMap;
-
-              // ── Array-based child extra values ──────────────────
               loadedChildExtras[childKey] = buildExtraValuesMap(
                 child.extraValues || []
               );
-
               const childSummary = child.summary;
               loadedChildDiscounts[childKey] = {
                 discountType:
@@ -617,7 +483,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             });
           }
         });
-
         setTemplateValues(loadedValues);
         setExtraValues(loadedExtraValues);
         setTemplateDiscounts(loadedDiscounts);
@@ -644,7 +509,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     [companyId, setValue]
   );
 
-  // ── CLEAR REFERENCE ─────────────────────────────────────────────────
   const handleClearReference = useCallback(() => {
     setValue('referenceNo', '');
     setValue('productId', '');
@@ -662,7 +526,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     clearChildState();
   }, [setValue, clearChildState]);
 
-  // ── PARENT VALUE HANDLERS ───────────────────────────────────────────
   const handleTemplateValuesChange = useCallback(
     (templateId: string, values: TemplateValuesMap) => {
       setTemplateValues((p) => ({ ...p, [templateId]: values }));
@@ -692,8 +555,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     },
     []
   );
-
-  // ── CHILD VALUE HANDLERS ────────────────────────────────────────────
   const handleChildValuesChange = useCallback(
     (childKey: string, values: TemplateValuesMap) => {
       setChildTemplateValues((p) => ({ ...p, [childKey]: values }));
@@ -724,10 +585,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     []
   );
 
-  // ── VALIDATION ──────────────────────────────────────────────────────
   const validateTemplateValues = useCallback((): boolean => {
     let isValid = true;
-
     const validateValues = (
       tmpl: TemplateWithDetails,
       vals: TemplateValuesMap,
@@ -735,11 +594,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     ) => {
       const cErrors: Record<string, string> = {};
       const eErrors: Record<string, string> = {};
-      const columns = tmpl.columns || [];
-      const rows = tmpl.rows || [];
-
-      rows.forEach((row) => {
-        columns.forEach((col) => {
+      (tmpl.rows || []).forEach((row) => {
+        (tmpl.columns || []).forEach((col) => {
           if (col.dataType === 'FORMULA') return;
           const value = vals[row.id]?.[col.id] || '';
           const cellKey = `${row.id}-${col.id}`;
@@ -756,18 +612,14 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           }
         });
       });
-
       (tmpl.extra || []).forEach((extra) => {
         const items = exVals[extra.id] || [];
-        // Required: at least one non-empty value
         if (extra.isRequired) {
-          const hasValue = items.some((i) => i.value.trim() !== '');
-          if (!hasValue) {
+          if (!items.some((i) => i.value.trim() !== '')) {
             eErrors[extra.id] = 'Required';
             isValid = false;
           }
         }
-        // Type validation per item
         if (extra.valueType === 'NUMBER') {
           items.forEach((item, idx) => {
             if (item.value.trim() && isNaN(Number(item.value))) {
@@ -777,10 +629,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           });
         }
       });
-
       return { cErrors, eErrors };
     };
-
     const newCE: Record<string, Record<string, string>> = {};
     const newEE: Record<string, Record<string, string>> = {};
     templates.forEach((t) => {
@@ -794,7 +644,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     });
     setCellErrors(newCE);
     setExtraFieldErrors(newEE);
-
     const newCCE: Record<string, Record<string, string>> = {};
     const newCEE: Record<string, Record<string, string>> = {};
     Object.entries(refChildrenMeta).forEach(([parentTmplId, children]) => {
@@ -813,7 +662,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     });
     setChildCellErrors(newCCE);
     setChildExtraFieldErrors(newCEE);
-
     return isValid;
   }, [
     templates,
@@ -824,7 +672,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     childExtraValues
   ]);
 
-  // ── Build blockvalues ───────────────────────────────────────────────
   const buildBlockValuesPayload = useCallback(
     (bvMap: BlockValuesMap): OrderBlockValuePayload[] => {
       const result: OrderBlockValuePayload[] = [];
@@ -837,183 +684,19 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     []
   );
 
-  // ── ZOOM HELPERS ────────────────────────────────────────────────────
-  const clampZoom = useCallback(
-    (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)),
-    []
-  );
-  const handleZoomIn = useCallback(() => {
-    setZoom((z) => clampZoom(z + ZOOM_STEP));
-  }, [clampZoom]);
-  const handleZoomOut = useCallback(() => {
-    setZoom((z) => clampZoom(z - ZOOM_STEP));
-  }, [clampZoom]);
-  const handleResetView = useCallback(() => {
-    setZoom(1);
-    if (containerRef.current) {
-      containerRef.current.scrollLeft = 0;
-      containerRef.current.scrollTop = 0;
-    }
-  }, []);
-  const handleWheel = useCallback(
-    (e: ReactWheelEvent<HTMLDivElement>) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const delta = -e.deltaY * SCROLL_ZOOM_FACTOR;
-      setZoom((z) => clampZoom(z + delta * z));
-    },
-    [clampZoom]
-  );
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const preventNativeZoom = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) e.preventDefault();
-    };
-    container.addEventListener('wheel', preventNativeZoom, { passive: false });
-    return () => container.removeEventListener('wheel', preventNativeZoom);
-  }, [templates.length]);
-
-  // ── DRAG-TO-SCROLL ──────────────────────────────────────────────────
-  const handleMouseDown = useCallback(
-    (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (isTemplateDragging || e.button !== 0) return;
-      if (isInteractiveTarget(e.target as HTMLElement)) return;
-      e.preventDefault();
-      dragPending.current = true;
-      dragStart.current = { x: e.clientX, y: e.clientY };
-      scrollStart.current = {
-        left: containerRef.current?.scrollLeft ?? 0,
-        top: containerRef.current?.scrollTop ?? 0
-      };
-    },
-    [isTemplateDragging]
-  );
-  const handleMouseMove = useCallback(
-    (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (isTemplateDragging || !containerRef.current) return;
-      if (!isDragging && !dragPending.current) return;
-      const dx = e.clientX - dragStart.current.x;
-      const dy = e.clientY - dragStart.current.y;
-      if (!isDragging) {
-        if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD)
-          setIsDragging(true);
-        return;
-      }
-      containerRef.current.scrollLeft = scrollStart.current.left - dx;
-      containerRef.current.scrollTop = scrollStart.current.top - dy;
-    },
-    [isDragging, isTemplateDragging]
-  );
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-    dragPending.current = false;
-  }, []);
-
-  const getTouchDist = (t1: React.Touch, t2: React.Touch): number => {
-    const dx = t1.clientX - t2.clientX;
-    const dy = t1.clientY - t2.clientY;
-    return Math.sqrt(dx * dx + dy * dy);
-  };
-  const handleTouchStart = useCallback(
-    (e: ReactTouchEvent<HTMLDivElement>) => {
-      if (isTemplateDragging) return;
-      if (e.touches.length === 1) {
-        if (isInteractiveTarget(e.target as HTMLElement)) return;
-        dragPending.current = true;
-        dragStart.current = {
-          x: e.touches[0].clientX,
-          y: e.touches[0].clientY
-        };
-        scrollStart.current = {
-          left: containerRef.current?.scrollLeft ?? 0,
-          top: containerRef.current?.scrollTop ?? 0
-        };
-      } else if (e.touches.length === 2) {
-        lastPinchDist.current = getTouchDist(e.touches[0], e.touches[1]);
-      }
-    },
-    [isTemplateDragging]
-  );
-  const handleTouchMove = useCallback(
-    (e: ReactTouchEvent<HTMLDivElement>) => {
-      if (isTemplateDragging) return;
-      if (e.touches.length === 1 && containerRef.current) {
-        if (!isDragging && !dragPending.current) return;
-        const dx = e.touches[0].clientX - dragStart.current.x;
-        const dy = e.touches[0].clientY - dragStart.current.y;
-        if (!isDragging) {
-          if (Math.abs(dx) >= DRAG_THRESHOLD || Math.abs(dy) >= DRAG_THRESHOLD)
-            setIsDragging(true);
-          return;
-        }
-        containerRef.current.scrollLeft = scrollStart.current.left - dx;
-        containerRef.current.scrollTop = scrollStart.current.top - dy;
-      } else if (e.touches.length === 2 && lastPinchDist.current !== null) {
-        const newDist = getTouchDist(e.touches[0], e.touches[1]);
-        const scale = newDist / lastPinchDist.current;
-        lastPinchDist.current = newDist;
-        setZoom((z) => clampZoom(z * scale));
-      }
-    },
-    [isDragging, isTemplateDragging, clampZoom]
-  );
-  const handleTouchEnd = useCallback(() => {
-    setIsDragging(false);
-    dragPending.current = false;
-    lastPinchDist.current = null;
-  }, []);
-  const handleDoubleClick = useCallback(
-    (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (isInteractiveTarget(e.target as HTMLElement)) return;
-      setZoom((z) => (z > 1.1 ? 1 : 2.5));
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (!isCanvasFocused) return;
-    const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      switch (e.key) {
-        case '+':
-        case '=':
-          e.preventDefault();
-          handleZoomIn();
-          break;
-        case '-':
-        case '_':
-          e.preventDefault();
-          handleZoomOut();
-          break;
-        case '0':
-          e.preventDefault();
-          handleResetView();
-          break;
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [isCanvasFocused, handleZoomIn, handleZoomOut, handleResetView]);
-
-  // ── HELPER: Flatten ExtraValuesMap to payload array ─────────────────
   const flattenExtraValues = useCallback(
     (tmplExtras: any[], exVals: ExtraValuesMap): OrderExtraValuePayload[] => {
       const result: OrderExtraValuePayload[] = [];
       tmplExtras.forEach((extra: any) => {
         const items = exVals[extra.id] || [];
         items.forEach((item) => {
-          if (item.value.trim()) {
+          if (item.value.trim())
             result.push({
               templateExtraFieldId: extra.id,
               value: item.value.trim(),
               meta: null,
               orderIndex: item.orderIndex
             });
-          }
         });
       });
       return result;
@@ -1021,7 +704,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     []
   );
 
-  // ── TEMPLATE LAYOUT ITEMS ───────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
     return templates.map((tmpl) => {
       const childMeta = refChildrenMeta[tmpl.id];
@@ -1030,47 +712,51 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         id: tmpl.id,
         label: tmpl.name || tmpl.id,
         children: (
-          <div className='space-y-4'>
-            <div className='flex items-center gap-2'>
-              {hasChildren && (
-                <Badge variant='outline' className='text-xs'>
-                  Parent Template
-                  <span className='text-muted-foreground ml-1.5'>
-                    — {childMeta.length} child
-                    {childMeta.length !== 1 ? 'ren' : ''} from reference
-                  </span>
-                </Badge>
-              )}
+          <div className={hasChildren ? 'flex items-start gap-4' : 'space-y-4'}>
+            <div
+              className={hasChildren ? 'min-w-0 flex-1 space-y-2' : 'space-y-2'}
+            >
+              <div className='flex items-center gap-2'>
+                {hasChildren && (
+                  <Badge variant='outline' className='text-xs'>
+                    Parent Template
+                    <span className='text-muted-foreground ml-1.5'>
+                      — {childMeta.length} child
+                      {childMeta.length !== 1 ? 'ren' : ''} from reference
+                    </span>
+                  </Badge>
+                )}
+              </div>
+              <OrderTemplateValues
+                template={tmpl}
+                values={templateValues[tmpl.id] || {}}
+                onChange={(vals) => handleTemplateValuesChange(tmpl.id, vals)}
+                errors={cellErrors[tmpl.id] || {}}
+                disabled={isSubmitting}
+                extraValues={extraValues[tmpl.id] || {}}
+                onExtraValuesChange={(vals) =>
+                  handleExtraValuesChange(tmpl.id, vals)
+                }
+                extraErrors={extraFieldErrors[tmpl.id] || {}}
+                discountType={
+                  templateDiscounts[tmpl.id]?.discountType || 'PERCENT'
+                }
+                discountValue={templateDiscounts[tmpl.id]?.discountValue || '0'}
+                onDiscountChange={(type, value) =>
+                  handleDiscountChange(tmpl.id, type, value)
+                }
+                apiBlocks={tmpl.blocks || []}
+                blockValues={templateBlockValues[tmpl.id] || {}}
+                onBlockValuesChange={(vals) =>
+                  handleBlockValuesChange(tmpl.id, vals)
+                }
+              />
             </div>
-            <OrderTemplateValues
-              template={tmpl}
-              values={templateValues[tmpl.id] || {}}
-              onChange={(vals) => handleTemplateValuesChange(tmpl.id, vals)}
-              errors={cellErrors[tmpl.id] || {}}
-              disabled={isSubmitting}
-              extraValues={extraValues[tmpl.id] || {}}
-              onExtraValuesChange={(vals) =>
-                handleExtraValuesChange(tmpl.id, vals)
-              }
-              extraErrors={extraFieldErrors[tmpl.id] || {}}
-              discountType={
-                templateDiscounts[tmpl.id]?.discountType || 'PERCENT'
-              }
-              discountValue={templateDiscounts[tmpl.id]?.discountValue || '0'}
-              onDiscountChange={(type, value) =>
-                handleDiscountChange(tmpl.id, type, value)
-              }
-              apiBlocks={tmpl.blocks || []}
-              blockValues={templateBlockValues[tmpl.id] || {}}
-              onBlockValuesChange={(vals) =>
-                handleBlockValuesChange(tmpl.id, vals)
-              }
-            />
             {hasChildren &&
               childMeta.map((_, idx) => {
                 const childKey = getChildKey(tmpl.id, idx);
                 return (
-                  <div key={childKey} className='space-y-2'>
+                  <div key={childKey} className='min-w-0 flex-1 space-y-2'>
                     <Badge variant='secondary' className='text-xs'>
                       Child #{idx + 1}
                     </Badge>
@@ -1135,9 +821,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     handleChildBlockValuesChange
   ]);
 
-  const zoomPercent = Math.round(zoom * 100);
-
-  // ── SUBMIT ──────────────────────────────────────────────────────────
   const onSubmit = async (data: OrderFormData) => {
     setSubmitError(null);
     if (!validateTemplateValues()) {
@@ -1153,7 +836,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         const columns = tmpl.columns || [];
         const rows = tmpl.rows || [];
         const tmplExtras = tmpl.extra || [];
-
         const values: { value: string; rowId: string; columnId: string }[] = [];
         rows.forEach((row) => {
           columns.forEach((col) => {
@@ -1167,12 +849,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               });
           });
         });
-
         const extravalues = flattenExtraValues(
           tmplExtras,
           extraValues[tmpl.id] || {}
         );
-
         const discount = templateDiscounts[tmpl.id] || {
           discountType: 'PERCENT' as DiscountType,
           discountValue: '0'
@@ -1184,7 +864,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         const blockvalues = buildBlockValuesPayload(
           templateBlockValues[tmpl.id] || {}
         );
-
         const payload: OrderTemplatePayload = {
           templateId: tmpl.id,
           values,
@@ -1192,7 +871,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           ...(blockvalues.length > 0 ? { blockvalues } : {})
         };
         if (extravalues.length > 0) payload.extravalues = extravalues;
-
         const childMeta = refChildrenMeta[tmpl.id];
         if (childMeta && childMeta.length > 0) {
           payload.children = childMeta.map((meta, idx) => {
@@ -1203,7 +881,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               discountType: 'PERCENT' as DiscountType,
               discountValue: '0'
             };
-
             const cValues: {
               value: string;
               rowId: string;
@@ -1221,7 +898,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                   });
               });
             });
-
             const cExtras = flattenExtraValues(tmplExtras, childExVals);
             const cSummary: TemplateSummaryPayload = {
               discountType: childDisc.discountType,
@@ -1230,7 +906,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             const cBlockvalues = buildBlockValuesPayload(
               childBlockValues[childKey] || {}
             );
-
             const childPayload: OrderTemplatePayload = {
               templateId: meta.templateId,
               values: cValues,
@@ -1243,7 +918,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         }
         return payload;
       });
-
       const productId = data.productId || referencedOrder?.productId || '';
       const createData: CreateOrderData = {
         orderNo: data.orderNo,
@@ -1254,7 +928,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         ...(data.customerId ? { customerId: data.customerId } : {}),
         templates: templatesPayload
       };
-
       await createOrder(companyId, createData);
       router.push(`/dashboard/${companyId}/orders`);
       router.refresh();
@@ -1266,7 +939,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   };
 
   const backUrl = `/dashboard/${companyId}/orders`;
-
   const totalCellErrors = useMemo(() => {
     let count = 0;
     Object.values(cellErrors).forEach((e) => {
@@ -1283,11 +955,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     });
     return count;
   }, [cellErrors, extraFieldErrors, childCellErrors, childExtraFieldErrors]);
-
   const hasTemplates = templates.length > 0;
   const showTemplateSection = isReferenceMode ? true : !!selectedProductId;
 
-  // ── RENDER ──────────────────────────────────────────────────────────
   return (
     <div className='space-y-6'>
       <Link
@@ -1362,7 +1032,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               </div>
             </div>
 
-            {/* Reference No */}
             <div className='space-y-2'>
               <Label htmlFor='referenceNo'>Reference No</Label>
               {isReferenceMode ? (
@@ -1475,7 +1144,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               </p>
             </div>
 
-            {/* Product Select */}
             {!isReferenceMode && (
               <div className='space-y-2'>
                 <Label>
@@ -1520,7 +1188,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               </div>
             )}
 
-            {/* Customer Select */}
             {selectedOrderType !== 'SAMPLE' && (
               <div className='space-y-2'>
                 <Label>
@@ -1584,7 +1251,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           </CardContent>
         </Card>
 
-        {/* Referenced Order Info */}
         {isReferenceMode && referencedOrder && (
           <Card className='border-primary/20 bg-primary/5'>
             <CardHeader className='pb-3'>
@@ -1637,7 +1303,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           </div>
         )}
 
-        {/* TEMPLATE VALUES */}
         {showTemplateSection && !isLoadingReference && (
           <>
             <Separator />
@@ -1652,16 +1317,6 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 required.
               </p>
             </div>
-
-            {totalCellErrors > 0 && (
-              <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-3 text-sm'>
-                <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
-                <span>
-                  {totalCellErrors} validation error
-                  {totalCellErrors !== 1 ? 's' : ''} found.
-                </span>
-              </div>
-            )}
 
             {isLoadingTemplates ? (
               <div className='space-y-4'>
@@ -1694,120 +1349,23 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 </CardContent>
               </Card>
             ) : (
-              <>
-                <div className='bg-muted/60 flex items-center justify-between rounded-lg border px-4 py-2.5'>
-                  <div className='flex min-w-0 items-center gap-3'>
-                    <h2 className='truncate text-sm font-semibold'>
-                      Edit Template Values
-                    </h2>
-                    <span className='text-muted-foreground hidden text-xs sm:inline'>
-                      Update values for each template. Formula columns are
-                      auto-calculated.
-                    </span>
-                  </div>
-                  <div className='bg-background flex items-center gap-1 rounded-lg border px-1 py-0.5 shadow-sm'>
-                    <CanvasToolbarButton
-                      onClick={handleZoomOut}
-                      disabled={zoom <= MIN_ZOOM}
-                      title='Zoom out (−)'
-                    >
-                      <ZoomOut className='h-4 w-4' />
-                    </CanvasToolbarButton>
-                    <span className='text-muted-foreground w-12 text-center font-mono text-xs tabular-nums select-none'>
-                      {zoomPercent}%
-                    </span>
-                    <CanvasToolbarButton
-                      onClick={handleZoomIn}
-                      disabled={zoom >= MAX_ZOOM}
-                      title='Zoom in (+)'
-                    >
-                      <ZoomIn className='h-4 w-4' />
-                    </CanvasToolbarButton>
-                    <div className='bg-border mx-0.5 h-4 w-px' />
-                    <CanvasToolbarButton
-                      onClick={handleResetView}
-                      title='Reset view (0)'
-                    >
-                      <Maximize2 className='h-3.5 w-3.5' />
-                    </CanvasToolbarButton>
-                  </div>
-                  <div className='w-20' />
-                </div>
-
-                <div
-                  ref={toolbarPortalRef}
-                  className='bg-muted/40 rounded-lg border px-4 py-2.5'
-                />
-
-                <div
-                  className='bg-muted/30 relative isolate overflow-hidden rounded-xl border'
-                  style={{
-                    height: '70vh',
-                    minHeight: '400px',
-                    maxHeight: '80vh'
-                  }}
-                >
-                  <div
-                    ref={containerRef}
-                    tabIndex={0}
-                    className={cn(
-                      'absolute inset-0 overflow-auto outline-none',
-                      isTemplateDragging
-                        ? 'cursor-default'
-                        : isDragging
-                          ? 'cursor-grabbing'
-                          : 'cursor-grab'
-                    )}
-                    onFocus={() => setIsCanvasFocused(true)}
-                    onBlur={() => setIsCanvasFocused(false)}
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUp}
-                    onMouseLeave={handleMouseUp}
-                    onWheel={handleWheel}
-                    onTouchStart={handleTouchStart}
-                    onTouchMove={handleTouchMove}
-                    onTouchEnd={handleTouchEnd}
-                    onDoubleClick={handleDoubleClick}
-                    onContextMenu={(e) => e.preventDefault()}
-                  >
-                    <div
-                      className='origin-top-left p-6'
-                      style={{ zoom: zoom } as React.CSSProperties}
-                    >
-                      <TemplateLayoutCanvas
-                        items={templateLayoutItems}
-                        persistKey={`create-${selectedProductId || 'new'}`}
-                        zoom={zoom}
-                        onTemplateDragStart={() => setIsTemplateDragging(true)}
-                        onTemplateDragEnd={() => setIsTemplateDragging(false)}
-                        toolbarPortalTarget={toolbarPortalRef}
-                      />
+              <TemplateCanvasContainer
+                items={templateLayoutItems}
+                persistKey={`create-${selectedProductId || 'new'}`}
+                title='Edit Template Values'
+                subtitle='Update values for each template. Formula columns are auto-calculated.'
+                beforeCanvas={
+                  totalCellErrors > 0 ? (
+                    <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-3 text-sm'>
+                      <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
+                      <span>
+                        {totalCellErrors} validation error
+                        {totalCellErrors !== 1 ? 's' : ''} found.
+                      </span>
                     </div>
-                  </div>
-                </div>
-
-                <div className='bg-muted/40 flex items-center justify-center rounded-lg border px-4 py-2'>
-                  <p className='text-muted-foreground text-[11px] select-none'>
-                    Scroll or drag to pan · Drag handle to reposition templates
-                    · Double-click to toggle zoom · Pinch to zoom on touch ·{' '}
-                    <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
-                      Ctrl
-                    </kbd>
-                    {' + Scroll to zoom · '}
-                    <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
-                      +
-                    </kbd>{' '}
-                    <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
-                      −
-                    </kbd>{' '}
-                    <kbd className='bg-muted rounded border px-1 py-0.5 font-mono text-[10px]'>
-                      0
-                    </kbd>{' '}
-                    for zoom controls
-                  </p>
-                </div>
-              </>
+                  ) : undefined
+                }
+              />
             )}
           </>
         )}
