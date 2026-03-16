@@ -748,6 +748,7 @@ export type UpdateOrderValuesTemplatePayload = {
 export type UpdateOrderValuesData = {
   templates: UpdateOrderValuesTemplatePayload[];
   comment?: string;
+  deleteOrderTemplateIds?: string[];
 };
 
 // =============================================================================

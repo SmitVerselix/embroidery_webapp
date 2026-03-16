@@ -43,7 +43,8 @@ import {
   RotateCw,
   Check,
   X,
-  History
+  History,
+  Trash2
 } from 'lucide-react';
 import {
   Tooltip,
@@ -576,6 +577,10 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
   const [pendingDuplicateEntry, setPendingDuplicateEntry] =
     useState<OrderTemplateEntry | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [pendingDeleteEntry, setPendingDeleteEntry] =
+    useState<OrderTemplateEntry | null>(null);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   // ── PROCESS TEMPLATE DATA ───────────────────────────────────────────
   const processOrderTemplates = useCallback((orderData: OrderWithDetails) => {
@@ -787,7 +792,6 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           items.map((ev) => ({
             templateExtraFieldId: fid,
             value: ev.value,
-            orderExtraValueId: ev.orderExtraValueId,
             orderIndex: ev.orderIndex ?? 0
           }))
         );
@@ -859,6 +863,50 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   const cancelDuplicate = useCallback(() => {
     setDuplicateDialogOpen(false);
     setPendingDuplicateEntry(null);
+  }, []);
+
+  // ── DELETE ──────────────────────────────────────────────────────────
+  const requestDelete = useCallback((entry: OrderTemplateEntry) => {
+    if (entry.isNew) {
+      toast.error('Cannot delete a template that has not been saved yet.');
+      return;
+    }
+    setPendingDeleteEntry(entry);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const executeDelete = useCallback(async () => {
+    const entry = pendingDeleteEntry;
+    if (!entry || !order) return;
+    setDeleteDialogOpen(false);
+    setPendingDeleteEntry(null);
+    setDeletingIds((prev) => new Set(prev).add(entry.orderTemplateId));
+
+    try {
+      const payload: UpdateOrderValuesData = {
+        templates: [],
+        deleteOrderTemplateIds: [entry.orderTemplateId]
+      };
+
+      await updateOrderValues(companyId, orderId, payload);
+      toast.success('Template deleted successfully');
+      const orderData = await getOrder(companyId, orderId);
+      setOrder(orderData);
+      processOrderTemplates(orderData);
+    } catch (err) {
+      toast.error(getError(err) || 'Failed to delete template');
+    } finally {
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.orderTemplateId);
+        return next;
+      });
+    }
+  }, [pendingDeleteEntry, order, companyId, orderId, processOrderTemplates]);
+
+  const cancelDelete = useCallback(() => {
+    setDeleteDialogOpen(false);
+    setPendingDeleteEntry(null);
   }, []);
 
   // ── HELPERS ─────────────────────────────────────────────────────────
@@ -963,34 +1011,65 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                         </Badge>
                       )}
                     </div>
-                    <TooltipProvider delayDuration={200}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant='outline'
-                            size='sm'
-                            disabled={
-                              !duplicateAllowed ||
-                              duplicatingIds.has(templateId)
-                            }
-                            onClick={() => requestDuplicate(parentEntry)}
-                            className='gap-1.5'
-                          >
-                            {duplicatingIds.has(templateId) ? (
-                              <Loader2 className='h-3.5 w-3.5 animate-spin' />
-                            ) : (
-                              <Copy className='h-3.5 w-3.5' />
-                            )}{' '}
-                            Duplicate
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side='left'>
-                          {duplicateAllowed
-                            ? 'Duplicate this template with copied values'
-                            : 'Maximum 2 templates reached'}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                    <div className='flex items-center gap-2'>
+                      {!parentEntry.isNew && (
+                        <TooltipProvider delayDuration={200}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant='outline'
+                                size='sm'
+                                disabled={deletingIds.has(
+                                  parentEntry.orderTemplateId
+                                )}
+                                onClick={() => requestDelete(parentEntry)}
+                                className='text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5'
+                              >
+                                {deletingIds.has(
+                                  parentEntry.orderTemplateId
+                                ) ? (
+                                  <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                                ) : (
+                                  <Trash2 className='h-3.5 w-3.5' />
+                                )}{' '}
+                                Delete
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side='left'>
+                              Delete this template from the order
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                      <TooltipProvider delayDuration={200}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant='outline'
+                              size='sm'
+                              disabled={
+                                !duplicateAllowed ||
+                                duplicatingIds.has(templateId)
+                              }
+                              onClick={() => requestDuplicate(parentEntry)}
+                              className='gap-1.5'
+                            >
+                              {duplicatingIds.has(templateId) ? (
+                                <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                              ) : (
+                                <Copy className='h-3.5 w-3.5' />
+                              )}{' '}
+                              Duplicate
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side='left'>
+                            {duplicateAllowed
+                              ? 'Duplicate this template with copied values'
+                              : 'Maximum 2 templates reached'}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
                   </div>
                   <OrderTemplateValues
                     template={parentEntry.template}
@@ -1011,10 +1090,40 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                   key={childEntry.orderTemplateId}
                   className={hasChildren ? 'min-w-0 flex-1' : ''}
                 >
-                  <div className='mb-2 flex items-center gap-2'>
-                    <Badge variant='secondary' className='text-xs font-normal'>
-                      Duplicate #{idx + 1}
-                    </Badge>
+                  <div className='mb-2 flex items-center justify-between'>
+                    <div className='flex items-center gap-2'>
+                      <Badge
+                        variant='secondary'
+                        className='text-xs font-normal'
+                      >
+                        Duplicate #{idx + 1}
+                      </Badge>
+                    </div>
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            disabled={deletingIds.has(
+                              childEntry.orderTemplateId
+                            )}
+                            onClick={() => requestDelete(childEntry)}
+                            className='text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5'
+                          >
+                            {deletingIds.has(childEntry.orderTemplateId) ? (
+                              <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                            ) : (
+                              <Trash2 className='h-3.5 w-3.5' />
+                            )}{' '}
+                            Delete
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side='left'>
+                          Delete this duplicate template
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                   <OrderTemplateValues
                     template={childEntry.template}
@@ -1038,10 +1147,12 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       groupedByTemplate,
       canDuplicate,
       duplicatingIds,
+      deletingIds,
       templateValues,
       extraValues,
       blockValues,
-      requestDuplicate
+      requestDuplicate,
+      requestDelete
     ]
   );
 
@@ -1168,6 +1279,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   // ── RENDER ──────────────────────────────────────────────────────────
   return (
     <div className='space-y-6'>
+      {/* Duplicate Confirmation Dialog */}
       <AlertDialog
         open={duplicateDialogOpen}
         onOpenChange={setDuplicateDialogOpen}
@@ -1190,6 +1302,33 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
             <AlertDialogAction onClick={executeDuplicate}>
               <Copy className='mr-2 h-4 w-4' />
               Yes, Duplicate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete the template
+              {pendingDeleteEntry?.template?.name
+                ? ` "${pendingDeleteEntry.template.name}"`
+                : ''}
+              {pendingDeleteEntry?.isChild ? ' (duplicate)' : ''}? This action
+              cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={cancelDelete}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={executeDelete}
+              className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
+            >
+              <Trash2 className='mr-2 h-4 w-4' />
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

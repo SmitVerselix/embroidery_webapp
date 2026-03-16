@@ -33,9 +33,7 @@ import type {
 import type { TemplateValuesMap } from './order-template-values';
 import type { ExtraValuesMap, ExtraValueItem } from './order-extra-values';
 
-// =============================================================================
-// TYPES
-// =============================================================================
+// -- Types --
 
 type OrderTemplateSummary = {
   id: string;
@@ -79,104 +77,53 @@ export type FinalCalcData = {
   hasAnyChildren: boolean;
 };
 
-/** BlockValuesMap: blockIndex → templateBlockId */
 type BlockValuesMap = Record<number, string>;
-
-/** Sentinel ID used to represent the Final Calculation page in selectedIds */
-const FINAL_CALC_ID = '__final_calculation__';
-
-/** Options that control which rows appear on the Final Calculation PDF page */
+type RGB = [number, number, number];
 type FinalCalcPDFOptions = {
   includeAddonDiscount: boolean;
   includeMarginDiscount: boolean;
   includeMarginTotal: boolean;
 };
 
+const FINAL_CALC_ID = '__final_calculation__';
+
 interface OrderTemplatePDFProps {
   order: OrderWithDetails;
   entries: PDFTemplateEntry[];
   templateValues: Record<string, TemplateValuesMap>;
   extraValues: Record<string, ExtraValuesMap>;
-  /** Block values per orderTemplateId — maps blockIndex→templateBlockId */
   blockValues: Record<string, BlockValuesMap>;
-  /** Pass this to include Final Calculation as a selectable page */
   finalCalc?: FinalCalcData;
   className?: string;
 }
 
-// =============================================================================
-// EXTRA VALUES HELPERS — array-based access
-// =============================================================================
+// -- Helpers --
 
-/** Get the first (or only) value for an extra field, or fallback */
-function getFirstExtraValue(
-  extVals: ExtraValuesMap,
-  fieldId: string,
-  fallback = '—'
-): string {
-  const items = extVals[fieldId];
-  if (!items || items.length === 0) return fallback;
-  const val = items[0]?.value;
-  return val && val.trim() ? val : fallback;
-}
+const getAllExtraValues = (ev: ExtraValuesMap, fid: string) =>
+  (ev[fid] ?? []).map((i) => i.value).filter((v) => v?.trim());
 
-/** Get ALL values for an extra field as a flat array of strings */
-function getAllExtraValues(extVals: ExtraValuesMap, fieldId: string): string[] {
-  const items = extVals[fieldId];
-  if (!items || items.length === 0) return [];
-  return items.map((i) => i.value).filter((v) => v && v.trim());
-}
+const getAllMediaUrls = (ev: ExtraValuesMap, fid: string) =>
+  getAllExtraValues(ev, fid).filter((v) => v.startsWith('http'));
 
-/** Get all image URLs for a media field (supports allowMultiple) */
-function getAllMediaUrls(extVals: ExtraValuesMap, fieldId: string): string[] {
-  const items = extVals[fieldId];
-  if (!items || items.length === 0) return [];
-  return items
-    .map((i) => i.value)
-    .filter((v) => v && v.trim() && v.startsWith('http'));
-}
+const joinExtra = (ev: ExtraValuesMap, fid: string) =>
+  getAllExtraValues(ev, fid).join(', ') || '—';
 
-/** Join all values for display (comma-separated) */
-function joinExtraValues(
-  extVals: ExtraValuesMap,
-  fieldId: string,
-  fallback = '—'
-): string {
-  const vals = getAllExtraValues(extVals, fieldId);
-  return vals.length > 0 ? vals.join(', ') : fallback;
-}
+const getBlockName = (
+  blocks: TemplateBlockApi[],
+  bv: BlockValuesMap,
+  idx: number
+) => blocks.find((b) => b.id === bv[idx])?.name ?? null;
 
-// =============================================================================
-// BLOCK NAME HELPERS
-// =============================================================================
+const getBlockLabel = (
+  blocks: TemplateBlockApi[],
+  bv: BlockValuesMap,
+  idx: number
+) => {
+  const n = getBlockName(blocks, bv, idx);
+  return n ? `Block ${idx} — ${n}` : `Block ${idx}`;
+};
 
-/** Resolve block name from apiBlocks + blockValues */
-function getBlockName(
-  apiBlocks: TemplateBlockApi[],
-  bvMap: BlockValuesMap,
-  blockIndex: number
-): string | null {
-  const templateBlockId = bvMap[blockIndex];
-  if (!templateBlockId) return null;
-  const block = apiBlocks.find((b) => b.id === templateBlockId);
-  return block?.name ?? null;
-}
-
-/** Build a display label for a block: "Block 0 — 4 SS Silver Diamond" */
-function getBlockLabel(
-  apiBlocks: TemplateBlockApi[],
-  bvMap: BlockValuesMap,
-  blockIndex: number
-): string {
-  const name = getBlockName(apiBlocks, bvMap, blockIndex);
-  return name ? `Block ${blockIndex} — ${name}` : `Block ${blockIndex}`;
-}
-
-// =============================================================================
-// HELPERS
-// =============================================================================
-
-const fmt = (v: string | null | undefined): string => {
+const fmt = (v: string | null | undefined) => {
   if (!v) return '0.00';
   const n = parseFloat(v);
   return isNaN(n) ? '0.00' : n.toFixed(2);
@@ -189,84 +136,72 @@ const fmtDate = (d: string) =>
     year: 'numeric'
   });
 
-// =============================================================================
-// BLOCK HELPERS (shared by preview + PDF)
-// =============================================================================
+type ColumnBlock = { index: number; columns: any[] };
 
-type ColumnBlock = {
-  index: number;
-  columns: any[];
-};
-
-function deriveBlockColumns(columns: any[]): ColumnBlock[] {
-  const sorted = [...columns].sort((a: any, b: any) => {
-    if (a.blockIndex !== b.blockIndex) return a.blockIndex - b.blockIndex;
-    return a.orderNo - b.orderNo;
-  });
-  const blockIndices = Array.from(
-    new Set(sorted.map((c: any) => c.blockIndex))
-  ).sort((a, b) => a - b);
-  return blockIndices.map((idx) => ({
-    index: idx,
-    columns: sorted.filter((c: any) => c.blockIndex === idx)
-  }));
+function deriveBlockColumns(cols: any[]): ColumnBlock[] {
+  const sorted = [...cols].sort((a, b) =>
+    a.blockIndex !== b.blockIndex
+      ? a.blockIndex - b.blockIndex
+      : a.orderNo - b.orderNo
+  );
+  return Array.from(new Set(sorted.map((c) => c.blockIndex)))
+    .sort((a, b) => a - b)
+    .map((idx) => ({
+      index: idx,
+      columns: sorted.filter((c) => c.blockIndex === idx)
+    }));
 }
 
-// =============================================================================
-// IMAGE UTILITIES — fetch remote images for PDF embedding
-// =============================================================================
+/** Build rows for extra-fields table (header or footer) */
+function buildExtraRows(fields: any[], extVals: ExtraValuesMap): string[][] {
+  const rows: string[][] = [];
+  fields.forEach((f) => {
+    const vals = getAllExtraValues(extVals, f.id);
+    if (vals.length <= 1) rows.push([f.label, vals[0] ?? '—']);
+    else vals.forEach((v, i) => rows.push([i === 0 ? f.label : '', v]));
+  });
+  return rows;
+}
 
-/**
- * Fetches a remote image as a base64 data URL for embedding in jsPDF.
- *
- * Strategy:
- *  1. Load via HTMLImageElement with crossOrigin="anonymous" and draw to
- *     an offscreen canvas. This works when the server sends CORS headers
- *     (DigitalOcean Spaces does so by default for GET requests).
- *  2. Fall back to the fetch API if the canvas approach fails.
- */
-async function fetchImageAsDataURL(url: string): Promise<string | null> {
-  // Strategy 1: Image element + canvas (preferred — avoids streaming the
-  // entire blob through JS when the browser already has CORS access).
-  const canvasResult = await new Promise<string | null>((resolve) => {
+// -- Image utilities --
+
+async function blobToJpegDataURL(blob: Blob): Promise<string | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
     const img = new Image();
-    img.crossOrigin = 'anonymous';
-
     img.onload = () => {
       try {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth || 200;
-        canvas.height = img.naturalHeight || 200;
-        const ctx = canvas.getContext('2d');
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth || 200;
+        c.height = img.naturalHeight || 200;
+        const ctx = c.getContext('2d');
         if (!ctx) {
           resolve(null);
           return;
         }
         ctx.drawImage(img, 0, 0);
-        // Use JPEG for photos (smaller), PNG is the safe fallback
-        resolve(canvas.toDataURL('image/jpeg', 0.92));
+        resolve(c.toDataURL('image/jpeg', 0.92));
       } catch {
-        // Canvas taint or other error
         resolve(null);
+      } finally {
+        URL.revokeObjectURL(url);
       }
     };
-
-    img.onerror = () => resolve(null);
-
-    // Cache-bust so the browser makes a fresh request that includes the
-    // Origin header (needed for CORS handshake on some CDNs).
-    img.src = url.includes('?')
-      ? `${url}&_cb=${Date.now()}`
-      : `${url}?_cb=${Date.now()}`;
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    img.src = url;
   });
+}
 
-  if (canvasResult) return canvasResult;
-
-  // Strategy 2: fetch API fallback
+async function fetchBlobAndConvert(url: string): Promise<string | null> {
   try {
-    const response = await fetch(url, { mode: 'cors' });
-    if (!response.ok) return null;
-    const blob = await response.blob();
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const blob = await r.blob();
+    const canvas = await blobToJpegDataURL(blob);
+    if (canvas) return canvas;
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);
@@ -278,59 +213,91 @@ async function fetchImageAsDataURL(url: string): Promise<string | null> {
   }
 }
 
-async function getImageDimensions(
-  dataUrl: string
-): Promise<{ w: number; h: number }> {
+function imgViaElement(
+  url: string,
+  crossOrigin: boolean
+): Promise<string | null> {
   return new Promise((resolve) => {
+    const img = new Image();
+    if (crossOrigin) img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth || 200;
+        c.height = img.naturalHeight || 200;
+        const ctx = c.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        resolve(c.toDataURL('image/jpeg', 0.92));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+async function fetchImageAsDataURL(url: string): Promise<string | null> {
+  // 1. Proxy via API route
+  try {
+    const r = await fetchBlobAndConvert(
+      `/api/proxy-image?url=${encodeURIComponent(url)}`
+    );
+    if (r) return r;
+  } catch {}
+  // 2. Direct fetch
+  try {
+    const r = await fetchBlobAndConvert(url);
+    if (r) return r;
+  } catch {}
+  // 3. <img> with CORS, then without
+  return (await imgViaElement(url, true)) ?? (await imgViaElement(url, false));
+}
+
+const getImageDims = (dataUrl: string): Promise<{ w: number; h: number }> =>
+  new Promise((resolve) => {
     const img = new Image();
     img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
     img.onerror = () => resolve({ w: 200, h: 200 });
     img.src = dataUrl;
   });
-}
 
-/** Scale dimensions to fit inside a bounding box while keeping aspect ratio */
-function fitImage(
-  srcW: number,
-  srcH: number,
-  maxW: number,
-  maxH: number
-): { w: number; h: number } {
-  const ratio = Math.min(maxW / srcW, maxH / srcH, 1);
-  return { w: srcW * ratio, h: srcH * ratio };
-}
+const fitImage = (sw: number, sh: number, mw: number, mh: number) => {
+  const r = Math.min(mw / sw, mh / sh, 1);
+  return { w: sw * r, h: sh * r };
+};
 
-// =============================================================================
-// PREVIEW TABLE — mirrors the on-screen table exactly
-// =============================================================================
+const detectFmt = (d: string) =>
+  d.startsWith('data:image/png') ? 'PNG' : 'JPEG';
 
-interface PreviewTableProps {
-  entry: PDFTemplateEntry;
-  values: TemplateValuesMap;
-  extras: ExtraValuesMap;
-  blockValues: BlockValuesMap;
-}
+// -- Preview table (dialog) --
 
 function PreviewTable({
   entry,
   values,
   extras,
-  blockValues
-}: PreviewTableProps) {
-  const { template, summary } = entry;
-  const columns = template.columns ?? [];
-  const rows = template.rows ?? [];
-  const extraFields = template.extra ?? [];
-  const apiBlocks = template.blocks ?? [];
-  const headerExtras = extraFields.filter((f) => f.sectionType === 'HEADER');
-  const footerExtras = extraFields.filter((f) => f.sectionType === 'FOOTER');
-
-  const blockGroups = deriveBlockColumns(columns);
-  const flatColumns = blockGroups.flatMap((bg) => bg.columns);
-  const hasMultipleBlocks = blockGroups.length > 1;
-
-  // Block header colour classes (same palette as order-template-values)
-  const blockColorClasses = [
+  blockValues: bv
+}: {
+  entry: PDFTemplateEntry;
+  values: TemplateValuesMap;
+  extras: ExtraValuesMap;
+  blockValues: BlockValuesMap;
+}) {
+  const { template: t, summary: s } = entry;
+  const cols = t.columns ?? [],
+    rows = t.rows ?? [],
+    extra = t.extra ?? [],
+    blocks = t.blocks ?? [];
+  const headerExtras = extra.filter((f) => f.sectionType === 'HEADER');
+  const footerExtras = extra.filter((f) => f.sectionType === 'FOOTER');
+  const bg = deriveBlockColumns(cols),
+    flat = bg.flatMap((b) => b.columns),
+    multi = bg.length > 1;
+  const bcc = [
     'bg-blue-100 text-blue-800',
     'bg-green-100 text-green-800',
     'bg-purple-100 text-purple-800',
@@ -339,105 +306,96 @@ function PreviewTable({
     'bg-teal-100 text-teal-800'
   ];
 
+  const ExtraGrid = ({ fields }: { fields: any[] }) =>
+    fields.length > 0 ? (
+      <div className='bg-muted/30 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border px-3 py-2'>
+        {fields.map((f) => (
+          <div key={f.id} className='flex gap-1'>
+            <span className='text-muted-foreground font-medium'>
+              {f.label}:
+            </span>
+            <span>{joinExtra(extras, f.id)}</span>
+          </div>
+        ))}
+      </div>
+    ) : null;
+
   return (
     <div className='space-y-2.5 text-xs'>
-      {/* Block selectors (show which block is selected) */}
-      {apiBlocks.length > 0 && (
+      {blocks.length > 0 && (
         <div className='flex flex-wrap gap-2'>
-          {blockGroups.map((bg, idx) => {
-            const name = getBlockName(apiBlocks, blockValues, bg.index);
-            if (!name) return null;
-            return (
+          {bg.map((b, i) => {
+            const n = getBlockName(blocks, bv, b.index);
+            return n ? (
               <div
-                key={bg.index}
+                key={b.index}
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-medium',
-                  blockColorClasses[idx % blockColorClasses.length]
+                  bcc[i % bcc.length]
                 )}
               >
-                Block {bg.index}: {name}
+                Block {b.index}: {n}
               </div>
-            );
+            ) : null;
           })}
         </div>
       )}
-
-      {/* Header extra values */}
-      {headerExtras.length > 0 && (
-        <div className='bg-muted/30 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border px-3 py-2'>
-          {headerExtras.map((f) => (
-            <div key={f.id} className='flex gap-1'>
-              <span className='text-muted-foreground font-medium'>
-                {f.label}:
-              </span>
-              <span>{joinExtraValues(extras, f.id)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Main values table */}
-      {flatColumns.length > 0 && rows.length > 0 && (
+      <ExtraGrid fields={headerExtras} />
+      {flat.length > 0 && rows.length > 0 && (
         <div className='overflow-x-auto rounded-md border'>
           <table className='w-full text-xs'>
             <thead>
-              {/* Block group header row (only when multiple blocks) */}
-              {hasMultipleBlocks && (
+              {multi && (
                 <tr className='bg-muted/30 border-b-2'>
                   <th className='px-3 py-2 text-left font-semibold' rowSpan={2}>
                     Description
                   </th>
-                  {blockGroups.map((bg, idx) => (
+                  {bg.map((b, i) => (
                     <th
-                      key={bg.index}
-                      colSpan={bg.columns.length}
+                      key={b.index}
+                      colSpan={b.columns.length}
                       className={cn(
                         'px-3 py-1.5 text-center font-bold',
-                        blockColorClasses[idx % blockColorClasses.length]
+                        bcc[i % bcc.length]
                       )}
                     >
-                      {getBlockLabel(apiBlocks, blockValues, bg.index)}
+                      {getBlockLabel(blocks, bv, b.index)}
                     </th>
                   ))}
                 </tr>
               )}
-              {/* Column header row */}
               <tr className='bg-muted/60 border-b'>
-                {!hasMultipleBlocks && (
+                {!multi && (
                   <th className='px-3 py-2 text-left font-semibold'>
                     Description
                   </th>
                 )}
-                {flatColumns.map((col: any) => (
-                  <th
-                    key={col.id}
-                    className='px-3 py-2 text-right font-semibold'
-                  >
-                    {col.label}
+                {flat.map((c: any) => (
+                  <th key={c.id} className='px-3 py-2 text-right font-semibold'>
+                    {c.label}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((row, ri) => {
-                const isTotal = row.rowType === 'TOTAL';
+                const tot = row.rowType === 'TOTAL';
                 return (
                   <tr
                     key={row.id}
                     className={cn(
                       'border-b',
-                      isTotal && 'bg-muted/40 font-semibold',
-                      ri % 2 === 0 && !isTotal && 'bg-background',
-                      ri % 2 !== 0 && !isTotal && 'bg-muted/10'
+                      tot && 'bg-muted/40 font-semibold',
+                      !tot && (ri % 2 === 0 ? 'bg-background' : 'bg-muted/10')
                     )}
                   >
                     <td className='px-3 py-1.5'>{row.label}</td>
-                    {flatColumns.map((col: any) => (
+                    {flat.map((c: any) => (
                       <td
-                        key={col.id}
+                        key={c.id}
                         className='px-3 py-1.5 text-right font-mono tabular-nums'
                       >
-                        {values[row.id]?.[col.id] ?? ''}
+                        {values[row.id]?.[c.id] ?? ''}
                       </td>
                     ))}
                   </tr>
@@ -447,85 +405,58 @@ function PreviewTable({
           </table>
         </div>
       )}
-
-      {/* Summary */}
-      {summary && (
+      {s && (
         <div className='flex justify-end'>
           <div className='w-60 overflow-hidden rounded-md border text-xs'>
             <div className='bg-muted/20 flex justify-between border-b px-3 py-1.5'>
               <span className='text-muted-foreground'>Subtotal</span>
               <span className='font-mono font-medium tabular-nums'>
-                {fmt(summary.total)}
+                {fmt(s.total)}
               </span>
             </div>
-            {summary.discountAmount &&
-              parseFloat(summary.discountAmount) > 0 && (
-                <div className='flex justify-between border-b px-3 py-1.5'>
-                  <span className='text-muted-foreground'>
-                    Discount
-                    {summary.discountType
-                      ? ` (${summary.discountType === 'PERCENT' ? '%' : '₹'})`
-                      : ''}
-                  </span>
-                  <span className='font-mono tabular-nums'>
-                    -{fmt(summary.discountAmount)}
-                  </span>
-                </div>
-              )}
+            {s.discountAmount && parseFloat(s.discountAmount) > 0 && (
+              <div className='flex justify-between border-b px-3 py-1.5'>
+                <span className='text-muted-foreground'>
+                  Discount
+                  {s.discountType
+                    ? ` (${s.discountType === 'PERCENT' ? '%' : '₹'})`
+                    : ''}
+                </span>
+                <span className='font-mono tabular-nums'>
+                  -{fmt(s.discountAmount)}
+                </span>
+              </div>
+            )}
             <div className='flex justify-between bg-indigo-50 px-3 py-2 font-semibold text-indigo-700'>
               <span>Total Payable</span>
               <span className='font-mono tabular-nums'>
-                {fmt(summary.finalPayableAmount)}
+                {fmt(s.finalPayableAmount)}
               </span>
             </div>
-            {summary.notes && (
+            {s.notes && (
               <div className='text-muted-foreground border-t px-3 py-1.5 italic'>
-                {summary.notes}
+                {s.notes}
               </div>
             )}
           </div>
         </div>
       )}
-
-      {/* Footer extra values */}
-      {footerExtras.length > 0 && (
-        <div className='bg-muted/30 grid grid-cols-2 gap-x-6 gap-y-1 rounded-md border px-3 py-2'>
-          {footerExtras.map((f) => (
-            <div key={f.id} className='flex gap-1'>
-              <span className='text-muted-foreground font-medium'>
-                {f.label}:
-              </span>
-              <span>{joinExtraValues(extras, f.id)}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      <ExtraGrid fields={footerExtras} />
     </div>
   );
 }
 
-// =============================================================================
-// FINAL CALC PREVIEW — shown in dialog when Final Calculation is expanded
-// =============================================================================
+// -- Final calc preview (dialog) --
 
 function FinalCalcPreview({
-  data,
-  options
+  data: d,
+  options: o
 }: {
   data: FinalCalcData;
   options: FinalCalcPDFOptions;
 }) {
-  const {
-    templateRows,
-    total,
-    discount,
-    discountType,
-    marginDiscount,
-    marginType,
-    marginTotal,
-    finalPayableAmount,
-    hasAnyChildren
-  } = data;
+  const typeSuffix = (t: string | null) =>
+    t ? ` (${t === 'PERCENT' ? '%' : '₹'})` : '';
   return (
     <div className='space-y-2.5 text-xs'>
       <div className='overflow-x-auto rounded-md border'>
@@ -534,7 +465,7 @@ function FinalCalcPreview({
             <tr className='bg-muted/60 border-b'>
               <th className='px-3 py-2 text-left font-semibold'>Template</th>
               <th className='px-3 py-2 text-right font-semibold'>Total (₹)</th>
-              {hasAnyChildren && (
+              {d.hasAnyChildren && (
                 <th className='px-3 py-2 text-right font-semibold'>
                   Child Total (₹)
                 </th>
@@ -543,79 +474,70 @@ function FinalCalcPreview({
             </tr>
           </thead>
           <tbody>
-            {templateRows.map((row, ri) => (
+            {d.templateRows.map((r, i) => (
               <tr
-                key={row.orderTemplateId}
+                key={r.orderTemplateId}
                 className={cn(
                   'border-b',
-                  ri % 2 === 0 ? 'bg-background' : 'bg-muted/10'
+                  i % 2 === 0 ? 'bg-background' : 'bg-muted/10'
                 )}
               >
-                <td className='px-3 py-1.5 font-medium'>{row.label}</td>
+                <td className='px-3 py-1.5 font-medium'>{r.label}</td>
                 <td className='px-3 py-1.5 text-right font-mono tabular-nums'>
-                  {row.total}
+                  {r.total}
                 </td>
-                {hasAnyChildren && (
+                {d.hasAnyChildren && (
                   <td className='text-muted-foreground px-3 py-1.5 text-right font-mono tabular-nums'>
-                    {row.childTotal ?? '—'}
+                    {r.childTotal ?? '—'}
                   </td>
                 )}
                 <td className='text-muted-foreground px-3 py-1.5 italic'>
-                  {row.notes ?? '—'}
+                  {r.notes ?? '—'}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-
-      {/* Summary rows */}
       <div className='flex justify-end'>
         <div className='w-64 overflow-hidden rounded-md border text-xs'>
           <div className='flex justify-between border-b px-3 py-1.5 font-semibold'>
             <span>Total</span>
-            <span className='font-mono tabular-nums'>{total}</span>
+            <span className='font-mono tabular-nums'>{d.total}</span>
           </div>
-          {options.includeMarginDiscount && (
+          {o.includeMarginDiscount && (
             <div className='flex justify-between border-b px-3 py-1.5'>
               <span className='text-muted-foreground'>
-                Margin Discount
-                {marginType ? ` (${marginType === 'PERCENT' ? '%' : '₹'})` : ''}
+                Margin Discount{typeSuffix(d.marginType)}
               </span>
-              <span className='font-mono tabular-nums'>{marginDiscount}</span>
+              <span className='font-mono tabular-nums'>{d.marginDiscount}</span>
             </div>
           )}
-          {options.includeMarginTotal && (
+          {o.includeMarginTotal && (
             <div className='flex justify-between border-b px-3 py-1.5'>
               <span className='text-muted-foreground'>Margin Total</span>
-              <span className='font-mono tabular-nums'>{marginTotal}</span>
+              <span className='font-mono tabular-nums'>{d.marginTotal}</span>
             </div>
           )}
           <div className='flex justify-between border-b px-3 py-1.5'>
             <span className='text-muted-foreground'>
-              Discount
-              {discountType
-                ? ` (${discountType === 'PERCENT' ? '%' : '₹'})`
-                : ''}
+              Discount{typeSuffix(d.discountType)}
             </span>
-            <span className='font-mono tabular-nums'>{discount}</span>
+            <span className='font-mono tabular-nums'>{d.discount}</span>
           </div>
-          {options.includeAddonDiscount && (
+          {o.includeAddonDiscount && (
             <div className='flex justify-between border-b px-3 py-1.5'>
               <span className='text-muted-foreground'>
-                Addon Discount
-                {data.addonType
-                  ? ` (${data.addonType === 'PERCENT' ? '%' : '₹'})`
-                  : ''}
+                Addon Discount{typeSuffix(d.addonType)}
               </span>
-              <span className='font-mono tabular-nums'>
-                {data.addonDiscount}
-              </span>
+              <span className='font-mono tabular-nums'>{d.addonDiscount}</span>
             </div>
           )}
           <div className='flex justify-between bg-indigo-50 px-3 py-2 font-semibold text-indigo-700'>
             <span>Final Payable Amount</span>
-            <span className='font-mono tabular-nums'>{finalPayableAmount}</span>
+            <span className='font-mono tabular-nums'>
+              {d.finalPayableAmount}
+            </span>
           </div>
         </div>
       </div>
@@ -623,8 +545,7 @@ function FinalCalcPreview({
   );
 }
 
-// Each selected entry occupies its own page (page break between them).
-// =============================================================================
+// -- PDF generation --
 
 async function generateMultiPDF(
   order: OrderWithDetails,
@@ -634,35 +555,27 @@ async function generateMultiPDF(
   allBlockValues: Record<string, BlockValuesMap>,
   finalCalc: FinalCalcData | null,
   includeFinalCalc: boolean,
-  finalCalcOptions: FinalCalcPDFOptions
+  fcOpts: FinalCalcPDFOptions
 ): Promise<void> {
   const { default: jsPDF } = await import('jspdf');
   const { default: autoTable } = await import('jspdf-autotable');
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  const PW = doc.internal.pageSize.getWidth(),
+    PH = doc.internal.pageSize.getHeight(),
+    M = 36;
 
-  const doc = new jsPDF({
-    orientation: 'landscape',
-    unit: 'pt',
-    format: 'a4'
-  });
-  const PAGE_W = doc.internal.pageSize.getWidth();
-  const PAGE_H = doc.internal.pageSize.getHeight();
-  const MARGIN = 36;
-
-  // ── Colour palette ──────────────────────────────────────────────────
   const C = {
-    primary: [30, 41, 59] as [number, number, number],
-    primaryLight: [248, 250, 252] as [number, number, number],
-    accent: [99, 102, 241] as [number, number, number],
-    accentSoft: [238, 242, 255] as [number, number, number],
-    border: [226, 232, 240] as [number, number, number],
-    muted: [100, 116, 139] as [number, number, number],
-    white: [255, 255, 255] as [number, number, number],
-    rowAlt: [248, 250, 252] as [number, number, number],
-    totalRow: [241, 245, 249] as [number, number, number]
-  } as const;
-
-  // Block header colours (matching the UI palette)
-  const BLOCK_COLORS: [number, number, number][] = [
+    primary: [30, 41, 59] as RGB,
+    primaryLight: [248, 250, 252] as RGB,
+    accent: [99, 102, 241] as RGB,
+    accentSoft: [238, 242, 255] as RGB,
+    border: [226, 232, 240] as RGB,
+    muted: [100, 116, 139] as RGB,
+    white: [255, 255, 255] as RGB,
+    rowAlt: [248, 250, 252] as RGB,
+    totalRow: [241, 245, 249] as RGB
+  };
+  const BCOL: RGB[] = [
     [37, 99, 235],
     [22, 163, 74],
     [147, 51, 234],
@@ -670,170 +583,153 @@ async function generateMultiPDF(
     [219, 39, 119],
     [13, 148, 136]
   ];
-
-  const BLOCK_BG_COLORS: [number, number, number][] = [
-    [219, 234, 254], // blue-200
-    [187, 247, 208], // green-200
-    [233, 213, 255], // purple-200
-    [253, 230, 138], // amber-200
-    [251, 207, 232], // pink-200
-    [153, 246, 228] // teal-200
-  ];
-
-  // Section label colours
   const SEC = {
     header: {
-      bg: [220, 252, 231] as [number, number, number],
-      fg: [22, 101, 52] as [number, number, number],
-      badge: [34, 197, 94] as [number, number, number]
+      bg: [220, 252, 231] as RGB,
+      fg: [22, 101, 52] as RGB,
+      badge: [34, 197, 94] as RGB
     },
     media: {
-      bg: [243, 232, 255] as [number, number, number],
-      fg: [107, 33, 168] as [number, number, number],
-      badge: [168, 85, 247] as [number, number, number]
+      bg: [243, 232, 255] as RGB,
+      fg: [107, 33, 168] as RGB,
+      badge: [168, 85, 247] as RGB
     },
     footer: {
-      bg: [220, 252, 231] as [number, number, number],
-      fg: [22, 101, 52] as [number, number, number],
-      badge: [34, 197, 94] as [number, number, number]
+      bg: [220, 252, 231] as RGB,
+      fg: [22, 101, 52] as RGB,
+      badge: [34, 197, 94] as RGB
     }
-  } as const;
+  };
 
-  // ── Pre-fetch all media images (supports multiple per field) ────────
-  const mediaImageCache: Record<
-    string,
-    { dataUrl: string; w: number; h: number }
-  > = {};
+  // Shared autoTable styles
+  const headStyle = {
+    fillColor: C.primary,
+    textColor: C.white,
+    fontStyle: 'bold' as const,
+    fontSize: 8,
+    cellPadding: { top: 6, bottom: 6, left: 8, right: 8 }
+  };
+  const bodyStyle = {
+    fontSize: 8,
+    textColor: C.primary,
+    cellPadding: { top: 5, bottom: 5, left: 8, right: 8 },
+    lineColor: C.border,
+    lineWidth: 0.4
+  };
+  const tblLine = {
+    tableLineColor: C.border,
+    tableLineWidth: 0.5,
+    alternateRowStyles: { fillColor: C.rowAlt }
+  };
+  const extraHeadStyle = (sec: typeof SEC.header) => ({
+    fillColor: sec.bg,
+    textColor: sec.fg,
+    fontStyle: 'bold' as const,
+    fontSize: 7,
+    cellPadding: { top: 4, bottom: 4, left: 8, right: 8 }
+  });
 
-  for (const entry of selectedEntries) {
-    const extras = entry.template.extra ?? [];
-    const extVals = extraValues[entry.orderTemplateId] ?? {};
-    const mediaExtras = extras.filter(
+  // Pre-fetch images
+  const imgCache: Record<string, { dataUrl: string; w: number; h: number }> =
+    {};
+  for (const e of selectedEntries) {
+    const ev = extraValues[e.orderTemplateId] ?? {};
+    for (const mf of (e.template.extra ?? []).filter(
       (f) => f.sectionType === 'MEDIA' && f.valueType === 'IMAGE'
-    );
-    for (const mf of mediaExtras) {
-      const urls = getAllMediaUrls(extVals, mf.id);
-      for (let urlIdx = 0; urlIdx < urls.length; urlIdx++) {
-        const url = urls[urlIdx];
-        const cacheKey = `${entry.orderTemplateId}_${mf.id}_${urlIdx}`;
+    )) {
+      const urls = getAllMediaUrls(ev, mf.id);
+      for (let i = 0; i < urls.length; i++) {
+        const k = `${e.orderTemplateId}_${mf.id}_${i}`;
         try {
-          const dataUrl = await fetchImageAsDataURL(url);
-          if (dataUrl) {
-            const dims = await getImageDimensions(dataUrl);
-            mediaImageCache[cacheKey] = { dataUrl, ...dims };
+          const d = await fetchImageAsDataURL(urls[i]);
+          if (d) {
+            const dims = await getImageDims(d);
+            imgCache[k] = { dataUrl: d, ...dims };
           }
-        } catch {
-          /* skip failed images */
-        }
+        } catch {}
       }
     }
   }
 
-  // ── Draw section label pill ─────────────────────────────────────────
+  // Drawing helpers
+  const ensureSpace = (y: number, need: number) =>
+    y + need > PH - 40 ? (doc.addPage(), 30) : y;
+
   function drawSectionLabel(
     label: string,
     count: number,
-    color: {
-      bg: [number, number, number];
-      fg: [number, number, number];
-      badge: [number, number, number];
-    },
+    color: typeof SEC.header,
     y: number
-  ): number {
-    const labelW = doc.getTextWidth(label) * 1.15 + 12;
-    const badgeText = `${count} field${count !== 1 ? 's' : ''}`;
-    const badgeW = 38;
-    const pillW = labelW + badgeW + 16;
-    const pillH = 18;
-
+  ) {
+    const lw = doc.getTextWidth(label) * 1.15 + 12,
+      bw = 38,
+      pw = lw + bw + 16;
     doc.setFillColor(...color.bg);
-    doc.roundedRect(MARGIN, y, pillW, pillH, 4, 4, 'F');
-
+    doc.roundedRect(M, y, pw, 18, 4, 4, 'F');
     doc.setFillColor(...color.badge);
-    doc.roundedRect(MARGIN + 6, y + 4, 10, 10, 2, 2, 'F');
+    doc.roundedRect(M + 6, y + 4, 10, 10, 2, 2, 'F');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6);
     doc.setTextColor(...C.white);
-    doc.text('⊞', MARGIN + 8.5, y + 11.5);
-
-    doc.setFont('helvetica', 'bold');
+    doc.text('⊞', M + 8.5, y + 11.5);
     doc.setFontSize(8);
     doc.setTextColor(...color.fg);
-    doc.text(label, MARGIN + 20, y + 12);
-
-    const badgeX = MARGIN + labelW + 4;
+    doc.text(label, M + 20, y + 12);
+    const bx = M + lw + 4;
     doc.setFillColor(...color.badge);
-    doc.roundedRect(badgeX, y + 3, badgeW, 12, 3, 3, 'F');
-    doc.setFont('helvetica', 'bold');
+    doc.roundedRect(bx, y + 3, bw, 12, 3, 3, 'F');
     doc.setFontSize(6.5);
     doc.setTextColor(...C.white);
-    doc.text(badgeText, badgeX + badgeW / 2, y + 11, { align: 'center' });
-
-    return y + pillH + 8;
+    doc.text(`${count} field${count !== 1 ? 's' : ''}`, bx + bw / 2, y + 11, {
+      align: 'center'
+    });
+    return y + 26;
   }
 
-  // ── Draw top banner ─────────────────────────────────────────────────
-  function drawBanner(
-    templateName: string,
-    isChild: boolean,
-    pageIndex: number
-  ) {
+  function drawBanner(title: string, isChild: boolean, pageLabel: string) {
     doc.setFillColor(...C.primary);
-    doc.rect(0, 0, PAGE_W, 72, 'F');
+    doc.rect(0, 0, PW, 72, 'F');
     doc.setFillColor(...C.accent);
     doc.rect(0, 0, 6, 72, 'F');
-
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(20);
     doc.setTextColor(...C.white);
-    doc.text(templateName, 24, 28);
-
+    doc.text(title, 24, 28);
     if (isChild) {
       doc.setFillColor(...C.accent);
       doc.roundedRect(24, 34, 54, 14, 3, 3, 'F');
       doc.setFontSize(7);
-      doc.setFont('helvetica', 'bold');
       doc.text('DUPLICATE', 51, 43.5, { align: 'center' });
     }
-
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(200, 210, 230);
-    doc.text(`Order #${order.orderNo}`, PAGE_W - MARGIN, 22, {
-      align: 'right'
-    });
-
+    doc.text(`Order #${order.orderNo}`, PW - M, 22, { align: 'right' });
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.setTextColor(...C.white);
-    doc.text(order.product?.name ?? '', PAGE_W - MARGIN, 38, {
-      align: 'right'
-    });
-
+    doc.text(order.product?.name ?? '', PW - M, 38, { align: 'right' });
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(160, 175, 200);
     doc.text(
-      `Template ${pageIndex} of ${selectedEntries.length}  ·  Generated ${new Date().toLocaleString('en-IN')}`,
-      PAGE_W - MARGIN,
+      `${pageLabel}  ·  Generated ${new Date().toLocaleString('en-IN')}`,
+      PW - M,
       62,
       { align: 'right' }
     );
   }
 
-  // ── Draw order-details info card ────────────────────────────────────
-  function drawInfoCard(y: number, templateName: string): number {
+  function drawInfoCard(y: number, tpl: string) {
     const H = 60;
     doc.setFillColor(...C.primaryLight);
     doc.setDrawColor(...C.border);
     doc.setLineWidth(0.5);
-    doc.roundedRect(MARGIN, y, PAGE_W - MARGIN * 2, H, 4, 4, 'FD');
-
+    doc.roundedRect(M, y, PW - M * 2, H, 4, 4, 'FD');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     doc.setTextColor(...C.muted);
-    doc.text('ORDER DETAILS', MARGIN + 12, y + 14);
-
+    doc.text('ORDER DETAILS', M + 12, y + 14);
     const fields: [string, string][] = [
       ['Product', order.product?.name ?? '—'],
       ['Customer', order.customer?.name ?? '—'],
@@ -842,432 +738,311 @@ async function generateMultiPDF(
       ['Status', order.status ?? 'DRAFT'],
       ['Reference', order.referenceNo ?? '—'],
       ['Created', fmtDate(order.createdAt)],
-      ['Template', templateName]
+      ['Template', tpl]
     ];
-
-    const colW = (PAGE_W - MARGIN * 2 - 24) / 4;
-    fields.forEach(([label, value], idx) => {
-      const col = idx % 4;
-      const row = Math.floor(idx / 4);
-      const fx = MARGIN + 12 + col * colW;
-      const fy = y + 24 + row * 18;
-
+    const cw = (PW - M * 2 - 24) / 4;
+    fields.forEach(([l, v], i) => {
+      const fx = M + 12 + (i % 4) * cw,
+        fy = y + 24 + Math.floor(i / 4) * 18;
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
       doc.setTextColor(...C.muted);
-      doc.text(label, fx, fy);
-
+      doc.text(l, fx, fy);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(...C.primary);
-      const truncated = doc.splitTextToSize(value, colW - 8)[0] ?? value;
-      doc.text(truncated, fx, fy + 9);
+      doc.text(doc.splitTextToSize(v, cw - 8)[0] ?? v, fx, fy + 9);
     });
-
     return y + H + 16;
   }
 
-  // ── Helper: check remaining page space ──────────────────────────────
-  function ensureSpace(y: number, needed: number): number {
-    if (y + needed > PAGE_H - 40) {
-      doc.addPage();
-      return 30;
-    }
-    return y;
-  }
-
-  // ── Helper: render the Final Calculation page ────────────────────────
-  function renderFinalCalcPage(
-    fc: FinalCalcData,
-    pageIndex: number,
-    total: number
-  ) {
-    const {
-      templateRows,
-      discount,
-      marginDiscount,
-      finalPayableAmount,
-      hasAnyChildren
-    } = fc;
-
-    doc.setFillColor(...C.primary);
-    doc.rect(0, 0, PAGE_W, 72, 'F');
-    doc.setFillColor(...C.accent);
-    doc.rect(0, 0, 6, 72, 'F');
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(20);
-    doc.setTextColor(...C.white);
-    doc.text('Final Calculation', 24, 28);
-
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(200, 210, 230);
-    doc.text(`Order #${order.orderNo}`, PAGE_W - MARGIN, 22, {
-      align: 'right'
-    });
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.setTextColor(...C.white);
-    doc.text(order.product?.name ?? '', PAGE_W - MARGIN, 38, {
-      align: 'right'
-    });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(160, 175, 200);
-    doc.text(
-      `Page ${pageIndex} of ${total}  ·  Generated ${new Date().toLocaleString('en-IN')}`,
-      PAGE_W - MARGIN,
-      62,
-      { align: 'right' }
-    );
-
-    let y = 90;
-    y = drawInfoCard(y, 'Final Calculation');
-
+  function drawSectionTitle(label: string, y: number) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(...C.accent);
-    doc.text('TEMPLATE SUMMARY', MARGIN, y + 4);
+    doc.text(label, M, y + 4);
     doc.setDrawColor(...C.accent);
     doc.setLineWidth(1.5);
-    doc.line(MARGIN, y + 7, MARGIN + 100, y + 7);
+    doc.line(M, y + 7, M + 100, y + 7);
     doc.setLineWidth(0.5);
-    y += 16;
+    return y + 16;
+  }
 
-    const headCols = ['Template', 'Total (₹)'];
-    if (hasAnyChildren) headCols.push('Child Total (₹)');
-    headCols.push('Notes');
-
-    const usableW = PAGE_W - MARGIN * 2;
-    const noteW = 160;
-    const totalColW = 90;
-    const childColW = hasAnyChildren ? 90 : 0;
-    const labelW = usableW - totalColW - childColW - noteW;
-
-    const colStyles: Record<number, object> = {
-      0: { cellWidth: labelW, fontStyle: 'bold', halign: 'left' as const },
-      1: { cellWidth: totalColW, halign: 'right' as const, font: 'courier' }
-    };
-    if (hasAnyChildren) {
-      colStyles[2] = {
-        cellWidth: childColW,
-        halign: 'right' as const,
-        font: 'courier',
-        textColor: C.muted
-      };
-      colStyles[3] = {
-        cellWidth: noteW,
-        halign: 'left' as const,
-        textColor: C.muted
-      };
-    } else {
-      colStyles[2] = {
-        cellWidth: noteW,
-        halign: 'left' as const,
-        textColor: C.muted
-      };
-    }
-
-    const bodyRows = templateRows.map((row) => {
-      const cells: object[] = [
-        { content: row.label },
-        { content: row.total, styles: { halign: 'right' as const } }
-      ];
-      if (hasAnyChildren) {
-        cells.push({
-          content: row.childTotal ?? '—',
-          styles: { halign: 'right' as const, textColor: C.muted }
-        });
-      }
-      cells.push({
-        content: row.notes ?? '—',
-        styles: { textColor: C.muted }
-      });
-      return cells;
-    });
-
+  /** Render a key-value summary table (right-aligned), with optional highlight on last row */
+  function drawSummaryAutoTable(
+    y: number,
+    rows: [string, string, boolean][],
+    width = 240
+  ) {
+    const sx = PW - M - width;
     autoTable(doc, {
       startY: y,
-      margin: { left: MARGIN, right: MARGIN },
-      head: [headCols],
-      body: bodyRows,
-      theme: 'plain',
-      headStyles: {
-        fillColor: C.primary,
-        textColor: C.white,
-        fontStyle: 'bold',
-        fontSize: 8,
-        cellPadding: { top: 6, bottom: 6, left: 8, right: 8 }
-      },
-      bodyStyles: {
-        fontSize: 8,
-        textColor: C.primary,
-        cellPadding: { top: 5, bottom: 5, left: 8, right: 8 },
-        lineColor: C.border,
-        lineWidth: 0.4
-      },
-      alternateRowStyles: { fillColor: C.rowAlt },
-      tableLineColor: C.border,
-      tableLineWidth: 0.5,
-      columnStyles: colStyles
-    });
-
-    y = (doc as any).lastAutoTable.finalY + 20;
-
-    const summaryW = 260;
-    const summaryX = PAGE_W - MARGIN - summaryW;
-
-    const sRows: [string, string, boolean][] = [['Total', fc.total, false]];
-    if (finalCalcOptions.includeMarginDiscount) {
-      sRows.push([
-        `Margin Discount${fc.marginType ? ` (${fc.marginType === 'PERCENT' ? '%' : '₹'})` : ''}`,
-        marginDiscount,
-        false
-      ]);
-    }
-    if (finalCalcOptions.includeMarginTotal) {
-      sRows.push(['Margin Total', fc.marginTotal, false]);
-    }
-    sRows.push([
-      `Discount${fc.discountType ? ` (${fc.discountType === 'PERCENT' ? '%' : '₹'})` : ''}`,
-      discount,
-      false
-    ]);
-    if (finalCalcOptions.includeAddonDiscount) {
-      sRows.push([
-        `Addon Discount${fc.addonType ? ` (${fc.addonType === 'PERCENT' ? '%' : '₹'})` : ''}`,
-        fc.addonDiscount,
-        false
-      ]);
-    }
-    sRows.push(['Final Payable Amount', finalPayableAmount, true]);
-
-    autoTable(doc, {
-      startY: y,
-      margin: { left: summaryX, right: MARGIN },
-      tableWidth: summaryW,
+      margin: { left: sx, right: M },
+      tableWidth: width,
       head: [['', '']],
-      body: sRows.map(([label, value, bold]) => [
+      showHead: false,
+      theme: 'plain',
+      body: rows.map(([l, v, b]) => [
+        { content: l, styles: { fontStyle: b ? 'bold' : ('normal' as any) } },
         {
-          content: label,
-          styles: { fontStyle: bold ? 'bold' : ('normal' as any) }
-        },
-        {
-          content: value,
+          content: v,
           styles: {
-            fontStyle: bold ? 'bold' : ('normal' as any),
+            fontStyle: b ? 'bold' : ('normal' as any),
             halign: 'right' as const
           }
         }
       ]),
-      theme: 'plain',
-      showHead: false,
       bodyStyles: {
         fontSize: 8.5,
-        cellPadding: { top: 6, bottom: 6, left: 10, right: 10 },
+        cellPadding: { top: 5, bottom: 5, left: 10, right: 10 },
         textColor: C.primary,
         lineColor: C.border,
         lineWidth: 0.4
       },
-      tableLineColor: C.border,
-      tableLineWidth: 0.5,
+      ...tblLine,
       columnStyles: {
-        0: { textColor: C.muted, cellWidth: 140 },
-        1: { halign: 'right', font: 'courier', cellWidth: 120 }
+        0: { textColor: C.muted, cellWidth: width * 0.5 },
+        1: { halign: 'right' as const, font: 'courier', cellWidth: width * 0.5 }
       },
       didParseCell(data) {
-        if (sRows[data.row.index]?.[2]) {
+        if (rows[data.row.index]?.[2]) {
           data.cell.styles.fillColor = C.accentSoft;
           data.cell.styles.textColor = C.accent;
           data.cell.styles.fontStyle = 'bold';
-          data.cell.styles.fontSize = 10;
+          data.cell.styles.fontSize = 9.5;
         }
       }
     });
+    return (doc as any).lastAutoTable.finalY + 14;
   }
 
-  // ── Determine total page count ──────────────────────────────────────
-  const totalPageCount =
+  /** Render extra-fields (header or footer) as a small table */
+  function drawExtraFieldsTable(
+    y: number,
+    fields: any[],
+    extVals: ExtraValuesMap,
+    sec: typeof SEC.header
+  ) {
+    if (fields.length === 0) return y;
+    y = drawSectionLabel(
+      fields[0].sectionType === 'HEADER' ? 'Header Fields' : 'Footer Fields',
+      fields.length,
+      sec,
+      y
+    );
+    autoTable(doc, {
+      startY: y,
+      margin: { left: M, right: M },
+      head: [['Field', 'Value']],
+      body: buildExtraRows(fields, extVals),
+      theme: 'plain',
+      headStyles: extraHeadStyle(sec),
+      bodyStyles: {
+        fontSize: 8,
+        textColor: C.primary,
+        cellPadding: { top: 5, bottom: 5, left: 8, right: 8 }
+      },
+      ...tblLine,
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 120, textColor: C.muted }
+      }
+    });
+    return (doc as any).lastAutoTable.finalY + 12;
+  }
+
+  // -- Final calc page --
+  function renderFinalCalcPage(
+    fc: FinalCalcData,
+    pageIdx: number,
+    total: number
+  ) {
+    drawBanner('Final Calculation', false, `Page ${pageIdx} of ${total}`);
+    let y = drawInfoCard(90, 'Final Calculation');
+    y = drawSectionTitle('TEMPLATE SUMMARY', y);
+
+    const { hasAnyChildren: hc, templateRows: tr } = fc;
+    const head = [
+      'Template',
+      'Total (₹)',
+      ...(hc ? ['Child Total (₹)'] : []),
+      'Notes'
+    ];
+    const uw = PW - M * 2,
+      nw = 160,
+      tw = 90,
+      cw = hc ? 90 : 0,
+      lw = uw - tw - cw - nw;
+    const cs: Record<number, any> = {
+      0: { cellWidth: lw, fontStyle: 'bold', halign: 'left' },
+      1: { cellWidth: tw, halign: 'right', font: 'courier' }
+    };
+    if (hc) {
+      cs[2] = {
+        cellWidth: cw,
+        halign: 'right',
+        font: 'courier',
+        textColor: C.muted
+      };
+      cs[3] = { cellWidth: nw, halign: 'left', textColor: C.muted };
+    } else cs[2] = { cellWidth: nw, halign: 'left', textColor: C.muted };
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: M, right: M },
+      head: [head],
+      body: tr.map((r) => {
+        const cells: any[] = [
+          { content: r.label },
+          { content: r.total, styles: { halign: 'right' } }
+        ];
+        if (hc)
+          cells.push({
+            content: r.childTotal ?? '—',
+            styles: { halign: 'right', textColor: C.muted }
+          });
+        cells.push({ content: r.notes ?? '—', styles: { textColor: C.muted } });
+        return cells;
+      }),
+      theme: 'plain',
+      headStyles: headStyle,
+      bodyStyles: bodyStyle,
+      ...tblLine,
+      columnStyles: cs
+    });
+    y = (doc as any).lastAutoTable.finalY + 20;
+
+    const ts = (t: string | null) =>
+      t ? ` (${t === 'PERCENT' ? '%' : '₹'})` : '';
+    const sRows: [string, string, boolean][] = [['Total', fc.total, false]];
+    if (fcOpts.includeMarginDiscount)
+      sRows.push([
+        `Margin Discount${ts(fc.marginType)}`,
+        fc.marginDiscount,
+        false
+      ]);
+    if (fcOpts.includeMarginTotal)
+      sRows.push(['Margin Total', fc.marginTotal, false]);
+    sRows.push([`Discount${ts(fc.discountType)}`, fc.discount, false]);
+    if (fcOpts.includeAddonDiscount)
+      sRows.push([
+        `Addon Discount${ts(fc.addonType)}`,
+        fc.addonDiscount,
+        false
+      ]);
+    sRows.push(['Final Payable Amount', fc.finalPayableAmount, true]);
+    drawSummaryAutoTable(y, sRows, 260);
+  }
+
+  // -- Render entries --
+  const totalPages =
     selectedEntries.length + (includeFinalCalc && finalCalc ? 1 : 0);
 
-  // ── Render every selected entry ─────────────────────────────────────
-  for (let entryIdx = 0; entryIdx < selectedEntries.length; entryIdx++) {
-    const entry = selectedEntries[entryIdx];
-    if (entryIdx > 0) doc.addPage();
-
-    const { template, summary } = entry;
-    const columns = template.columns ?? [];
-    const rows = template.rows ?? [];
-    const extra = template.extra ?? [];
-    const apiBlocks = template.blocks ?? [];
+  for (let ei = 0; ei < selectedEntries.length; ei++) {
+    const entry = selectedEntries[ei];
+    if (ei > 0) doc.addPage();
+    const { template: t, summary: s } = entry;
+    const cols = t.columns ?? [],
+      rows = t.rows ?? [],
+      extra = t.extra ?? [],
+      apiBlocks = t.blocks ?? [];
     const vals = templateValues[entry.orderTemplateId] ?? {};
     const extVals = extraValues[entry.orderTemplateId] ?? {};
     const bvMap = allBlockValues[entry.orderTemplateId] ?? {};
-
     const headerExtras = extra.filter((f) => f.sectionType === 'HEADER');
     const footerExtras = extra.filter((f) => f.sectionType === 'FOOTER');
     const mediaExtras = extra.filter((f) => f.sectionType === 'MEDIA');
 
-    drawBanner(template.name ?? 'Template', entry.isChild, entryIdx + 1);
-    let y = 90;
+    drawBanner(
+      t.name ?? 'Template',
+      entry.isChild,
+      `Template ${ei + 1} of ${selectedEntries.length}`
+    );
+    let y = drawInfoCard(90, t.name ?? '—');
 
-    // Info card
-    y = drawInfoCard(y, template.name ?? '—');
+    // Header fields
+    y = drawExtraFieldsTable(y, headerExtras, extVals, SEC.header);
 
-    // ── HEADER FIELDS ─────────────────────────────────────────────────
-    if (headerExtras.length > 0) {
-      y = drawSectionLabel('Header Fields', headerExtras.length, SEC.header, y);
-
-      const headerBody: string[][] = [];
-      headerExtras.forEach((f) => {
-        const vals_arr = getAllExtraValues(extVals, f.id);
-        if (vals_arr.length <= 1) {
-          headerBody.push([f.label, vals_arr[0] ?? '—']);
-        } else {
-          // Multiple values — one row per value
-          vals_arr.forEach((v, idx) => {
-            headerBody.push([idx === 0 ? f.label : '', v]);
-          });
-        }
-      });
-
-      autoTable(doc, {
-        startY: y,
-        margin: { left: MARGIN, right: MARGIN },
-        head: [['Field', 'Value']],
-        body: headerBody,
-        theme: 'plain',
-        headStyles: {
-          fillColor: SEC.header.bg,
-          textColor: SEC.header.fg,
-          fontStyle: 'bold',
-          fontSize: 7,
-          cellPadding: { top: 4, bottom: 4, left: 8, right: 8 }
-        },
-        bodyStyles: {
-          fontSize: 8,
-          textColor: C.primary,
-          cellPadding: { top: 5, bottom: 5, left: 8, right: 8 }
-        },
-        alternateRowStyles: { fillColor: C.rowAlt },
-        tableLineColor: C.border,
-        tableLineWidth: 0.5,
-        columnStyles: {
-          0: { fontStyle: 'bold', cellWidth: 120, textColor: C.muted }
-        }
-      });
-      y = (doc as any).lastAutoTable.finalY + 12;
-    }
-
-    // ── TEMPLATE VALUES ───────────────────────────────────────────────
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(...C.accent);
-    doc.text('TEMPLATE VALUES', MARGIN, y + 4);
-    doc.setDrawColor(...C.accent);
-    doc.setLineWidth(1.5);
-    doc.line(MARGIN, y + 7, MARGIN + 90, y + 7);
-    doc.setLineWidth(0.5);
-    y += 16;
-
-    // ── Main values table (block-aware with selected names) ───────────
-    const blockGroups = deriveBlockColumns(columns);
-    if (columns.length > 0 && rows.length > 0) {
-      const flatCols = blockGroups.flatMap((bg) => bg.columns);
-      const hasMultipleBlocks = blockGroups.length > 1;
-
-      const usableW = PAGE_W - MARGIN * 2;
-      const descW = Math.min(180, usableW * 0.28);
-      const colW = (usableW - descW) / flatCols.length;
-
+    // Template values
+    y = drawSectionTitle('TEMPLATE VALUES', y);
+    const bg = deriveBlockColumns(cols);
+    if (cols.length > 0 && rows.length > 0) {
+      const flat = bg.flatMap((b) => b.columns),
+        multi = bg.length > 1;
+      const uw = PW - M * 2,
+        dw = Math.min(180, uw * 0.28),
+        cw = (uw - dw) / flat.length;
       let head: any[][];
-      if (hasMultipleBlocks) {
-        const headerRow1: any[] = [
+      if (multi) {
+        const r1: any[] = [
           {
             content: 'Description',
             rowSpan: 2,
-            styles: { valign: 'middle' as const, halign: 'left' as const }
+            styles: { valign: 'middle', halign: 'left' }
           }
         ];
-        blockGroups.forEach((bg, idx) => {
-          // Show "Block N — Selected Name" in the header
-          const blockLabel = getBlockLabel(apiBlocks, bvMap, bg.index);
-          headerRow1.push({
-            content: blockLabel,
-            colSpan: bg.columns.length,
+        bg.forEach((b, i) =>
+          r1.push({
+            content: getBlockLabel(apiBlocks, bvMap, b.index),
+            colSpan: b.columns.length,
             styles: {
-              halign: 'center' as const,
-              fillColor: BLOCK_COLORS[idx % BLOCK_COLORS.length],
+              halign: 'center',
+              fillColor: BCOL[i % BCOL.length],
               textColor: C.white,
-              fontStyle: 'bold' as const,
+              fontStyle: 'bold',
               fontSize: 9
             }
-          });
-        });
-        const headerRow2: any[] = blockGroups.flatMap((bg) =>
-          bg.columns.map((col: any) => ({
-            content: col.label,
-            styles: { halign: 'center' as const }
-          }))
+          })
         );
-        head = [headerRow1, headerRow2];
+        head = [
+          r1,
+          bg.flatMap((b) =>
+            b.columns.map((c: any) => ({
+              content: c.label,
+              styles: { halign: 'center' }
+            }))
+          )
+        ];
       } else {
-        // Single block — show block name in section title if selected
-        const singleBlockName =
+        const bn =
           apiBlocks.length > 0
-            ? getBlockName(apiBlocks, bvMap, blockGroups[0]?.index ?? 0)
+            ? getBlockName(apiBlocks, bvMap, bg[0]?.index ?? 0)
             : null;
-        const descHeader = singleBlockName
-          ? `Description (${singleBlockName})`
-          : 'Description';
-        head = [[descHeader, ...flatCols.map((c: any) => c.label)]];
+        head = [
+          [
+            bn ? `Description (${bn})` : 'Description',
+            ...flat.map((c: any) => c.label)
+          ]
+        ];
       }
-
-      const body = rows.map((row) => {
-        const isTotal = row.rowType === 'TOTAL';
-        return [
-          row.label,
-          ...flatCols.map((col: any) => vals[row.id]?.[col.id] ?? '')
-        ].map((cell, ci) => ({
-          content: cell,
-          styles: {
-            fontStyle: (isTotal ? 'bold' : 'normal') as 'bold' | 'normal',
-            fillColor: isTotal ? C.totalRow : undefined,
-            textColor: C.primary,
-            halign: (ci > 0 ? 'right' : 'left') as 'right' | 'left'
-          }
-        }));
-      });
-
       autoTable(doc, {
         startY: y,
-        margin: { left: MARGIN, right: MARGIN },
+        margin: { left: M, right: M },
         head,
-        body,
+        body: rows.map((row) => {
+          const tot = row.rowType === 'TOTAL';
+          return [
+            row.label,
+            ...flat.map((c: any) => vals[row.id]?.[c.id] ?? '')
+          ].map((cell, ci) => ({
+            content: cell,
+            styles: {
+              fontStyle: (tot ? 'bold' : 'normal') as any,
+              fillColor: tot ? C.totalRow : undefined,
+              textColor: C.primary,
+              halign: ci > 0 ? ('right' as const) : ('left' as const)
+            }
+          }));
+        }),
         theme: 'plain',
-        headStyles: {
-          fillColor: C.primary,
-          textColor: C.white,
-          fontStyle: 'bold',
-          fontSize: 8,
-          cellPadding: { top: 6, bottom: 6, left: 8, right: 8 }
-        },
-        bodyStyles: {
-          fontSize: 8,
-          cellPadding: { top: 5, bottom: 5, left: 8, right: 8 },
-          lineColor: C.border,
-          lineWidth: 0.4
-        },
-        alternateRowStyles: { fillColor: C.rowAlt },
-        tableLineColor: C.border,
-        tableLineWidth: 0.5,
+        headStyles: headStyle,
+        bodyStyles: bodyStyle,
+        ...tblLine,
         columnStyles: {
-          0: { cellWidth: descW, fontStyle: 'bold', halign: 'left' },
+          0: { cellWidth: dw, fontStyle: 'bold', halign: 'left' },
           ...Object.fromEntries(
-            flatCols.map((_: any, i: number) => [
+            flat.map((_: any, i: number) => [
               i + 1,
-              { cellWidth: colW, halign: 'right' as const, font: 'courier' }
+              { cellWidth: cw, halign: 'right' as const, font: 'courier' }
             ])
           )
         }
@@ -1275,306 +1050,162 @@ async function generateMultiPDF(
       y = (doc as any).lastAutoTable.finalY + 16;
     }
 
-    // ── SUMMARY CARD ──────────────────────────────────────────────────
-    if (summary) {
-      const summaryW = 240;
-      const summaryX = PAGE_W - MARGIN - summaryW;
-
-      const sRows: [string, string, boolean][] = [
-        ['Total', fmt(summary.total), false],
-        ['Discount', summary.discount ?? '—', false],
-        ['Discount Type', summary.discountType ?? '—', false],
-        ['Discount Amount', fmt(summary.discountAmount), false],
-        ['Final Payable Amount', fmt(summary.finalPayableAmount), true]
-      ];
-
-      autoTable(doc, {
-        startY: y,
-        margin: { left: summaryX, right: MARGIN },
-        tableWidth: summaryW,
-        head: [['', '']],
-        body: sRows.map(([label, value, bold]) => [
-          {
-            content: label,
-            styles: { fontStyle: bold ? 'bold' : ('normal' as any) }
-          },
-          {
-            content: value,
-            styles: {
-              fontStyle: bold ? 'bold' : ('normal' as any),
-              halign: 'right' as const
-            }
-          }
-        ]),
-        theme: 'plain',
-        showHead: false,
-        bodyStyles: {
-          fontSize: 8.5,
-          cellPadding: { top: 5, bottom: 5, left: 10, right: 10 },
-          textColor: C.primary,
-          lineColor: C.border,
-          lineWidth: 0.4
-        },
-        tableLineColor: C.border,
-        tableLineWidth: 0.5,
-        columnStyles: {
-          0: { textColor: C.muted, cellWidth: 120 },
-          1: { halign: 'right', font: 'courier', cellWidth: 120 }
-        },
-        didParseCell(data) {
-          if (sRows[data.row.index]?.[2]) {
-            data.cell.styles.fillColor = C.accentSoft;
-            data.cell.styles.textColor = C.accent;
-            data.cell.styles.fontStyle = 'bold';
-            data.cell.styles.fontSize = 9.5;
-          }
-        }
-      });
-      y = (doc as any).lastAutoTable.finalY + 14;
+    // Summary
+    if (s) {
+      y = drawSummaryAutoTable(y, [
+        ['Total', fmt(s.total), false],
+        ['Discount', s.discount ?? '—', false],
+        ['Discount Type', s.discountType ?? '—', false],
+        ['Discount Amount', fmt(s.discountAmount), false],
+        ['Final Payable Amount', fmt(s.finalPayableAmount), true]
+      ]);
     }
 
-    // ── MEDIA FIELDS (supports multiple images per field) ─────────────
+    // Media
     if (mediaExtras.length > 0) {
-      const hasAnyMedia = mediaExtras.some((mf) => {
+      y = ensureSpace(y, 100);
+      y = drawSectionLabel('Media Fields', mediaExtras.length, SEC.media, y);
+      for (const mf of mediaExtras) {
         if (mf.valueType === 'IMAGE') {
           const urls = getAllMediaUrls(extVals, mf.id);
-          return urls.length > 0;
-        }
-        const vals_arr = getAllExtraValues(extVals, mf.id);
-        return vals_arr.length > 0;
-      });
-
-      if (hasAnyMedia || mediaExtras.length > 0) {
-        y = ensureSpace(y, 100);
-        y = drawSectionLabel('Media Fields', mediaExtras.length, SEC.media, y);
-
-        for (const mf of mediaExtras) {
-          if (mf.valueType === 'IMAGE') {
-            // Get ALL image urls for this field (supports allowMultiple)
-            const urls = getAllMediaUrls(extVals, mf.id);
-            if (urls.length === 0) {
-              // No images — show placeholder
-              doc.setFont('helvetica', 'bold');
-              doc.setFontSize(7.5);
-              doc.setTextColor(...C.muted);
-              doc.text(`${mf.label}:`, MARGIN, y + 4);
-              doc.setFont('helvetica', 'normal');
-              doc.setFontSize(8);
-              doc.text('—', MARGIN + 60, y + 4);
-              y += 14;
-              continue;
-            }
-
-            // Draw label
+          if (urls.length === 0) {
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(7.5);
             doc.setTextColor(...C.muted);
-            doc.text(
-              `${mf.label}${urls.length > 1 ? ` (${urls.length} images)` : ''}`,
-              MARGIN,
-              y + 4
-            );
-            y += 10;
-
-            // Render each image
-            for (let urlIdx = 0; urlIdx < urls.length; urlIdx++) {
-              const cacheKey = `${entry.orderTemplateId}_${mf.id}_${urlIdx}`;
-              const cached = mediaImageCache[cacheKey];
-
-              if (cached) {
-                const MAX_IMG_W = 320;
-                const MAX_IMG_H = 240;
-                const fit = fitImage(cached.w, cached.h, MAX_IMG_W, MAX_IMG_H);
-
-                y = ensureSpace(y, fit.h + 16);
-
-                doc.setDrawColor(...SEC.media.badge);
-                doc.setLineWidth(1);
-                doc.roundedRect(MARGIN, y, fit.w + 8, fit.h + 8, 3, 3, 'D');
-                doc.setLineWidth(0.5);
-
-                // Detect format from data URL
-                const isJpeg =
-                  cached.dataUrl.startsWith('data:image/jpeg') ||
-                  cached.dataUrl.startsWith('data:image/jpg');
-                const imgFormat = isJpeg ? 'JPEG' : 'PNG';
-
-                try {
-                  doc.addImage(
-                    cached.dataUrl,
-                    imgFormat,
-                    MARGIN + 4,
-                    y + 4,
-                    fit.w,
-                    fit.h
-                  );
-                } catch {
-                  doc.setFillColor(...C.rowAlt);
-                  doc.rect(MARGIN + 4, y + 4, fit.w, fit.h, 'F');
-                  doc.setFont('helvetica', 'normal');
-                  doc.setFontSize(7);
-                  doc.setTextColor(...C.muted);
-                  doc.text(
-                    'Image could not be embedded',
-                    MARGIN + 8,
-                    y + fit.h / 2 + 4
-                  );
-                }
-
-                y += fit.h + 16;
-              } else {
-                // Couldn't fetch — show a small placeholder box instead of URL
-                y = ensureSpace(y, 40);
-                const PH_W = 120;
-                const PH_H = 32;
+            doc.text(`${mf.label}:`, M, y + 4);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(8);
+            doc.text('—', M + 60, y + 4);
+            y += 14;
+            continue;
+          }
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(7.5);
+          doc.setTextColor(...C.muted);
+          doc.text(
+            `${mf.label}${urls.length > 1 ? ` (${urls.length} images)` : ''}`,
+            M,
+            y + 4
+          );
+          y += 10;
+          for (let ui = 0; ui < urls.length; ui++) {
+            const cached = imgCache[`${entry.orderTemplateId}_${mf.id}_${ui}`];
+            if (cached) {
+              const fit = fitImage(cached.w, cached.h, 320, 240);
+              y = ensureSpace(y, fit.h + 16);
+              doc.setDrawColor(...SEC.media.badge);
+              doc.setLineWidth(1);
+              doc.roundedRect(M, y, fit.w + 8, fit.h + 8, 3, 3, 'D');
+              doc.setLineWidth(0.5);
+              try {
+                doc.addImage(
+                  cached.dataUrl,
+                  detectFmt(cached.dataUrl),
+                  M + 4,
+                  y + 4,
+                  fit.w,
+                  fit.h
+                );
+              } catch {
                 doc.setFillColor(...C.rowAlt);
-                doc.setDrawColor(...C.border);
-                doc.setLineWidth(0.5);
-                doc.roundedRect(MARGIN, y, PH_W, PH_H, 3, 3, 'FD');
-                doc.setFont('helvetica', 'italic');
+                doc.rect(M + 4, y + 4, fit.w, fit.h, 'F');
+                doc.setFont('helvetica', 'normal');
                 doc.setFontSize(7);
                 doc.setTextColor(...C.muted);
                 doc.text(
-                  'Image unavailable',
-                  MARGIN + PH_W / 2,
-                  y + PH_H / 2 + 2,
-                  {
-                    align: 'center'
-                  }
+                  'Image could not be embedded',
+                  M + 8,
+                  y + fit.h / 2 + 4
                 );
-                y += PH_H + 10;
               }
+              y += fit.h + 16;
+            } else {
+              y = ensureSpace(y, 40);
+              doc.setFillColor(...C.rowAlt);
+              doc.setDrawColor(...C.border);
+              doc.setLineWidth(0.5);
+              doc.roundedRect(M, y, 120, 32, 3, 3, 'FD');
+              doc.setFont('helvetica', 'italic');
+              doc.setFontSize(7);
+              doc.setTextColor(...C.muted);
+              doc.text('Image unavailable', M + 60, y + 18, {
+                align: 'center'
+              });
+              y += 42;
             }
-          } else {
-            // Non-image media field (text etc.)
-            const vals_arr = getAllExtraValues(extVals, mf.id);
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(7.5);
-            doc.setTextColor(...C.muted);
-            doc.text(`${mf.label}:`, MARGIN, y + 4);
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(8);
-            doc.setTextColor(...C.primary);
-            doc.text(
-              vals_arr.length > 0 ? vals_arr.join(', ') : '—',
-              MARGIN + 60,
-              y + 4
-            );
-            y += 14;
           }
+        } else {
+          const va = getAllExtraValues(extVals, mf.id);
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(7.5);
+          doc.setTextColor(...C.muted);
+          doc.text(`${mf.label}:`, M, y + 4);
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.setTextColor(...C.primary);
+          doc.text(va.join(', ') || '—', M + 60, y + 4);
+          y += 14;
         }
-
-        y += 4;
       }
+      y += 4;
     }
 
-    // ── FOOTER FIELDS ─────────────────────────────────────────────────
+    // Footer fields
     if (footerExtras.length > 0) {
       y = ensureSpace(y, 60);
-      y = drawSectionLabel('Footer Fields', footerExtras.length, SEC.footer, y);
-
-      const footerBody: string[][] = [];
-      footerExtras.forEach((f) => {
-        const vals_arr = getAllExtraValues(extVals, f.id);
-        if (vals_arr.length <= 1) {
-          footerBody.push([f.label, vals_arr[0] ?? '—']);
-        } else {
-          vals_arr.forEach((v, idx) => {
-            footerBody.push([idx === 0 ? f.label : '', v]);
-          });
-        }
-      });
-
-      autoTable(doc, {
-        startY: y,
-        margin: { left: MARGIN, right: MARGIN },
-        head: [['Field', 'Value']],
-        body: footerBody,
-        theme: 'plain',
-        headStyles: {
-          fillColor: SEC.footer.bg,
-          textColor: SEC.footer.fg,
-          fontStyle: 'bold',
-          fontSize: 7,
-          cellPadding: { top: 4, bottom: 4, left: 8, right: 8 }
-        },
-        bodyStyles: {
-          fontSize: 8,
-          textColor: C.primary,
-          cellPadding: { top: 5, bottom: 5, left: 8, right: 8 }
-        },
-        alternateRowStyles: { fillColor: C.rowAlt },
-        tableLineColor: C.border,
-        tableLineWidth: 0.5,
-        columnStyles: {
-          0: { fontStyle: 'bold', cellWidth: 120, textColor: C.muted }
-        }
-      });
+      drawExtraFieldsTable(y, footerExtras, extVals, SEC.footer);
     }
   }
 
-  // ── Render Final Calculation page (if selected) ─────────────────────
+  // Final calc page
   if (includeFinalCalc && finalCalc) {
-    if (selectedEntries.length > 0) {
-      doc.addPage();
-    }
-    renderFinalCalcPage(finalCalc, totalPageCount, totalPageCount);
+    if (selectedEntries.length > 0) doc.addPage();
+    renderFinalCalcPage(finalCalc, totalPages, totalPages);
   }
 
-  // ── Per-page footer ─────────────────────────────────────────────────
-  const totalPages: number =
-    (doc.internal as any).getNumberOfPages?.() ?? totalPageCount;
-
-  for (let p = 1; p <= totalPages; p++) {
+  // Page footers
+  const tp = (doc.internal as any).getNumberOfPages?.() ?? totalPages;
+  for (let p = 1; p <= tp; p++) {
     doc.setPage(p);
-    const fy = PAGE_H - 20;
-    const isFinalCalcPage = includeFinalCalc && finalCalc && p === totalPages;
-    const tName = isFinalCalcPage
-      ? 'Final Calculation'
-      : (selectedEntries[p - 1]?.template?.name ?? '');
-
+    const fy = PH - 20;
+    const nm =
+      includeFinalCalc && finalCalc && p === tp
+        ? 'Final Calculation'
+        : (selectedEntries[p - 1]?.template?.name ?? '');
     doc.setDrawColor(...C.border);
     doc.setLineWidth(0.5);
-    doc.line(MARGIN, fy - 6, PAGE_W - MARGIN, fy - 6);
-
+    doc.line(M, fy - 6, PW - M, fy - 6);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(...C.muted);
-    doc.text(`Order #${order.orderNo} — ${tName}`, MARGIN, fy + 2);
-    doc.text(`Page ${p} of ${totalPages}`, PAGE_W - MARGIN, fy + 2, {
-      align: 'right'
-    });
+    doc.text(`Order #${order.orderNo} — ${nm}`, M, fy + 2);
+    doc.text(`Page ${p} of ${tp}`, PW - M, fy + 2, { align: 'right' });
   }
 
   doc.save(`order_${order.orderNo}_templates.pdf`);
 }
 
-// =============================================================================
-// LABELLING HELPER
-// =============================================================================
+// -- Label helper --
 
 type LabelledEntry = { entry: PDFTemplateEntry; label: string };
-
 function buildLabelledEntries(entries: PDFTemplateEntry[]): LabelledEntry[] {
-  const counters = new Map<string, number>();
+  const ctr = new Map<string, number>();
   return entries
     .filter((e) => !e.isNew)
-    .map((entry) => {
-      if (entry.isChild) {
-        const n = (counters.get(entry.templateId) ?? 0) + 1;
-        counters.set(entry.templateId, n);
+    .map((e) => {
+      if (e.isChild) {
+        const n = (ctr.get(e.templateId) ?? 0) + 1;
+        ctr.set(e.templateId, n);
         return {
-          entry,
-          label: `${entry.template?.name ?? 'Template'} — Duplicate #${n}`
+          entry: e,
+          label: `${e.template?.name ?? 'Template'} — Duplicate #${n}`
         };
       }
-      return { entry, label: entry.template?.name ?? 'Template' };
+      return { entry: e, label: e.template?.name ?? 'Template' };
     });
 }
 
-// =============================================================================
-// MAIN COMPONENT
-// =============================================================================
+// -- Main component --
 
 export default function OrderTemplatePDF({
   order,
@@ -1593,61 +1224,49 @@ export default function OrderTemplatePDF({
   const [includeMarginDiscount, setIncludeMarginDiscount] = useState(true);
   const [includeMarginTotal, setIncludeMarginTotal] = useState(true);
 
-  const labelledEntries = useMemo(
-    () => buildLabelledEntries(entries),
-    [entries]
-  );
-
+  const labelled = useMemo(() => buildLabelledEntries(entries), [entries]);
   const allIds = useMemo(() => {
-    const ids = new Set(labelledEntries.map((le) => le.entry.orderTemplateId));
-    if (finalCalc) ids.add(FINAL_CALC_ID);
-    return ids;
-  }, [labelledEntries, finalCalc]);
-
-  const allSelected = selectedIds.size === allIds.size && allIds.size > 0;
-  const noneSelected = selectedIds.size === 0;
-  const someSelected = !noneSelected && !allSelected;
-
-  const totalItemCount = labelledEntries.length + (finalCalc ? 1 : 0);
+    const s = new Set(labelled.map((l) => l.entry.orderTemplateId));
+    if (finalCalc) s.add(FINAL_CALC_ID);
+    return s;
+  }, [labelled, finalCalc]);
+  const allSel = selectedIds.size === allIds.size && allIds.size > 0,
+    noneSel = selectedIds.size === 0;
 
   const openDialog = useCallback(() => {
-    const defaultSelected = new Set<string>();
-    for (const { entry } of labelledEntries) {
-      if (entry.isNew || entry.isChild) continue;
-      const total = parseFloat(entry.summary?.finalPayableAmount ?? '0');
-      if (!entry.summary || isNaN(total) || total === 0) continue;
-      defaultSelected.add(entry.orderTemplateId);
+    const def = new Set<string>();
+    for (const { entry: e } of labelled) {
+      if (e.isNew || e.isChild) continue;
+      const t = parseFloat(e.summary?.finalPayableAmount ?? '0');
+      if (!e.summary || isNaN(t) || t === 0) continue;
+      def.add(e.orderTemplateId);
     }
-    if (finalCalc && defaultSelected.size > 0) {
-      defaultSelected.add(FINAL_CALC_ID);
-    }
-    setSelectedIds(defaultSelected);
+    if (finalCalc && def.size > 0) def.add(FINAL_CALC_ID);
+    setSelectedIds(def);
     setExpandedId(null);
     setDialogOpen(true);
-  }, [labelledEntries, finalCalc]);
+  }, [labelled, finalCalc]);
 
-  const toggleEntry = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const toggleAll = useCallback(() => {
-    setSelectedIds(allSelected ? new Set() : new Set(allIds));
-  }, [allSelected, allIds]);
+  const toggle = useCallback(
+    (id: string) =>
+      setSelectedIds((p) => {
+        const n = new Set(p);
+        n.has(id) ? n.delete(id) : n.add(id);
+        return n;
+      }),
+    []
+  );
+  const toggleAll = useCallback(
+    () => setSelectedIds(allSel ? new Set() : new Set(allIds)),
+    [allSel, allIds]
+  );
 
   const handleDownload = useCallback(async () => {
-    const toExport = labelledEntries
-      .filter((le) => selectedIds.has(le.entry.orderTemplateId))
-      .map((le) => le.entry);
-
-    const includeFinalCalc = selectedIds.has(FINAL_CALC_ID);
-
-    if (toExport.length === 0 && !includeFinalCalc) return;
-
+    const toExport = labelled
+      .filter((l) => selectedIds.has(l.entry.orderTemplateId))
+      .map((l) => l.entry);
+    const incFC = selectedIds.has(FINAL_CALC_ID);
+    if (toExport.length === 0 && !incFC) return;
     setIsGenerating(true);
     try {
       await generateMultiPDF(
@@ -1657,12 +1276,8 @@ export default function OrderTemplatePDF({
         extraValues,
         allBlockValues,
         finalCalc ?? null,
-        includeFinalCalc,
-        {
-          includeAddonDiscount,
-          includeMarginDiscount,
-          includeMarginTotal
-        }
+        incFC,
+        { includeAddonDiscount, includeMarginDiscount, includeMarginTotal }
       );
       setDialogOpen(false);
     } catch (err) {
@@ -1671,7 +1286,7 @@ export default function OrderTemplatePDF({
       setIsGenerating(false);
     }
   }, [
-    labelledEntries,
+    labelled,
     selectedIds,
     order,
     templateValues,
@@ -1683,13 +1298,105 @@ export default function OrderTemplatePDF({
     includeMarginTotal
   ]);
 
-  if (labelledEntries.length === 0) return null;
+  if (labelled.length === 0) return null;
+  const selCount = selectedIds.size,
+    totalItems = labelled.length + (finalCalc ? 1 : 0);
+  const chkCls =
+    'shrink-0 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600';
 
-  const selectedCount = selectedIds.size;
+  // Reusable row component for the template/final-calc list
+  const SelectRow = ({
+    id,
+    checked,
+    label,
+    badge,
+    badgeVariant = 'secondary' as const,
+    iconCls = 'text-muted-foreground'
+  }: {
+    id: string;
+    checked: boolean;
+    label: string;
+    badge?: string;
+    badgeVariant?: 'secondary' | 'outline';
+    iconCls?: string;
+  }) => {
+    const expanded = expandedId === id;
+    return (
+      <div
+        className={cn(
+          'rounded-lg border transition-colors',
+          checked
+            ? 'border-indigo-200 bg-indigo-50/60'
+            : 'border-border bg-muted/20'
+        )}
+      >
+        <div className='flex items-center gap-3 px-4 py-3'>
+          <Checkbox
+            id={`chk-${id}`}
+            checked={checked}
+            onCheckedChange={() => toggle(id)}
+            className={chkCls}
+          />
+          <label
+            htmlFor={`chk-${id}`}
+            className='flex flex-1 cursor-pointer items-center gap-2 text-sm font-medium'
+          >
+            <FileText className={cn('h-3.5 w-3.5 shrink-0', iconCls)} />
+            <span className='truncate'>{label}</span>
+            {badge && (
+              <Badge
+                variant={badgeVariant}
+                className='shrink-0 px-1.5 py-0 text-[10px]'
+              >
+                {badge}
+              </Badge>
+            )}
+          </label>
+          <button
+            type='button'
+            onClick={() => setExpandedId(expanded ? null : id)}
+            className='text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1 text-xs transition-colors'
+          >
+            <Eye className='h-3.5 w-3.5' />
+            {expanded ? (
+              <ChevronUp className='h-3 w-3' />
+            ) : (
+              <ChevronDown className='h-3 w-3' />
+            )}
+          </button>
+        </div>
+        {expanded && (
+          <>
+            <Separator />
+            <div className='px-4 py-3'>
+              {id === FINAL_CALC_ID ? (
+                <FinalCalcPreview
+                  data={finalCalc!}
+                  options={{
+                    includeAddonDiscount,
+                    includeMarginDiscount,
+                    includeMarginTotal
+                  }}
+                />
+              ) : (
+                <PreviewTable
+                  entry={
+                    labelled.find((l) => l.entry.orderTemplateId === id)!.entry
+                  }
+                  values={templateValues[id] ?? {}}
+                  extras={extraValues[id] ?? {}}
+                  blockValues={allBlockValues[id] ?? {}}
+                />
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className={className}>
-      {/* Trigger */}
       <Button
         variant='outline'
         size='sm'
@@ -1699,8 +1406,6 @@ export default function OrderTemplatePDF({
         <FileText className='h-3.5 w-3.5' />
         Download PDF
       </Button>
-
-      {/* Multi-select dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className='max-w-3xl'>
           <DialogHeader>
@@ -1714,252 +1419,121 @@ export default function OrderTemplatePDF({
             </DialogDescription>
           </DialogHeader>
 
-          {/* Order info strip */}
           <div className='bg-muted/40 flex flex-wrap gap-x-5 gap-y-1 rounded-md border px-4 py-2 text-xs'>
-            <span>
-              <span className='text-muted-foreground'>Design: </span>
-              <span className='font-semibold'>#{order.orderNo}</span>
-            </span>
-            <span>
-              <span className='text-muted-foreground'>Product: </span>
-              <span className='font-semibold'>
-                {order.product?.name ?? '—'}
+            {[
+              ['Design', `#${order.orderNo}`],
+              ['Product', order.product?.name ?? '—'],
+              ['Customer', order.customer?.name ?? '—'],
+              ['Status', order.status ?? 'DRAFT']
+            ].map(([l, v]) => (
+              <span key={l}>
+                <span className='text-muted-foreground'>{l}: </span>
+                <span className='font-semibold'>{v}</span>
               </span>
-            </span>
-            <span>
-              <span className='text-muted-foreground'>Customer: </span>
-              <span className='font-semibold'>
-                {order.customer?.name ?? '—'}
-              </span>
-            </span>
-            <span>
-              <span className='text-muted-foreground'>Status: </span>
-              <span className='font-semibold'>{order.status ?? 'DRAFT'}</span>
-            </span>
+            ))}
           </div>
 
-          {/* Select-all bar */}
           <div className='bg-muted/20 flex items-center justify-between rounded-md border px-4 py-2.5'>
             <button
               type='button'
               onClick={toggleAll}
               className='hover:text-foreground text-muted-foreground flex items-center gap-2.5 text-sm font-medium transition-colors'
             >
-              {allSelected ? (
+              {allSel ? (
                 <CheckSquare className='h-4 w-4 text-indigo-600' />
-              ) : someSelected ? (
+              ) : selectedIds.size > 0 ? (
                 <CheckSquare className='h-4 w-4 text-indigo-400 opacity-60' />
               ) : (
                 <Square className='h-4 w-4' />
               )}
-              {allSelected ? 'Deselect All' : 'Select All'}
+              {allSel ? 'Deselect All' : 'Select All'}
             </button>
             <span className='text-muted-foreground text-xs'>
-              {selectedCount} of {totalItemCount} selected
+              {selCount} of {totalItems} selected
             </span>
           </div>
 
-          {/* Template list */}
           <ScrollArea className='max-h-[46vh] pr-1'>
             <div className='space-y-2'>
-              {labelledEntries.map(({ entry, label }) => {
-                const id = entry.orderTemplateId;
-                const checked = selectedIds.has(id);
-                const expanded = expandedId === id;
+              {labelled.map(({ entry, label }) => (
+                <SelectRow
+                  key={entry.orderTemplateId}
+                  id={entry.orderTemplateId}
+                  checked={selectedIds.has(entry.orderTemplateId)}
+                  label={label}
+                  badge={entry.isChild ? 'copy' : undefined}
+                />
+              ))}
 
-                return (
-                  <div
-                    key={id}
-                    className={cn(
-                      'rounded-lg border transition-colors',
-                      checked
-                        ? 'border-indigo-200 bg-indigo-50/60'
-                        : 'border-border bg-muted/20'
-                    )}
-                  >
-                    {/* Row header */}
-                    <div className='flex items-center gap-3 px-4 py-3'>
-                      <Checkbox
-                        id={`chk-${id}`}
-                        checked={checked}
-                        onCheckedChange={() => toggleEntry(id)}
-                        className='shrink-0 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600'
-                      />
-                      <label
-                        htmlFor={`chk-${id}`}
-                        className='flex flex-1 cursor-pointer items-center gap-2 text-sm font-medium'
-                      >
-                        <FileText className='text-muted-foreground h-3.5 w-3.5 shrink-0' />
-                        <span className='truncate'>{label}</span>
-                        {entry.isChild && (
-                          <Badge
-                            variant='secondary'
-                            className='shrink-0 px-1.5 py-0 text-[10px]'
-                          >
-                            copy
-                          </Badge>
-                        )}
-                      </label>
-
-                      {/* Preview expand toggle */}
-                      <button
-                        type='button'
-                        onClick={() => setExpandedId(expanded ? null : id)}
-                        className='text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1 text-xs transition-colors'
-                      >
-                        <Eye className='h-3.5 w-3.5' />
-                        {expanded ? (
-                          <ChevronUp className='h-3 w-3' />
-                        ) : (
-                          <ChevronDown className='h-3 w-3' />
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Expandable data preview */}
-                    {expanded && (
-                      <>
-                        <Separator />
-                        <div className='px-4 py-3'>
-                          <PreviewTable
-                            entry={entry}
-                            values={templateValues[id] ?? {}}
-                            extras={extraValues[id] ?? {}}
-                            blockValues={allBlockValues[id] ?? {}}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-
-              {/* ── Final Calc PDF Options ──────────────────────── */}
               {finalCalc && selectedIds.has(FINAL_CALC_ID) && (
                 <div className='rounded-lg border border-indigo-200 bg-indigo-50/40 p-3'>
                   <p className='mb-2.5 text-xs font-semibold text-indigo-700'>
                     Final Calculation — PDF Options
                   </p>
                   <div className='flex flex-wrap gap-x-6 gap-y-2'>
-                    <label className='flex cursor-pointer items-center gap-2 text-xs'>
-                      <Checkbox
-                        checked={includeMarginDiscount}
-                        onCheckedChange={(v) =>
-                          setIncludeMarginDiscount(v === true)
-                        }
-                        className='h-3.5 w-3.5 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600'
-                      />
-                      <span>Include Margin Discount</span>
-                    </label>
-                    <label className='flex cursor-pointer items-center gap-2 text-xs'>
-                      <Checkbox
-                        checked={includeMarginTotal}
-                        onCheckedChange={(v) =>
-                          setIncludeMarginTotal(v === true)
-                        }
-                        className='h-3.5 w-3.5 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600'
-                      />
-                      <span>Include Margin Total</span>
-                    </label>
-                    <label className='flex cursor-pointer items-center gap-2 text-xs'>
-                      <Checkbox
-                        checked={includeAddonDiscount}
-                        onCheckedChange={(v) =>
-                          setIncludeAddonDiscount(v === true)
-                        }
-                        className='h-3.5 w-3.5 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600'
-                      />
-                      <span>Include Addon Discount</span>
-                    </label>
+                    {(
+                      [
+                        [
+                          'Include Margin Discount',
+                          includeMarginDiscount,
+                          setIncludeMarginDiscount
+                        ],
+                        [
+                          'Include Margin Total',
+                          includeMarginTotal,
+                          setIncludeMarginTotal
+                        ],
+                        [
+                          'Include Addon Discount',
+                          includeAddonDiscount,
+                          setIncludeAddonDiscount
+                        ]
+                      ] as [string, boolean, (v: boolean) => void][]
+                    ).map(([l, v, set]) => (
+                      <label
+                        key={l}
+                        className='flex cursor-pointer items-center gap-2 text-xs'
+                      >
+                        <Checkbox
+                          checked={v}
+                          onCheckedChange={(val) => set(val === true)}
+                          className={cn('h-3.5 w-3.5', chkCls)}
+                        />
+                        <span>{l}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
               )}
 
-              {/* ── Final Calculation row ───────────────────────── */}
-              {finalCalc &&
-                (() => {
-                  const id = FINAL_CALC_ID;
-                  const checked = selectedIds.has(id);
-                  const expanded = expandedId === id;
-                  return (
-                    <>
-                      <div className='flex items-center gap-2 px-1 pt-1'>
-                        <Separator className='flex-1' />
-                        <span className='text-muted-foreground shrink-0 text-[10px] font-medium tracking-wider uppercase'>
-                          Summary
-                        </span>
-                        <Separator className='flex-1' />
-                      </div>
-                      <div
-                        className={cn(
-                          'rounded-lg border transition-colors',
-                          checked
-                            ? 'border-indigo-200 bg-indigo-50/60'
-                            : 'border-border bg-muted/20'
-                        )}
-                      >
-                        <div className='flex items-center gap-3 px-4 py-3'>
-                          <Checkbox
-                            id={`chk-${id}`}
-                            checked={checked}
-                            onCheckedChange={() => toggleEntry(id)}
-                            className='shrink-0 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600'
-                          />
-                          <label
-                            htmlFor={`chk-${id}`}
-                            className='flex flex-1 cursor-pointer items-center gap-2 text-sm font-medium'
-                          >
-                            <FileText className='h-3.5 w-3.5 shrink-0 text-indigo-500' />
-                            <span className='truncate'>Final Calculation</span>
-                            <Badge
-                              variant='outline'
-                              className='shrink-0 border-indigo-200 px-1.5 py-0 text-[10px] text-indigo-600'
-                            >
-                              summary
-                            </Badge>
-                          </label>
-                          <button
-                            type='button'
-                            onClick={() => setExpandedId(expanded ? null : id)}
-                            className='text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1 text-xs transition-colors'
-                          >
-                            <Eye className='h-3.5 w-3.5' />
-                            {expanded ? (
-                              <ChevronUp className='h-3 w-3' />
-                            ) : (
-                              <ChevronDown className='h-3 w-3' />
-                            )}
-                          </button>
-                        </div>
-                        {expanded && (
-                          <>
-                            <Separator />
-                            <div className='px-4 py-3'>
-                              <FinalCalcPreview
-                                data={finalCalc}
-                                options={{
-                                  includeAddonDiscount,
-                                  includeMarginDiscount,
-                                  includeMarginTotal
-                                }}
-                              />
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </>
-                  );
-                })()}
+              {finalCalc && (
+                <>
+                  <div className='flex items-center gap-2 px-1 pt-1'>
+                    <Separator className='flex-1' />
+                    <span className='text-muted-foreground shrink-0 text-[10px] font-medium tracking-wider uppercase'>
+                      Summary
+                    </span>
+                    <Separator className='flex-1' />
+                  </div>
+                  <SelectRow
+                    id={FINAL_CALC_ID}
+                    checked={selectedIds.has(FINAL_CALC_ID)}
+                    label='Final Calculation'
+                    badge='summary'
+                    badgeVariant='outline'
+                    iconCls='text-indigo-500'
+                  />
+                </>
+              )}
             </div>
           </ScrollArea>
 
           <DialogFooter className='items-center gap-2 sm:gap-2'>
             <p className='text-muted-foreground mr-auto text-xs'>
-              {selectedCount > 0
-                ? `${selectedCount} template${selectedCount > 1 ? 's' : ''} → 1 PDF (${selectedCount} page${selectedCount > 1 ? 's' : ''})`
+              {selCount > 0
+                ? `${selCount} template${selCount > 1 ? 's' : ''} → 1 PDF (${selCount} page${selCount > 1 ? 's' : ''})`
                 : 'Select at least one template'}
             </p>
-
             <Button
               variant='outline'
               onClick={() => setDialogOpen(false)}
@@ -1967,10 +1541,9 @@ export default function OrderTemplatePDF({
             >
               Cancel
             </Button>
-
             <Button
               onClick={handleDownload}
-              disabled={isGenerating || noneSelected}
+              disabled={isGenerating || noneSel}
               className='gap-1.5 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50'
             >
               {isGenerating ? (
@@ -1980,7 +1553,7 @@ export default function OrderTemplatePDF({
               )}
               {isGenerating
                 ? 'Generating…'
-                : `Download PDF${selectedCount > 1 ? ` (${selectedCount} pages)` : ''}`}
+                : `Download PDF${selCount > 1 ? ` (${selCount} pages)` : ''}`}
             </Button>
           </DialogFooter>
         </DialogContent>
