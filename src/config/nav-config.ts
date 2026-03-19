@@ -72,6 +72,14 @@ export const navItems: NavItem[] = [
     }
   },
   {
+    title: 'Company Role',
+    url: '/dashboard/[companyId]/company-role',
+    icon: 'shield',
+    access: {
+      requireOrg: true
+    }
+  },
+  {
     title: 'Workspaces',
     url: '/dashboard/[companyId]/workspaces',
     icon: 'folder',

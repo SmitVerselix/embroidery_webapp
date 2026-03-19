@@ -239,6 +239,18 @@ export const ENDPOINTS = {
       `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/user/delete/${userListId}`
   },
 
+  // Company Role endpoints (company-scoped)
+  COMPANY_ROLE: {
+    CREATE: (companyId: string) =>
+      `${API_PREFIX}/user/${companyId}/company-role`,
+    LIST: (companyId: string) =>
+      `${API_PREFIX}/user/${companyId}/company-role/list`,
+    UPDATE: (companyId: string, roleId: string) =>
+      `${API_PREFIX}/user/${companyId}/company-role/${roleId}`,
+    DELETE: (companyId: string, roleId: string) =>
+      `${API_PREFIX}/user/${companyId}/company-role/${roleId}`
+  },
+
   // Login history endpoints
   LOGIN_HISTORY: {
     LIST: `${API_PREFIX}/user/login-history`
@@ -288,5 +300,6 @@ export const QUERY_KEYS = {
     ['kanban-sections', companyId, kanbanId] as const,
   KANBAN_PERMISSIONS: (companyId: string, kanbanId: string) =>
     ['kanban-permissions', companyId, kanbanId] as const,
+  COMPANY_ROLES: (companyId: string) => ['company-roles', companyId] as const,
   LOGIN_HISTORY: ['login-history'] as const
 } as const;

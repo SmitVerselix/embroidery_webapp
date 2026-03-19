@@ -73,7 +73,12 @@ import type {
   KanbanPermissionListParams,
   CreateKanbanPermissionUserData,
   KanbanPermission,
-  UpdateKanbanPermissionUserData
+  UpdateKanbanPermissionUserData,
+  CompanyRoleListParams,
+  CompanyRoleListResponse,
+  CreateCompanyRoleData,
+  CompanyRole,
+  UpdateCompanyRoleData
 } from './types';
 
 // =============================================================================
@@ -1025,6 +1030,62 @@ export const deleteKanbanPermissionUser = async (
 ): Promise<void> => {
   await api.delete<ApiResponse<number[]>>(
     ENDPOINTS.KANBAN.PERMISSION_USER_DELETE(companyId, kanbanId, userListId)
+  );
+};
+
+// =============================================================================
+// COMPANY ROLE SERVICES
+// =============================================================================
+
+export const getCompanyRoles = async (
+  companyId: string,
+  params?: CompanyRoleListParams
+): Promise<CompanyRoleListResponse> => {
+  const defaultParams: CompanyRoleListParams = {
+    page: 1,
+    limit: 10,
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  const res = await api.post<ApiResponse<CompanyRoleListResponse>>(
+    ENDPOINTS.COMPANY_ROLE.LIST(companyId),
+    defaultParams
+  );
+
+  return res.data.payload;
+};
+
+export const createCompanyRole = async (
+  companyId: string,
+  data: CreateCompanyRoleData
+): Promise<CompanyRole> => {
+  const res = await api.post<ApiResponse<CompanyRole>>(
+    ENDPOINTS.COMPANY_ROLE.CREATE(companyId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const updateCompanyRole = async (
+  companyId: string,
+  roleId: string,
+  data: UpdateCompanyRoleData
+): Promise<void> => {
+  await api.put<ApiResponse<number[]>>(
+    ENDPOINTS.COMPANY_ROLE.UPDATE(companyId, roleId),
+    data
+  );
+};
+
+export const deleteCompanyRole = async (
+  companyId: string,
+  roleId: string
+): Promise<void> => {
+  await api.delete<ApiResponse<number[]>>(
+    ENDPOINTS.COMPANY_ROLE.DELETE(companyId, roleId)
   );
 };
 

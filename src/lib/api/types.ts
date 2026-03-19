@@ -1246,3 +1246,45 @@ export type UpdateKanbanPermissionUserData = {
   sectionId?: string;
   userId?: string;
 };
+
+// =============================================================================
+// COMPANY ROLE TYPES
+// =============================================================================
+
+export type CompanyRole = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  name: string;
+  description: string | null;
+  companyId: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CompanyRoleListResponse = {
+  count: number;
+  rows: CompanyRole[];
+};
+
+export type CompanyRoleListParams = {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+};
+
+export type CreateCompanyRoleData = {
+  name: string;
+  description?: string;
+};
+
+export type UpdateCompanyRoleData = {
+  name: string;
+  description?: string;
+};
