@@ -208,6 +208,37 @@ export const ENDPOINTS = {
     ACCEPT_INVITE: `${API_PREFIX}/user/company/members/accept-invite`
   },
 
+  // Kanban Board endpoints (company-scoped)
+  KANBAN: {
+    CREATE: (companyId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/create`,
+    LIST: (companyId: string) => `${API_PREFIX}/user/${companyId}/kanban/list`,
+    GET: (companyId: string, kanbanId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/get/${kanbanId}`,
+    UPDATE: (companyId: string, kanbanId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/update/${kanbanId}`,
+    DELETE: (companyId: string, kanbanId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/delete/${kanbanId}`,
+    SECTION_LIST: (companyId: string, kanbanId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/section/get-all`,
+    PERMISSION_USER_LIST: (companyId: string, kanbanId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/user/list`,
+    PERMISSION_USER_CREATE: (companyId: string, kanbanId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/user/create`,
+    PERMISSION_USER_UPDATE: (
+      companyId: string,
+      kanbanId: string,
+      userListId: string
+    ) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/user/update/${userListId}`,
+    PERMISSION_USER_DELETE: (
+      companyId: string,
+      kanbanId: string,
+      userListId: string
+    ) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/user/delete/${userListId}`
+  },
+
   // Login history endpoints
   LOGIN_HISTORY: {
     LIST: `${API_PREFIX}/user/login-history`
@@ -250,5 +281,12 @@ export const QUERY_KEYS = {
   CUSTOMER: (companyId: string, customerId: string) =>
     ['customers', companyId, customerId] as const,
   MEMBERS: (companyId: string) => ['members', companyId] as const,
+  KANBAN_BOARDS: (companyId: string) => ['kanban-boards', companyId] as const,
+  KANBAN_BOARD: (companyId: string, kanbanId: string) =>
+    ['kanban-boards', companyId, kanbanId] as const,
+  KANBAN_SECTIONS: (companyId: string, kanbanId: string) =>
+    ['kanban-sections', companyId, kanbanId] as const,
+  KANBAN_PERMISSIONS: (companyId: string, kanbanId: string) =>
+    ['kanban-permissions', companyId, kanbanId] as const,
   LOGIN_HISTORY: ['login-history'] as const
 } as const;

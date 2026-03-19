@@ -27,9 +27,17 @@ interface BoardColumnProps {
   column: Column;
   tasks: Task[];
   isOverlay?: boolean;
+  onRenameSection?: (sectionId: string, newName: string) => void;
+  onDeleteSection?: (sectionId: string) => void;
 }
 
-export function BoardColumn({ column, tasks, isOverlay }: BoardColumnProps) {
+export function BoardColumn({
+  column,
+  tasks,
+  isOverlay,
+  onRenameSection,
+  onDeleteSection
+}: BoardColumnProps) {
   const tasksIds = useMemo(() => {
     return tasks.map((task) => task.id);
   }, [tasks]);
@@ -88,12 +96,12 @@ export function BoardColumn({ column, tasks, isOverlay }: BoardColumnProps) {
           <span className='sr-only'>{`Move column: ${column.title}`}</span>
           <IconGripVertical />
         </Button>
-        {/* <span className="mr-auto mt-0!"> {column.title}</span> */}
-        {/* <Input
-          defaultValue={column.title}
-          className="text-base mt-0! mr-auto"
-        /> */}
-        <ColumnActions id={column.id} title={column.title} />
+        <ColumnActions
+          id={column.id}
+          title={column.title}
+          onRenameSection={onRenameSection}
+          onDeleteSection={onDeleteSection}
+        />
       </CardHeader>
       <CardContent className='flex grow flex-col gap-4 overflow-x-hidden p-2'>
         <ScrollArea className='h-full'>
@@ -111,7 +119,7 @@ export function BoardColumn({ column, tasks, isOverlay }: BoardColumnProps) {
 export function BoardContainer({ children }: { children: React.ReactNode }) {
   const dndContext = useDndContext();
 
-  const variations = cva('px-2  pb-4 md:px-0 flex lg:justify-start', {
+  const variations = cva('px-2 pb-4 md:px-0 flex lg:justify-start', {
     variants: {
       dragging: {
         default: '',

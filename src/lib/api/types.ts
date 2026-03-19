@@ -952,6 +952,50 @@ export type AcceptInvitePayload = {
 };
 
 // =============================================================================
+// KANBAN BOARD TYPES
+// =============================================================================
+
+export type KanbanBoard = {
+  id: string;
+  isActive: boolean;
+  companyId: string;
+  name: string;
+  description: string | null;
+  isDefault: boolean;
+  createdBy: string;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type KanbanBoardListResponse = {
+  count: number;
+  rows: KanbanBoard[];
+};
+
+export type KanbanBoardListParams = {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+};
+
+export type CreateKanbanBoardData = {
+  name: string;
+  description?: string;
+  isDefault?: boolean;
+};
+
+export type UpdateKanbanBoardData = {
+  name?: string;
+  description?: string;
+  isDefault?: boolean;
+};
+
+// =============================================================================
 // Login History Types
 // =============================================================================
 
@@ -1109,4 +1153,96 @@ export type OrderHistoryParams = {
   sortOrder?: 'ASC' | 'DESC';
   search?: string;
   action?: OrderHistoryAction | '';
+};
+
+// =============================================================================
+// KANBAN SECTION TYPES
+// =============================================================================
+
+export type KanbanSection = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  companyId: string;
+  boardId: string;
+  name: string;
+  position: number;
+  color: string | null;
+  isFinalStage: boolean;
+  wipLimit: number | null;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// =============================================================================
+// KANBAN PERMISSION USER TYPES
+// =============================================================================
+
+export type KanbanPermissionUser = {
+  id: string;
+  name: string;
+  email: string;
+  profileImage: string | null;
+};
+
+export type KanbanPermissionSection = {
+  id: string;
+  name: string;
+};
+
+export type KanbanPermission = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  companyId: string;
+  boardId: string;
+  sectionId: string;
+  userId: string;
+  canView: boolean;
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  canMove: boolean;
+  canViewAllTasks: boolean;
+  createdAt: string;
+  updatedAt: string;
+  user: KanbanPermissionUser;
+  section: KanbanPermissionSection;
+};
+
+export type KanbanPermissionListResponse = {
+  count: number;
+  rows: KanbanPermission[];
+};
+
+export type KanbanPermissionListParams = {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+  sectionId?: string;
+};
+
+// =============================================================================
+// KANBAN PERMISSION USER TYPES section
+// =============================================================================
+
+export type CreateKanbanPermissionUserData = {
+  canViewAllTasks: boolean;
+  sectionId: string;
+  userId: string;
+};
+
+export type UpdateKanbanPermissionUserData = {
+  canViewAllTasks?: boolean;
+  sectionId?: string;
+  userId?: string;
 };

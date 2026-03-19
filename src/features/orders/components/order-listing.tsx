@@ -220,7 +220,7 @@ export default function OrderListing({ companyId }: OrderListingProps) {
               ))
             ) : orders.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className='h-32 text-center'>
+                <TableCell colSpan={8} className='h-32 text-center'>
                   <div className='flex flex-col items-center gap-2'>
                     <FileText className='text-muted-foreground h-8 w-8' />
                     <p className='text-muted-foreground'>

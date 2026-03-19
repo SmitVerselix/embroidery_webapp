@@ -62,7 +62,18 @@ import type {
   CreateBlockData,
   TemplateBlock,
   UpdateBlockData,
-  ReorderBlockData
+  ReorderBlockData,
+  KanbanBoard,
+  KanbanBoardListResponse,
+  KanbanBoardListParams,
+  CreateKanbanBoardData,
+  UpdateKanbanBoardData,
+  KanbanSection,
+  KanbanPermissionListResponse,
+  KanbanPermissionListParams,
+  CreateKanbanPermissionUserData,
+  KanbanPermission,
+  UpdateKanbanPermissionUserData
 } from './types';
 
 // =============================================================================
@@ -866,6 +877,155 @@ export const acceptInvite = async (
     data
   );
   return res.data.payload;
+};
+
+// =============================================================================
+// KANBAN BOARD SERVICES
+// =============================================================================
+
+export const getKanbanBoards = async (
+  companyId: string,
+  params?: KanbanBoardListParams
+): Promise<KanbanBoardListResponse> => {
+  const defaultParams: KanbanBoardListParams = {
+    page: 1,
+    limit: 10,
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  const res = await api.post<ApiResponse<KanbanBoardListResponse>>(
+    ENDPOINTS.KANBAN.LIST(companyId),
+    defaultParams
+  );
+
+  return res.data.payload;
+};
+
+export const getKanbanBoard = async (
+  companyId: string,
+  kanbanId: string
+): Promise<KanbanBoard> => {
+  const res = await api.get<ApiResponse<KanbanBoard>>(
+    ENDPOINTS.KANBAN.GET(companyId, kanbanId)
+  );
+  return res.data.payload;
+};
+
+export const createKanbanBoard = async (
+  companyId: string,
+  data: CreateKanbanBoardData
+): Promise<KanbanBoard> => {
+  const res = await api.post<ApiResponse<KanbanBoard>>(
+    ENDPOINTS.KANBAN.CREATE(companyId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const updateKanbanBoard = async (
+  companyId: string,
+  kanbanId: string,
+  data: UpdateKanbanBoardData
+): Promise<void> => {
+  await api.put<ApiResponse<number[]>>(
+    ENDPOINTS.KANBAN.UPDATE(companyId, kanbanId),
+    data
+  );
+};
+
+export const deleteKanbanBoard = async (
+  companyId: string,
+  kanbanId: string
+): Promise<void> => {
+  await api.delete<ApiResponse<number[]>>(
+    ENDPOINTS.KANBAN.DELETE(companyId, kanbanId)
+  );
+};
+
+// =============================================================================
+// KANBAN SECTION SERVICES
+// =============================================================================
+
+export const getKanbanSections = async (
+  companyId: string,
+  kanbanId: string
+): Promise<KanbanSection[]> => {
+  const res = await api.get<ApiResponse<KanbanSection[]>>(
+    ENDPOINTS.KANBAN.SECTION_LIST(companyId, kanbanId)
+  );
+  return res.data.payload;
+};
+
+// =============================================================================
+// KANBAN PERMISSION SERVICES
+// =============================================================================
+
+export const getKanbanPermissionUsers = async (
+  companyId: string,
+  kanbanId: string,
+  params?: KanbanPermissionListParams
+): Promise<KanbanPermissionListResponse> => {
+  const payload: Record<string, unknown> = {
+    page: 1,
+    limit: 10,
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  // Remove empty sectionId so backend doesn't filter by empty string
+  if (!payload.sectionId) {
+    delete payload.sectionId;
+  }
+
+  const res = await api.post<ApiResponse<KanbanPermissionListResponse>>(
+    ENDPOINTS.KANBAN.PERMISSION_USER_LIST(companyId, kanbanId),
+    payload
+  );
+
+  return res.data.payload;
+};
+
+// =============================================================================
+// KANBAN PERMISSION USER SERVICES
+// =============================================================================
+
+export const createKanbanPermissionUser = async (
+  companyId: string,
+  kanbanId: string,
+  data: CreateKanbanPermissionUserData
+): Promise<KanbanPermission> => {
+  const res = await api.post<ApiResponse<KanbanPermission>>(
+    ENDPOINTS.KANBAN.PERMISSION_USER_CREATE(companyId, kanbanId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const updateKanbanPermissionUser = async (
+  companyId: string,
+  kanbanId: string,
+  userListId: string,
+  data: UpdateKanbanPermissionUserData
+): Promise<void> => {
+  await api.put<ApiResponse<number[]>>(
+    ENDPOINTS.KANBAN.PERMISSION_USER_UPDATE(companyId, kanbanId, userListId),
+    data
+  );
+};
+
+export const deleteKanbanPermissionUser = async (
+  companyId: string,
+  kanbanId: string,
+  userListId: string
+): Promise<void> => {
+  await api.delete<ApiResponse<number[]>>(
+    ENDPOINTS.KANBAN.PERMISSION_USER_DELETE(companyId, kanbanId, userListId)
+  );
 };
 
 // =============================================================================
