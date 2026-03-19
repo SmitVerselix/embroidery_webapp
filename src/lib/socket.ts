@@ -7,7 +7,7 @@ import { io, Socket } from 'socket.io-client';
 const SOCKET_URL =
   process.env.NEXT_PUBLIC_SOCKET_URL || 'http://54.87.7.209:3000';
 // 'https://unadventuring-dumpishly-song.ngrok-free.dev';
-// 'https://embroidery-backend-zkey.onrender.com';
+('https://embroidery-backend-zkey.onrender.com');
 
 // =============================================================================
 // SOCKET SINGLETON
