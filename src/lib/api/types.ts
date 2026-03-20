@@ -853,14 +853,6 @@ export const MEMBER_STATUSES: {
   { label: 'Removed', value: 'REMOVED', color: 'destructive' }
 ];
 
-export type MemberRole = 'owner' | 'admin' | 'member';
-
-export const MEMBER_ROLES: { label: string; value: MemberRole }[] = [
-  { label: 'Owner', value: 'owner' },
-  { label: 'Admin', value: 'admin' },
-  { label: 'Member', value: 'member' }
-];
-
 export type MemberUser = {
   id: string;
   name: string | null;
@@ -904,7 +896,7 @@ export type MemberListParams = {
 
 export type InviteMemberData = {
   email: string;
-  role: MemberRole;
+  role: string;
 };
 
 export type InviteMemberResponse = {

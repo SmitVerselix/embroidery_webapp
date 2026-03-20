@@ -1,14 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { useAuth } from '@/providers/auth-provider';
-import { inviteMember } from '@/lib/api/services';
+import { inviteMember, getCompanyRoles } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
-import { MEMBER_ROLES } from '@/lib/api/types';
+import type { CompanyRole } from '@/lib/api/types';
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, UserPlus, Copy, Check, ExternalLink } from 'lucide-react';
+import {
+  Loader2,
+  UserPlus,
+  Copy,
+  Check,
+  ExternalLink,
+  Shield
+} from 'lucide-react';
 
 // =============================================================================
 // SCHEMA
@@ -39,11 +46,7 @@ const inviteFormSchema = z.object({
     .string()
     .min(1, 'Email is required')
     .email('Please enter a valid email address'),
-  role: z.enum(['admin', 'member']).pipe(
-    z.enum(['admin', 'member']).refine(() => true, {
-      message: 'Please select a role'
-    })
-  )
+  role: z.string().min(1, 'Please select a role')
 });
 
 type InviteFormData = z.infer<typeof inviteFormSchema>;
@@ -55,6 +58,12 @@ type InviteFormData = z.infer<typeof inviteFormSchema>;
 interface MemberInviteDialogProps {
   onSuccess?: () => void;
 }
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+const ROLES_PAGE_LIMIT = 20;
 
 // =============================================================================
 // COMPONENT
@@ -75,6 +84,15 @@ export default function MemberInviteDialog({
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Roles state
+  const [roles, setRoles] = useState<CompanyRole[]>([]);
+  const [rolesPage, setRolesPage] = useState(1);
+  const [rolesTotalCount, setRolesTotalCount] = useState(0);
+  const [isLoadingRoles, setIsLoadingRoles] = useState(false);
+  const [rolesError, setRolesError] = useState<string | null>(null);
+  const rolesScrollRef = useRef<HTMLDivElement | null>(null);
+  const hasMoreRoles = roles.length < rolesTotalCount;
+
   const {
     register,
     handleSubmit,
@@ -86,7 +104,7 @@ export default function MemberInviteDialog({
     resolver: zodResolver(inviteFormSchema),
     defaultValues: {
       email: '',
-      role: 'member'
+      role: ''
     }
   });
 
@@ -96,6 +114,61 @@ export default function MemberInviteDialog({
   const inviteUrl = inviteToken
     ? `${typeof window !== 'undefined' ? window.location.origin : ''}/invite?token=${inviteToken}`
     : '';
+
+  // ---- Fetch roles ----
+  const fetchRoles = useCallback(
+    async (pageNum: number, append = false) => {
+      if (!companyId) return;
+
+      setIsLoadingRoles(true);
+      setRolesError(null);
+
+      try {
+        const response = await getCompanyRoles(companyId, {
+          page: pageNum,
+          limit: ROLES_PAGE_LIMIT,
+          sortBy: 'createdAt',
+          sortOrder: 'ASC'
+        });
+
+        setRoles((prev) =>
+          append ? [...prev, ...response.rows] : response.rows
+        );
+        setRolesTotalCount(response.count);
+      } catch (err) {
+        setRolesError(getError(err));
+      } finally {
+        setIsLoadingRoles(false);
+      }
+    },
+    [companyId]
+  );
+
+  // Fetch initial roles when dialog opens
+  useEffect(() => {
+    if (open && companyId) {
+      setRolesPage(1);
+      fetchRoles(1, false);
+    }
+  }, [open, companyId, fetchRoles]);
+
+  // Load more roles on scroll
+  const handleRolesScroll = useCallback(() => {
+    const el = rolesScrollRef.current;
+    if (!el || isLoadingRoles || !hasMoreRoles) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    // Trigger when user scrolls within 20px of the bottom
+    if (scrollTop + clientHeight >= scrollHeight - 20) {
+      const nextPage = rolesPage + 1;
+      setRolesPage(nextPage);
+      fetchRoles(nextPage, true);
+    }
+  }, [isLoadingRoles, hasMoreRoles, rolesPage, fetchRoles]);
+
+  // Get the display label for the selected role
+  const selectedRoleLabel =
+    roles.find((r) => r.name === selectedRole)?.name || '';
 
   const handleCopyUrl = async () => {
     if (!inviteUrl) return;
@@ -128,7 +201,7 @@ export default function MemberInviteDialog({
     try {
       const result = await inviteMember(companyId, {
         email: data.email,
-        role: data.role
+        role: data.role as any // Send role name from dynamic roles
       });
 
       // Store the token to show the invite URL
@@ -151,6 +224,10 @@ export default function MemberInviteDialog({
       setError(null);
       setInviteToken(null);
       setCopied(false);
+      setRoles([]);
+      setRolesPage(1);
+      setRolesTotalCount(0);
+      setRolesError(null);
     }
   };
 
@@ -274,7 +351,7 @@ export default function MemberInviteDialog({
                 )}
               </div>
 
-              {/* Role */}
+              {/* Role - Dynamic from API with scroll pagination */}
               <div className='space-y-2'>
                 <Label htmlFor='invite-role'>
                   Role <span className='text-destructive'>*</span>
@@ -282,9 +359,7 @@ export default function MemberInviteDialog({
                 <Select
                   value={selectedRole}
                   onValueChange={(value) =>
-                    setValue('role', value as 'admin' | 'member', {
-                      shouldValidate: true
-                    })
+                    setValue('role', value, { shouldValidate: true })
                   }
                   disabled={isSubmitting}
                 >
@@ -292,15 +367,69 @@ export default function MemberInviteDialog({
                     id='invite-role'
                     className={errors.role ? 'border-destructive' : ''}
                   >
-                    <SelectValue placeholder='Select a role' />
+                    <SelectValue placeholder='Select a role'>
+                      {selectedRoleLabel && (
+                        <span className='capitalize'>{selectedRoleLabel}</span>
+                      )}
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent>
-                    {MEMBER_ROLES.filter((r) => r.value !== 'owner').map(
-                      (role) => (
-                        <SelectItem key={role.value} value={role.value}>
-                          {role.label}
-                        </SelectItem>
-                      )
+                  <SelectContent
+                    ref={rolesScrollRef}
+                    onScroll={handleRolesScroll}
+                  >
+                    {/* Loading initial roles */}
+                    {isLoadingRoles && roles.length === 0 ? (
+                      <div className='flex items-center justify-center py-4'>
+                        <Loader2 className='text-muted-foreground h-4 w-4 animate-spin' />
+                        <span className='text-muted-foreground ml-2 text-sm'>
+                          Loading roles...
+                        </span>
+                      </div>
+                    ) : rolesError && roles.length === 0 ? (
+                      <div className='flex flex-col items-center gap-2 py-4'>
+                        <p className='text-destructive text-sm'>
+                          Failed to load roles
+                        </p>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='sm'
+                          onClick={() => fetchRoles(1, false)}
+                        >
+                          Retry
+                        </Button>
+                      </div>
+                    ) : roles.length === 0 ? (
+                      <div className='flex flex-col items-center gap-1 py-4'>
+                        <Shield className='text-muted-foreground h-4 w-4' />
+                        <p className='text-muted-foreground text-sm'>
+                          No roles available
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {roles
+                          .filter((role) => role.isActive)
+                          .map((role) => (
+                            <SelectItem key={role.id} value={role.name}>
+                              <span className='capitalize'>{role.name}</span>
+                              {role.description && (
+                                <span className='text-muted-foreground ml-2 text-xs'>
+                                  — {role.description}
+                                </span>
+                              )}
+                            </SelectItem>
+                          ))}
+                        {/* Loading more indicator */}
+                        {isLoadingRoles && roles.length > 0 && (
+                          <div className='flex items-center justify-center py-2'>
+                            <Loader2 className='text-muted-foreground h-3 w-3 animate-spin' />
+                            <span className='text-muted-foreground ml-2 text-xs'>
+                              Loading more...
+                            </span>
+                          </div>
+                        )}
+                      </>
                     )}
                   </SelectContent>
                 </Select>
