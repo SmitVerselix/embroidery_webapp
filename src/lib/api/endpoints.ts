@@ -161,6 +161,30 @@ export const ENDPOINTS = {
       `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/extra/reorder`
   },
 
+  // Order Form Master endpoints (product-scoped)
+  ORDER_FORM_MASTER: {
+    LIST: (companyId: string, productId: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/order-forms-master/list`,
+    GET: (companyId: string, productId: string, id: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/order-forms-master/get/${id}`,
+    CREATE: (companyId: string, productId: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/order-forms-master/create`,
+    UPDATE: (companyId: string, productId: string, id: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/order-forms-master/update/${id}`,
+    DELETE: (companyId: string, productId: string, id: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/order-forms-master/delete/${id}`,
+    REORDER: (companyId: string, productId: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/order-forms-master/reorder`
+  },
+
+  // Order Form Jobcard endpoints
+  ORDER_FORM_JOBCARD: {
+    CREATE_JOBCARD_ORDER: (companyId: string) =>
+      `${API_PREFIX}/user/${companyId}/order/create-jobcard-order`,
+    UPDATE_JOBCARD_ORDER: (companyId: string, orderId: string) =>
+      `${API_PREFIX}/user/${companyId}/order/update-jobcard-order/${orderId}`
+  },
+
   // Order endpoints (company-scoped)
   ORDER: {
     CREATE: (companyId: string) =>
@@ -284,6 +308,12 @@ export const QUERY_KEYS = {
     ['templates', companyId, productId, templateId, 'rows'] as const,
   TEMPLATE_EXTRAS: (companyId: string, productId: string, templateId: string) =>
     ['templates', companyId, productId, templateId, 'extras'] as const,
+  ORDER_FORM_MASTERS: (companyId: string, productId: string) =>
+    ['order-form-masters', companyId, productId] as const,
+  ORDER_FORM_MASTER: (companyId: string, productId: string, id: string) =>
+    ['order-form-masters', companyId, productId, id] as const,
+  ORDER_FORM_JOBCARD: (companyId: string) =>
+    ['order-form-jobcard', companyId] as const,
   ORDERS: (companyId: string) => ['orders', companyId] as const,
   ORDER: (companyId: string, orderId: string) =>
     ['orders', companyId, orderId] as const,

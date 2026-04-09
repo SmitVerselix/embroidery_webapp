@@ -14,7 +14,7 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+  CardTitle
 } from '@/components/ui/card';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import Link from 'next/link';
@@ -35,11 +35,15 @@ interface CustomerFormProps {
 interface FormErrors {
   name?: string;
   referenceCode?: string;
+  customerCode?: string;
+  margin?: string;
 }
 
 function validateForm(data: {
   name: string;
   referenceCode: string;
+  customerCode: string;
+  margin: string;
 }): FormErrors {
   const errors: FormErrors = {};
 
@@ -66,6 +70,34 @@ function validateForm(data: {
       'Reference code can only contain letters, numbers, hyphens, and underscores';
   }
 
+  // Customer code validation
+  const trimmedCustomerCode = data.customerCode.trim();
+  if (!trimmedCustomerCode) {
+    errors.customerCode = 'Customer code is required';
+  } else if (trimmedCustomerCode.length < 1) {
+    errors.customerCode = 'Customer code must be at least 1 character';
+  } else if (trimmedCustomerCode.length > 50) {
+    errors.customerCode = 'Customer code must not exceed 50 characters';
+  } else if (!/^[a-zA-Z0-9_-]+$/.test(trimmedCustomerCode)) {
+    errors.customerCode =
+      'Customer code can only contain letters, numbers, hyphens, and underscores';
+  }
+
+  // Margin validation
+  const trimmedMargin = data.margin.trim();
+  if (!trimmedMargin) {
+    errors.margin = 'Margin is required';
+  } else {
+    const marginNum = parseFloat(trimmedMargin);
+    if (isNaN(marginNum)) {
+      errors.margin = 'Margin must be a valid number';
+    } else if (marginNum < 0) {
+      errors.margin = 'Margin must be 0 or greater';
+    } else if (marginNum > 100) {
+      errors.margin = 'Margin must not exceed 100';
+    }
+  }
+
   return errors;
 }
 
@@ -75,7 +107,7 @@ function validateForm(data: {
 
 export default function CustomerForm({
   initialData,
-  pageTitle,
+  pageTitle
 }: CustomerFormProps) {
   const router = useRouter();
   const params = useParams();
@@ -90,6 +122,12 @@ export default function CustomerForm({
   const [referenceCode, setReferenceCode] = useState(
     initialData?.referenceCode ?? ''
   );
+  const [customerCode, setCustomerCode] = useState(
+    initialData?.customerCode ?? ''
+  );
+  const [margin, setMargin] = useState(
+    initialData?.margin != null ? String(initialData.margin) : ''
+  );
   const [errors, setErrors] = useState<FormErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -99,7 +137,12 @@ export default function CustomerForm({
     e.preventDefault();
 
     // Validate
-    const formErrors = validateForm({ name, referenceCode });
+    const formErrors = validateForm({
+      name,
+      referenceCode,
+      customerCode,
+      margin
+    });
     setErrors(formErrors);
 
     if (Object.keys(formErrors).length > 0) {
@@ -118,6 +161,8 @@ export default function CustomerForm({
       const payload = {
         name: name.trim(),
         referenceCode: referenceCode.trim(),
+        customerCode: customerCode.trim(),
+        margin: parseFloat(margin.trim())
       };
 
       if (isEditing && initialData) {
@@ -136,18 +181,18 @@ export default function CustomerForm({
   };
 
   return (
-    <div className="space-y-6">
+    <div className='space-y-6'>
       {/* Back Button */}
       <Link
         href={`/dashboard/${companyId}/customer`}
-        className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+        className='text-muted-foreground hover:text-foreground inline-flex items-center text-sm'
       >
-        <ArrowLeft className="mr-2 h-4 w-4" />
+        <ArrowLeft className='mr-2 h-4 w-4' />
         Back to Customers
       </Link>
 
       {/* Form Card */}
-      <Card className="mx-auto max-w-2xl">
+      <Card className='mx-auto max-w-2xl'>
         <CardHeader>
           <CardTitle>{pageTitle}</CardTitle>
           <CardDescription>
@@ -157,22 +202,22 @@ export default function CustomerForm({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className='space-y-6'>
             {/* Submit Error */}
             {submitError && (
-              <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+              <div className='bg-destructive/15 text-destructive rounded-md p-3 text-sm'>
                 {submitError}
               </div>
             )}
 
             {/* Name Field */}
-            <div className="space-y-2">
-              <Label htmlFor="name">
-                Customer Name <span className="text-destructive">*</span>
+            <div className='space-y-2'>
+              <Label htmlFor='name'>
+                Customer Name <span className='text-destructive'>*</span>
               </Label>
               <Input
-                id="name"
-                placeholder="Enter customer name"
+                id='name'
+                placeholder='Enter customer name'
                 value={name}
                 onChange={(e) => {
                   setName(e.target.value);
@@ -185,25 +230,25 @@ export default function CustomerForm({
                 autoFocus
               />
               {errors.name && (
-                <p className="text-sm text-destructive">{errors.name}</p>
+                <p className='text-destructive text-sm'>{errors.name}</p>
               )}
             </div>
 
             {/* Reference Code Field */}
-            <div className="space-y-2">
-              <Label htmlFor="referenceCode">
-                Reference Code <span className="text-destructive">*</span>
+            <div className='space-y-2'>
+              <Label htmlFor='referenceCode'>
+                Reference Code <span className='text-destructive'>*</span>
               </Label>
               <Input
-                id="referenceCode"
-                placeholder="Enter reference code (e.g., CUST001)"
+                id='referenceCode'
+                placeholder='Enter reference code (e.g., CUST001)'
                 value={referenceCode}
                 onChange={(e) => {
                   setReferenceCode(e.target.value);
                   if (errors.referenceCode) {
                     setErrors((prev) => ({
                       ...prev,
-                      referenceCode: undefined,
+                      referenceCode: undefined
                     }));
                   }
                 }}
@@ -211,21 +256,82 @@ export default function CustomerForm({
                 disabled={isSubmitting}
               />
               {errors.referenceCode && (
-                <p className="text-sm text-destructive">
+                <p className='text-destructive text-sm'>
                   {errors.referenceCode}
                 </p>
               )}
-              <p className="text-xs text-muted-foreground">
+              <p className='text-muted-foreground text-xs'>
                 Only letters, numbers, hyphens, and underscores are allowed.
               </p>
             </div>
 
+            {/* Customer Code Field */}
+            <div className='space-y-2'>
+              <Label htmlFor='customerCode'>
+                Customer Code <span className='text-destructive'>*</span>
+              </Label>
+              <Input
+                id='customerCode'
+                placeholder='Enter customer code (e.g., CC001)'
+                value={customerCode}
+                onChange={(e) => {
+                  setCustomerCode(e.target.value);
+                  if (errors.customerCode) {
+                    setErrors((prev) => ({
+                      ...prev,
+                      customerCode: undefined
+                    }));
+                  }
+                }}
+                className={errors.customerCode ? 'border-destructive' : ''}
+                disabled={isSubmitting}
+              />
+              {errors.customerCode && (
+                <p className='text-destructive text-sm'>
+                  {errors.customerCode}
+                </p>
+              )}
+              <p className='text-muted-foreground text-xs'>
+                Only letters, numbers, hyphens, and underscores are allowed.
+              </p>
+            </div>
+
+            {/* Margin Field */}
+            <div className='space-y-2'>
+              <Label htmlFor='margin'>
+                Margin (%) <span className='text-destructive'>*</span>
+              </Label>
+              <Input
+                id='margin'
+                type='number'
+                placeholder='Enter margin percentage (e.g., 15)'
+                value={margin}
+                min={0}
+                max={100}
+                step='0.01'
+                onChange={(e) => {
+                  setMargin(e.target.value);
+                  if (errors.margin) {
+                    setErrors((prev) => ({ ...prev, margin: undefined }));
+                  }
+                }}
+                className={errors.margin ? 'border-destructive' : ''}
+                disabled={isSubmitting}
+              />
+              {errors.margin && (
+                <p className='text-destructive text-sm'>{errors.margin}</p>
+              )}
+              <p className='text-muted-foreground text-xs'>
+                Enter a value between 0 and 100.
+              </p>
+            </div>
+
             {/* Actions */}
-            <div className="flex gap-4">
-              <Button type="submit" disabled={isSubmitting}>
+            <div className='flex gap-4'>
+              <Button type='submit' disabled={isSubmitting}>
                 {isSubmitting ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                     {isEditing ? 'Updating...' : 'Creating...'}
                   </>
                 ) : isEditing ? (
@@ -235,12 +341,10 @@ export default function CustomerForm({
                 )}
               </Button>
               <Button
-                type="button"
-                variant="outline"
+                type='button'
+                variant='outline'
                 disabled={isSubmitting}
-                onClick={() =>
-                  router.push(`/dashboard/${companyId}/customer`)
-                }
+                onClick={() => router.push(`/dashboard/${companyId}/customer`)}
               >
                 Cancel
               </Button>

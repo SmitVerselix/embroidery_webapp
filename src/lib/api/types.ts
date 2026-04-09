@@ -161,6 +161,7 @@ export type Product = {
   createdAt: string;
   updatedAt: string;
   templates?: TemplateWithDetails[];
+  orderForms?: OrderFormMaster[];
 };
 
 export type ProductListResponse = {
@@ -712,10 +713,10 @@ export type OrderListParams = {
 // =============================================================================
 
 export type CreateOrderData = {
-  orderNo: string;
+  orderNo?: string;
   referenceNo?: string;
   productId: string;
-  orderType: OrderType;
+  orderType?: OrderType;
   description?: string;
   customerId?: string;
   templates: OrderTemplatePayload[];
@@ -784,6 +785,32 @@ export type UpdateFinalCalculationData = {
 };
 
 // =============================================================================
+// ORDER FORM JOBCARD TYPES
+// =============================================================================
+
+export interface CreateJobcardOrderData {
+  designId: string;
+  customerId: string;
+  selectedRowIds: { rowId: string; columnId: string }[];
+  manualValues: { rowId: string; columnId: string; value: string }[];
+  orderFormValues: { orderFormsMasterId: string; value: string }[];
+}
+
+export interface UpdateJobcardOrderData {
+  designId: string;
+  customerId: string;
+  selectedRowIds: { rowId: string; columnId: string }[];
+  manualValues: {
+    orderTemplateId?: string;
+    rowId: string;
+    columnId: string;
+    value: string;
+  }[];
+  orderFormValues: { orderFormsMasterId: string; value: string }[];
+  deleteOrderFormValueIds?: string[];
+}
+
+// =============================================================================
 // UPLOAD TYPES
 // =============================================================================
 
@@ -812,6 +839,8 @@ export type Customer = {
   referenceCode: string;
   createdAt: string;
   updatedAt: string;
+  customerCode: string;
+  margin: number;
 };
 
 export type CustomerListResponse = {
@@ -830,6 +859,8 @@ export type CustomerListParams = {
 export type CreateCustomerData = {
   name: string;
   referenceCode: string;
+  customerCode: string;
+  margin: number;
 };
 
 export type UpdateCustomerData = {
@@ -1279,4 +1310,115 @@ export type CreateCompanyRoleData = {
 export type UpdateCompanyRoleData = {
   name: string;
   description?: string;
+};
+
+// =============================================================================
+// ORDER FORM MASTER TYPES
+// =============================================================================
+
+export type OrderFormFieldType =
+  | 'TEXT'
+  | 'NUMBER'
+  | 'SELECT'
+  | 'MULTI_SELECT'
+  | 'CHECKBOX'
+  | 'FILE'
+  | 'RADIO'
+  | 'SELECT_TEMPLATE_EXTRA_FIELD'
+  | 'SELECT_TEMPLATE_VALUE';
+
+export const ORDER_FORM_FIELD_TYPES: {
+  label: string;
+  value: OrderFormFieldType;
+  description: string;
+}[] = [
+  { label: 'Text', value: 'TEXT', description: 'Plain text input' },
+  { label: 'Number', value: 'NUMBER', description: 'Numeric input' },
+  { label: 'Select', value: 'SELECT', description: 'Single select dropdown' },
+  {
+    label: 'Multi Select',
+    value: 'MULTI_SELECT',
+    description: 'Multiple selection'
+  },
+  { label: 'Checkbox', value: 'CHECKBOX', description: 'Checkbox options' },
+  { label: 'File', value: 'FILE', description: 'File upload' },
+  { label: 'Radio', value: 'RADIO', description: 'Radio button options' },
+  {
+    label: 'Template Extra Field',
+    value: 'SELECT_TEMPLATE_EXTRA_FIELD',
+    description: 'Link to a template extra field'
+  },
+  {
+    label: 'Template Value',
+    value: 'SELECT_TEMPLATE_VALUE',
+    description: 'Link to a template row/column value'
+  }
+];
+
+export type OrderFormMaster = {
+  id: string;
+  isActive: boolean;
+  createdBy: string;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  companyId: string;
+  productId: string;
+  fieldName: string;
+  fieldType: OrderFormFieldType;
+  description: string | null;
+  fieldValues: string[] | null;
+  templateId: string | null;
+  extraId: string | null;
+  extraIndex: number | null;
+  rowId: string | null;
+  columnId: string | null;
+  orderNo: number;
+  createdAt: string;
+  updatedAt: string;
+  template?: Template;
+  extra?: TemplateExtra;
+  row?: TemplateRow;
+  column?: TemplateColumn;
+};
+
+export type OrderFormMasterListResponse = {
+  count: number;
+  rows: OrderFormMaster[];
+};
+
+export type OrderFormMasterListParams = {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+};
+
+export type CreateOrderFormMasterData = {
+  fieldName: string;
+  fieldType: OrderFormFieldType;
+  description?: string;
+  fieldValues?: string[];
+  templateId?: string;
+  extraId?: string;
+  extraIndex?: number;
+  rowId?: string;
+  columnId?: string;
+};
+
+export type UpdateOrderFormMasterData = {
+  fieldName?: string;
+  fieldType?: OrderFormFieldType;
+  description?: string;
+  fieldValues?: string[];
+  templateId?: string;
+  extraId?: string;
+  extraIndex?: number;
+  rowId?: string;
+  columnId?: string;
+};
+
+export type ReorderOrderFormMasterData = {
+  ids: string[];
 };

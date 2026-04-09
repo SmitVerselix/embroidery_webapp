@@ -4,8 +4,13 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getProduct } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
-import type { Product, TemplateWithDetails } from '@/lib/api/types';
+import type {
+  Product,
+  TemplateWithDetails,
+  OrderFormMaster
+} from '@/lib/api/types';
 import TemplateListing from '@/features/templates/components/template-listing';
+import OrderFormMasterListing from '@/features/order-form-master/components/order-form-master-listing';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -22,7 +27,8 @@ import {
   Pencil,
   AlertCircle,
   Package,
-  FileText
+  FileText,
+  ClipboardList
 } from 'lucide-react';
 import Link from 'next/link';
 import { format } from 'date-fns';
@@ -85,7 +91,7 @@ export default function ProductDetailPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch product (includes templates with columns, rows, extras)
+  // Fetch product (includes templates with columns, rows, extras AND orderForms)
   useEffect(() => {
     const fetchProduct = async () => {
       if (!companyId || !productId) return;
@@ -148,7 +154,8 @@ export default function ProductDetailPage({
         <div className='space-y-2 text-center'>
           <h3 className='font-semibold'>Product not found</h3>
           <p className='text-muted-foreground text-sm'>
-            The product you're looking for doesn't exist or has been deleted.
+            The product you&apos;re looking for doesn&apos;t exist or has been
+            deleted.
           </p>
         </div>
         <Button asChild variant='outline'>
@@ -158,8 +165,11 @@ export default function ProductDetailPage({
     );
   }
 
-  // Cast templates from product/get response — they include columns, rows, extra
+  // Cast templates from product/get response
   const productTemplates = (product.templates || []) as TemplateWithDetails[];
+
+  // Extract orderForms from product/get response
+  const orderForms = ((product as any).orderForms || []) as OrderFormMaster[];
 
   return (
     <div className='space-y-6'>
@@ -216,12 +226,19 @@ export default function ProductDetailPage({
         </CardContent>
       </Card>
 
-      {/* Tabs for Templates and other content */}
+      {/* Tabs for Templates and Order Form Master */}
       <Tabs defaultValue='templates' className='space-y-4'>
         <TabsList>
           <TabsTrigger value='templates' className='flex items-center gap-2'>
             <FileText className='h-4 w-4' />
-            Templates
+            Templates ({productTemplates.length})
+          </TabsTrigger>
+          <TabsTrigger
+            value='order-form-master'
+            className='flex items-center gap-2'
+          >
+            <ClipboardList className='h-4 w-4' />
+            Order Form Master ({orderForms.length})
           </TabsTrigger>
         </TabsList>
 
@@ -230,6 +247,14 @@ export default function ProductDetailPage({
             companyId={companyId}
             productId={productId}
             initialTemplates={productTemplates}
+          />
+        </TabsContent>
+
+        <TabsContent value='order-form-master' className='space-y-4'>
+          <OrderFormMasterListing
+            companyId={companyId}
+            productId={productId}
+            initialData={orderForms}
           />
         </TabsContent>
       </Tabs>

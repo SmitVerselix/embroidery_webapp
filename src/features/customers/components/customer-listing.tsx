@@ -210,6 +210,8 @@ export default function CustomerListingPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Reference Code</TableHead>
+              <TableHead>Customer Code</TableHead>
+              <TableHead>Margin</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created At</TableHead>
               <TableHead>Updated At</TableHead>
@@ -226,6 +228,12 @@ export default function CustomerListingPage() {
                   </TableCell>
                   <TableCell>
                     <Skeleton className='h-5 w-20' />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className='h-5 w-20' />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className='h-5 w-16' />
                   </TableCell>
                   <TableCell>
                     <Skeleton className='h-5 w-16' />
@@ -266,6 +274,12 @@ export default function CustomerListingPage() {
                   </TableCell>
                   <TableCell className='text-muted-foreground'>
                     {customer.referenceCode}
+                  </TableCell>
+                  <TableCell className='text-muted-foreground'>
+                    {customer.customerCode}
+                  </TableCell>
+                  <TableCell className='text-muted-foreground'>
+                    {(Number(customer?.margin) || 0).toFixed(2)}%
                   </TableCell>
                   <TableCell>
                     <Badge

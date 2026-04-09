@@ -78,7 +78,14 @@ import type {
   CompanyRoleListResponse,
   CreateCompanyRoleData,
   CompanyRole,
-  UpdateCompanyRoleData
+  UpdateCompanyRoleData,
+  OrderFormMaster,
+  OrderFormMasterListResponse,
+  OrderFormMasterListParams,
+  CreateOrderFormMasterData,
+  UpdateOrderFormMasterData,
+  CreateJobcardOrderData,
+  UpdateJobcardOrderData
 } from './types';
 
 // =============================================================================
@@ -633,6 +640,114 @@ export const reorderExtras = async (
 };
 
 // =============================================================================
+// ORDER FORM MASTER SERVICES
+// =============================================================================
+
+export const getOrderFormMasters = async (
+  companyId: string,
+  productId: string,
+  params?: OrderFormMasterListParams
+): Promise<OrderFormMasterListResponse> => {
+  const defaultParams: OrderFormMasterListParams = {
+    page: 1,
+    limit: 10,
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  const res = await api.post<ApiResponse<OrderFormMasterListResponse>>(
+    ENDPOINTS.ORDER_FORM_MASTER.LIST(companyId, productId),
+    defaultParams
+  );
+
+  return res.data.payload;
+};
+
+export const getOrderFormMaster = async (
+  companyId: string,
+  productId: string,
+  id: string
+): Promise<OrderFormMaster> => {
+  const res = await api.get<ApiResponse<OrderFormMaster>>(
+    ENDPOINTS.ORDER_FORM_MASTER.GET(companyId, productId, id)
+  );
+  return res.data.payload;
+};
+
+export const createOrderFormMaster = async (
+  companyId: string,
+  productId: string,
+  data: CreateOrderFormMasterData
+): Promise<OrderFormMaster> => {
+  const res = await api.post<ApiResponse<OrderFormMaster>>(
+    ENDPOINTS.ORDER_FORM_MASTER.CREATE(companyId, productId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const updateOrderFormMaster = async (
+  companyId: string,
+  productId: string,
+  id: string,
+  data: UpdateOrderFormMasterData
+): Promise<void> => {
+  await api.put<ApiResponse<number[]>>(
+    ENDPOINTS.ORDER_FORM_MASTER.UPDATE(companyId, productId, id),
+    data
+  );
+};
+
+export const deleteOrderFormMaster = async (
+  companyId: string,
+  productId: string,
+  id: string
+): Promise<void> => {
+  await api.delete<ApiResponse<number[]>>(
+    ENDPOINTS.ORDER_FORM_MASTER.DELETE(companyId, productId, id)
+  );
+};
+
+export const reorderOrderFormMasters = async (
+  companyId: string,
+  productId: string,
+  data: { ids: string[] }
+): Promise<void> => {
+  await api.put<ApiResponse<void>>(
+    ENDPOINTS.ORDER_FORM_MASTER.REORDER(companyId, productId),
+    data
+  );
+};
+
+// ==============================================================================
+// ORDER FORM JOBCARD SERVICES
+// ==============================================================================
+
+export const createJobcardOrder = async (
+  companyId: string,
+  data: CreateJobcardOrderData
+): Promise<Order> => {
+  const res = await api.post<ApiResponse<Order>>(
+    ENDPOINTS.ORDER_FORM_JOBCARD.CREATE_JOBCARD_ORDER(companyId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const updateJobcardOrder = async (
+  companyId: string,
+  orderId: string,
+  data: UpdateJobcardOrderData
+): Promise<void> => {
+  await api.post<ApiResponse<void>>(
+    ENDPOINTS.ORDER_FORM_JOBCARD.UPDATE_JOBCARD_ORDER(companyId, orderId),
+    data
+  );
+};
+
+// =============================================================================
 // ORDER SERVICES
 // =============================================================================
 
@@ -646,6 +761,7 @@ export const getOrders = async (
     sortBy: 'createdAt',
     sortOrder: 'DESC',
     search: '',
+    orderType: 'SAMPLE',
     ...params
   };
 

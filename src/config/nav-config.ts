@@ -58,6 +58,21 @@ export const navItems: NavItem[] = [
     ]
   },
   {
+    title: 'Orders Form',
+    url: '/dashboard/[companyId]/orders-form',
+    icon: 'form',
+    items: [
+      {
+        title: 'All Orders Form',
+        url: '/dashboard/[companyId]/orders-form'
+      },
+      {
+        title: 'Add Orders Form',
+        url: '/dashboard/[companyId]/orders-form/new'
+      }
+    ]
+  },
+  {
     title: 'Members',
     url: '/dashboard/[companyId]/members',
     icon: 'users',
