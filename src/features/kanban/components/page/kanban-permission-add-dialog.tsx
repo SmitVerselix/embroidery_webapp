@@ -63,7 +63,8 @@ export default function KanbanPermissionAddDialog({
   // Form fields
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [sectionId, setSectionId] = useState('');
-  const [canViewAllTasks, setCanViewAllTasks] = useState(true);
+  const [canView, setCanView] = useState(false);
+  const [canViewAllTasks, setCanViewAllTasks] = useState(false);
 
   // Member autocomplete — scroll-based pagination
   const [members, setMembers] = useState<Member[]>([]);
@@ -183,7 +184,8 @@ export default function KanbanPermissionAddDialog({
     if (!open) {
       setSelectedMember(null);
       setSectionId('');
-      setCanViewAllTasks(true);
+      setCanView(false);
+      setCanViewAllTasks(false);
       setMemberSearch('');
       setIsDropdownOpen(false);
       setError(null);
@@ -233,6 +235,7 @@ export default function KanbanPermissionAddDialog({
       await createKanbanPermissionUser(companyId, kanbanId, {
         userId: selectedMember.userId,
         sectionId,
+        canView,
         canViewAllTasks
       });
 
@@ -395,6 +398,22 @@ export default function KanbanPermissionAddDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* ── Can View toggle ─────────────────────────────────────────── */}
+          <div className='flex items-center justify-between rounded-lg border p-3'>
+            <div className='space-y-0.5'>
+              <Label htmlFor='add-can-view'>Can View</Label>
+              <p className='text-muted-foreground text-sm'>
+                Allow this user to view the section
+              </p>
+            </div>
+            <Switch
+              id='add-can-view'
+              checked={canView}
+              onCheckedChange={setCanView}
+              disabled={isSubmitting}
+            />
           </div>
 
           {/* ── View All Tasks toggle ────────────────────────────────────── */}

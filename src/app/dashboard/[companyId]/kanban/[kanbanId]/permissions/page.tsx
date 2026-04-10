@@ -1,7 +1,6 @@
 'use client';
-
-import KanbanPermissionUsersPage from '@/features/kanban/components/page/kanban-permission-users-page';
+import KanbanPermissionsPage from '@/features/kanban/components/page/kanban-permissions-page';
 
 export default function PermissionsPage() {
-  return <KanbanPermissionUsersPage />;
+  return <KanbanPermissionsPage />;
 }

@@ -85,7 +85,12 @@ import type {
   CreateOrderFormMasterData,
   UpdateOrderFormMasterData,
   CreateJobcardOrderData,
-  UpdateJobcardOrderData
+  UpdateJobcardOrderData,
+  CreateKanbanPermissionRoleData,
+  KanbanRolePermission,
+  UpdateKanbanPermissionRoleData,
+  KanbanRolePermissionListResponse,
+  KanbanRolePermissionListParams
 } from './types';
 
 // =============================================================================
@@ -1146,6 +1151,71 @@ export const deleteKanbanPermissionUser = async (
 ): Promise<void> => {
   await api.delete<ApiResponse<number[]>>(
     ENDPOINTS.KANBAN.PERMISSION_USER_DELETE(companyId, kanbanId, userListId)
+  );
+};
+
+// =============================================================================
+// KANBAN PERMISSION ROLE SERVICES
+// =============================================================================
+
+export const getKanbanPermissionRoles = async (
+  companyId: string,
+  kanbanId: string,
+  params?: KanbanRolePermissionListParams
+): Promise<KanbanRolePermissionListResponse> => {
+  const payload: Record<string, unknown> = {
+    page: 1,
+    limit: 10,
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  // Remove empty sectionId so backend doesn't filter by empty string
+  if (!payload.sectionId) {
+    delete payload.sectionId;
+  }
+
+  const res = await api.post<ApiResponse<KanbanRolePermissionListResponse>>(
+    ENDPOINTS.KANBAN.PERMISSION_ROLE_LIST(companyId, kanbanId),
+    payload
+  );
+
+  return res.data.payload;
+};
+
+export const createKanbanPermissionRole = async (
+  companyId: string,
+  kanbanId: string,
+  data: CreateKanbanPermissionRoleData
+): Promise<KanbanRolePermission> => {
+  const res = await api.post<ApiResponse<KanbanRolePermission>>(
+    ENDPOINTS.KANBAN.PERMISSION_ROLE_CREATE(companyId, kanbanId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const updateKanbanPermissionRole = async (
+  companyId: string,
+  kanbanId: string,
+  roleListId: string,
+  data: UpdateKanbanPermissionRoleData
+): Promise<void> => {
+  await api.put<ApiResponse<number[]>>(
+    ENDPOINTS.KANBAN.PERMISSION_ROLE_UPDATE(companyId, kanbanId, roleListId),
+    data
+  );
+};
+
+export const deleteKanbanPermissionRole = async (
+  companyId: string,
+  kanbanId: string,
+  roleListId: string
+): Promise<void> => {
+  await api.delete<ApiResponse<number[]>>(
+    ENDPOINTS.KANBAN.PERMISSION_ROLE_DELETE(companyId, kanbanId, roleListId)
   );
 };
 

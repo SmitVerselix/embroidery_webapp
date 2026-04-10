@@ -1260,14 +1260,78 @@ export type KanbanPermissionListParams = {
 
 export type CreateKanbanPermissionUserData = {
   canViewAllTasks: boolean;
+  canView: boolean;
   sectionId: string;
   userId: string;
 };
 
 export type UpdateKanbanPermissionUserData = {
   canViewAllTasks?: boolean;
+  canView?: boolean;
   sectionId?: string;
   userId?: string;
+};
+
+// =============================================================================
+// KANBAN ROLE PERMISSION TYPES
+// =============================================================================
+
+export type KanbanPermissionRole = {
+  id: string;
+  name: string;
+  description?: string | null;
+};
+
+export type KanbanRolePermission = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  companyId: string;
+  boardId: string;
+  sectionId: string;
+  roleId: string;
+  canView: boolean;
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  canMove: boolean;
+  canViewAllTasks: boolean;
+  canAssign?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  role: KanbanPermissionRole;
+  section: KanbanPermissionSection;
+};
+
+export type KanbanRolePermissionListResponse = {
+  count: number;
+  rows: KanbanRolePermission[];
+};
+
+export type KanbanRolePermissionListParams = {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+  sectionId?: string;
+};
+
+export type CreateKanbanPermissionRoleData = {
+  canView: boolean;
+  canViewAllTasks: boolean;
+  sectionId: string;
+  roleId: string;
+};
+
+export type UpdateKanbanPermissionRoleData = {
+  canView?: boolean;
+  canViewAllTasks?: boolean;
+  sectionId?: string;
+  roleId?: string;
 };
 
 // =============================================================================

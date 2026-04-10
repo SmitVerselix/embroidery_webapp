@@ -5,7 +5,6 @@ import { useParams } from 'next/navigation';
 import { useAuth } from '@/providers/auth-provider';
 import {
   getKanbanPermissionUsers,
-  getKanbanSections,
   deleteKanbanPermissionUser
 } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
@@ -61,7 +60,6 @@ import {
   X
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
-import PageContainer from '@/components/layout/page-container';
 import KanbanPermissionAddDialog from './kanban-permission-add-dialog';
 import KanbanPermissionEditDialog from './kanban-permission-edit-dialog';
 
@@ -82,10 +80,20 @@ function PermissionBadge({ allowed }: { allowed: boolean }) {
 }
 
 // =============================================================================
+// PROPS
+// =============================================================================
+
+interface KanbanPermissionUsersTabProps {
+  sections: KanbanSection[];
+}
+
+// =============================================================================
 // COMPONENT
 // =============================================================================
 
-export default function KanbanPermissionUsersPage() {
+export default function KanbanPermissionUsersTab({
+  sections
+}: KanbanPermissionUsersTabProps) {
   const params = useParams();
   const { currentCompany } = useAuth();
 
@@ -95,7 +103,6 @@ export default function KanbanPermissionUsersPage() {
 
   // ── State ──────────────────────────────────────────────────────────────
   const [permissions, setPermissions] = useState<KanbanPermission[]>([]);
-  const [sections, setSections] = useState<KanbanSection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -125,17 +132,6 @@ export default function KanbanPermissionUsersPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // ── Fetch sections (one-time) ──────────────────────────────────────────
-  const fetchSections = useCallback(async () => {
-    if (!companyId || !kanbanId) return;
-    try {
-      const data = await getKanbanSections(companyId, kanbanId);
-      setSections(data);
-    } catch (err) {
-      console.error('Failed to fetch sections:', getError(err));
-    }
-  }, [companyId, kanbanId]);
-
   // ── Fetch permissions ──────────────────────────────────────────────────
   const fetchPermissions = useCallback(async () => {
     if (!companyId || !kanbanId) return;
@@ -161,10 +157,6 @@ export default function KanbanPermissionUsersPage() {
       setIsLoading(false);
     }
   }, [companyId, kanbanId, page, limit, debouncedSearch, selectedSectionId]);
-
-  useEffect(() => {
-    fetchSections();
-  }, [fetchSections]);
 
   useEffect(() => {
     fetchPermissions();
@@ -227,27 +219,10 @@ export default function KanbanPermissionUsersPage() {
   const canGoPrevious = page > 1;
   const canGoNext = page < totalPages;
 
-  if (!companyId || !kanbanId) {
-    return (
-      <div className='flex items-center justify-center py-10'>
-        <p className='text-muted-foreground'>No board selected</p>
-      </div>
-    );
-  }
-
   return (
-    <PageContainer
-      pageTitle='User Permissions'
-      pageDescription='Manage user access and permissions for this board.'
-      pageHeaderAction={
-        <Button onClick={() => setShowAddDialog(true)}>
-          <Plus className='mr-2 h-4 w-4' />
-          Add User Permission
-        </Button>
-      }
-    >
+    <>
       <div className='flex flex-col gap-4'>
-        {/* ── Filters ───────────────────────────────────────────────────── */}
+        {/* ── Toolbar (filters + add) ───────────────────────────────────── */}
         <div className='flex flex-col gap-3 sm:flex-row sm:items-center'>
           <div className='relative max-w-sm flex-1'>
             <Search className='text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2' />
@@ -277,6 +252,13 @@ export default function KanbanPermissionUsersPage() {
               ))}
             </SelectContent>
           </Select>
+
+          <div className='sm:ml-auto'>
+            <Button onClick={() => setShowAddDialog(true)}>
+              <Plus className='mr-2 h-4 w-4' />
+              Add User Permission
+            </Button>
+          </div>
         </div>
 
         {/* Error */}
@@ -533,6 +515,6 @@ export default function KanbanPermissionUsersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </PageContainer>
+    </>
   );
 }

@@ -1,4 +1,3 @@
-import { Task } from '../utils/store';
 import { useDndContext, type UniqueIdentifier } from '@dnd-kit/core';
 import { SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -9,7 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { ColumnActions } from './column-action';
 import { TaskCard } from './task-card';
+import NewTaskDialog from './new-task-dialog';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import type { KanbanTask } from '@/hooks/use-kanban-socket';
 
 export interface Column {
   id: UniqueIdentifier;
@@ -25,10 +26,12 @@ export interface ColumnDragData {
 
 interface BoardColumnProps {
   column: Column;
-  tasks: Task[];
+  tasks: KanbanTask[];
   isOverlay?: boolean;
   onRenameSection?: (sectionId: string, newName: string) => void;
   onDeleteSection?: (sectionId: string) => void;
+  onCreateTask?: (title: string, description?: string) => void;
+  isConnected?: boolean;
 }
 
 export function BoardColumn({
@@ -36,7 +39,9 @@ export function BoardColumn({
   tasks,
   isOverlay,
   onRenameSection,
-  onDeleteSection
+  onDeleteSection,
+  onCreateTask,
+  isConnected = true
 }: BoardColumnProps) {
   const tasksIds = useMemo(() => {
     return tasks.map((task) => task.id);
@@ -103,7 +108,7 @@ export function BoardColumn({
           onDeleteSection={onDeleteSection}
         />
       </CardHeader>
-      <CardContent className='flex grow flex-col gap-4 overflow-x-hidden p-2'>
+      <CardContent className='flex grow flex-col gap-2 overflow-x-hidden p-2'>
         <ScrollArea className='h-full'>
           <SortableContext items={tasksIds}>
             {tasks.map((task) => (
@@ -111,6 +116,16 @@ export function BoardColumn({
             ))}
           </SortableContext>
         </ScrollArea>
+
+        {/* Per-column "add task" trigger */}
+        {onCreateTask && (
+          <div className='pt-2'>
+            <NewTaskDialog
+              onCreateTask={onCreateTask}
+              isConnected={isConnected}
+            />
+          </div>
+        )}
       </CardContent>
     </Card>
   );

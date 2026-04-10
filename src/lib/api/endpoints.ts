@@ -245,6 +245,8 @@ export const ENDPOINTS = {
       `${API_PREFIX}/user/${companyId}/kanban/delete/${kanbanId}`,
     SECTION_LIST: (companyId: string, kanbanId: string) =>
       `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/section/get-all`,
+
+    // ── User permissions ────────────────────────────────────────────
     PERMISSION_USER_LIST: (companyId: string, kanbanId: string) =>
       `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/user/list`,
     PERMISSION_USER_CREATE: (companyId: string, kanbanId: string) =>
@@ -260,7 +262,25 @@ export const ENDPOINTS = {
       kanbanId: string,
       userListId: string
     ) =>
-      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/user/delete/${userListId}`
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/user/delete/${userListId}`,
+
+    // ── Role permissions ────────────────────────────────────────────
+    PERMISSION_ROLE_LIST: (companyId: string, kanbanId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/role/list`,
+    PERMISSION_ROLE_CREATE: (companyId: string, kanbanId: string) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/role/create`,
+    PERMISSION_ROLE_UPDATE: (
+      companyId: string,
+      kanbanId: string,
+      roleListId: string
+    ) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/role/update/${roleListId}`,
+    PERMISSION_ROLE_DELETE: (
+      companyId: string,
+      kanbanId: string,
+      roleListId: string
+    ) =>
+      `${API_PREFIX}/user/${companyId}/kanban/${kanbanId}/permission/role/delete/${roleListId}`
   },
 
   // Company Role endpoints (company-scoped)
@@ -330,6 +350,8 @@ export const QUERY_KEYS = {
     ['kanban-sections', companyId, kanbanId] as const,
   KANBAN_PERMISSIONS: (companyId: string, kanbanId: string) =>
     ['kanban-permissions', companyId, kanbanId] as const,
+  KANBAN_ROLE_PERMISSIONS: (companyId: string, kanbanId: string) =>
+    ['kanban-role-permissions', companyId, kanbanId] as const,
   COMPANY_ROLES: (companyId: string) => ['company-roles', companyId] as const,
   LOGIN_HISTORY: ['login-history'] as const
 } as const;

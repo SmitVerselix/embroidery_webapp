@@ -5,9 +5,9 @@ import { io, Socket } from 'socket.io-client';
 // =============================================================================
 
 const SOCKET_URL =
-  process.env.NEXT_PUBLIC_SOCKET_URL || 'https://embroidery-backend-zkey.onrender.com';
+  process.env.NEXT_PUBLIC_SOCKET_URL ||
+  'https://embroidery-backend-zkey.onrender.com';
 // 'https://unadventuring-dumpishly-song.ngrok-free.dev';
-('https://embroidery-backend-zkey.onrender.com');
 
 // =============================================================================
 // SOCKET SINGLETON

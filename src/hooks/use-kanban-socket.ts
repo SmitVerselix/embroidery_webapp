@@ -5,7 +5,7 @@ import { Socket } from 'socket.io-client';
 import { connectSocket, destroySocket } from '@/lib/socket';
 
 // =============================================================================
-// TYPES
+// TYPES — SECTION
 // =============================================================================
 
 export interface KanbanSection {
@@ -99,6 +99,119 @@ export interface SectionListPayload {
 }
 
 // =============================================================================
+// TYPES — TASK
+// =============================================================================
+
+export interface TaskAssignee {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  taskId: string;
+  userId: string;
+  assignee: string;
+  assignedAt: string | null;
+  unassignedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assigne?: {
+    id: string;
+    name: string;
+    email: string;
+    profileImage?: string | null;
+  } | null;
+}
+
+export interface KanbanTask {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  companyId: string;
+  boardId: string;
+  sectionId: string;
+  title: string;
+  description: string | null;
+  metadata: unknown | null;
+  priority: string | null;
+  status: string;
+  position: number | null;
+  taskNo: number;
+  dueDate: string | null;
+  creatorId: string;
+  currentAssignedTo: string | null;
+  createdAt: string;
+  updatedAt: string;
+  userId: string | null;
+  assignees?: TaskAssignee[];
+  [key: string]: unknown;
+}
+
+export interface TaskListResponse {
+  success: boolean;
+  message?: string;
+  payload?: KanbanTask[];
+  error?: string;
+}
+
+export interface TaskResponse {
+  success: boolean;
+  message?: string;
+  payload?: KanbanTask;
+  error?: string;
+}
+
+export interface TaskListPayload {
+  boardId: string;
+  companyId: string;
+  sectionId: string;
+}
+
+// ── Stub payloads for events you'll provide later ──────────────────────
+// These are best guesses based on the section pattern; adjust when your
+// backend specs arrive.
+
+export interface TaskCreatePayload {
+  boardId: string;
+  companyId: string;
+  sectionId: string;
+  title: string;
+  description?: string;
+  priority?: string;
+  dueDate?: string;
+}
+
+export interface TaskGetPayload {
+  boardId: string;
+  companyId: string;
+  taskId: string;
+}
+
+export interface TaskAssignPayload {
+  boardId: string;
+  companyId: string;
+  taskId: string;
+  userId: string;
+}
+
+export interface TaskMovePayload {
+  boardId: string;
+  companyId: string;
+  taskId: string;
+  toSectionId: string;
+}
+
+export interface TaskActivityListPayload {
+  boardId: string;
+  companyId: string;
+  taskId: string;
+}
+
+// =============================================================================
 // SOCKET EVENT NAMES
 // =============================================================================
 
@@ -110,6 +223,7 @@ export const KANBAN_EVENTS = {
   // ── Section CRUD ───────────────────────────────────────────────────────
   SECTION_CREATE: 'section:create',
   SECTION_CREATE_RESPONSE: 'section:create:response',
+  SECTION_CREATED: 'section:created',
 
   SECTION_LIST: 'section:list',
   SECTION_LIST_RESPONSE: 'section:list:response',
@@ -119,9 +233,33 @@ export const KANBAN_EVENTS = {
 
   SECTION_UPDATE: 'section:update',
   SECTION_UPDATE_RESPONSE: 'section:update:response',
+  SECTION_UPDATED: 'section:updated',
 
   SECTION_DELETE: 'section:delete',
-  SECTION_DELETE_RESPONSE: 'section:delete:response'
+  SECTION_DELETE_RESPONSE: 'section:delete:response',
+  SECTION_DELETED: 'section:deleted',
+
+  // ── Task CRUD ──────────────────────────────────────────────────────────
+  TASK_LIST: 'task:list',
+  TASK_LIST_RESPONSE: 'task:list:response',
+
+  TASK_GET: 'task:get',
+  TASK_GET_RESPONSE: 'task:get:response',
+
+  TASK_CREATE: 'task:create',
+  TASK_CREATE_RESPONSE: 'task:create:response',
+  TASK_CREATED: 'task:created',
+
+  TASK_ASSIGN: 'task:assign',
+  TASK_ASSIGN_RESPONSE: 'task:assign:response',
+  TASK_ASSIGND: 'task:assignd',
+
+  TASK_MOVE: 'task:move',
+  TASK_MOVE_RESPONSE: 'task:move:response',
+  TASK_MOVED: 'task:moved',
+
+  TASK_ACTIVITY_LIST: 'task:activity:list',
+  TASK_ACTIVITY_LIST_RESPONSE: 'task:activity:list:response'
 } as const;
 
 // =============================================================================
@@ -136,6 +274,10 @@ interface UseKanbanSocketOptions {
   onSectionUpdated?: (section: KanbanSection) => void;
   onSectionDeleted?: (section: KanbanSection) => void;
   onSectionsListed?: (sections: KanbanSection[]) => void;
+  onTasksListed?: (tasks: KanbanTask[], sectionId: string) => void;
+  onTaskCreated?: (task: KanbanTask) => void;
+  onTaskUpdated?: (task: KanbanTask) => void;
+  onTaskMoved?: (task: KanbanTask) => void;
   onBoardEvent?: (data: unknown) => void;
   onError?: (error: string) => void;
 }
@@ -152,6 +294,10 @@ export function useKanbanSocket({
   onSectionUpdated,
   onSectionDeleted,
   onSectionsListed,
+  onTasksListed,
+  onTaskCreated,
+  onTaskUpdated,
+  onTaskMoved,
   onBoardEvent,
   onError
 }: UseKanbanSocketOptions) {
@@ -160,12 +306,22 @@ export function useKanbanSocket({
   const [isJoined, setIsJoined] = useState(false);
   const [boardData, setBoardData] = useState<KanbanBoardData | null>(null);
   const [sections, setSections] = useState<KanbanSection[]>([]);
-  const sectionsRef = useRef<KanbanSection[]>([]);
+  const [tasks, setTasks] = useState<KanbanTask[]>([]);
 
-  // Keep sectionsRef in sync with state
+  const sectionsRef = useRef<KanbanSection[]>([]);
+  const tasksRef = useRef<KanbanTask[]>([]);
+
+  // Queue of pending task:list requests so we can associate empty
+  // responses back with the section they were requested for.
+  const pendingTaskListRef = useRef<string[]>([]);
+
   useEffect(() => {
     sectionsRef.current = sections;
   }, [sections]);
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   // Stable callback refs
   const onBoardJoinedRef = useRef(onBoardJoined);
@@ -173,6 +329,10 @@ export function useKanbanSocket({
   const onSectionUpdatedRef = useRef(onSectionUpdated);
   const onSectionDeletedRef = useRef(onSectionDeleted);
   const onSectionsListedRef = useRef(onSectionsListed);
+  const onTasksListedRef = useRef(onTasksListed);
+  const onTaskCreatedRef = useRef(onTaskCreated);
+  const onTaskUpdatedRef = useRef(onTaskUpdated);
+  const onTaskMovedRef = useRef(onTaskMoved);
   const onBoardEventRef = useRef(onBoardEvent);
   const onErrorRef = useRef(onError);
 
@@ -192,19 +352,46 @@ export function useKanbanSocket({
     onSectionsListedRef.current = onSectionsListed;
   }, [onSectionsListed]);
   useEffect(() => {
+    onTasksListedRef.current = onTasksListed;
+  }, [onTasksListed]);
+  useEffect(() => {
+    onTaskCreatedRef.current = onTaskCreated;
+  }, [onTaskCreated]);
+  useEffect(() => {
+    onTaskUpdatedRef.current = onTaskUpdated;
+  }, [onTaskUpdated]);
+  useEffect(() => {
+    onTaskMovedRef.current = onTaskMoved;
+  }, [onTaskMoved]);
+  useEffect(() => {
     onBoardEventRef.current = onBoardEvent;
   }, [onBoardEvent]);
   useEffect(() => {
     onErrorRef.current = onError;
   }, [onError]);
 
-  // ── Connect, join board, and subscribe to all events ───────────────────
+  // ── Helper: fetch tasks for a list of sections ─────────────────────────
+  const fetchTasksForSections = (
+    socket: Socket,
+    sectionsToFetch: KanbanSection[]
+  ) => {
+    sectionsToFetch.forEach((section) => {
+      const payload: TaskListPayload = {
+        boardId,
+        companyId,
+        sectionId: section.id
+      };
+      pendingTaskListRef.current.push(section.id);
+      console.log('[KanbanSocket] Emitting task:list for', section.id);
+      socket.emit(KANBAN_EVENTS.TASK_LIST, payload);
+    });
+  };
+
+  // ── Connect, join board, subscribe to all events ───────────────────────
   useEffect(() => {
     if (!boardId || !companyId) return;
 
     const boardChannel = `board-${boardId}`;
-
-    // 1️⃣  Connect socket
     const socket = connectSocket();
     socketRef.current = socket;
 
@@ -212,8 +399,6 @@ export function useKanbanSocket({
     const handleConnect = () => {
       console.log('[KanbanSocket] Connected:', socket.id);
       setIsConnected(true);
-
-      // Emit kanban:join as soon as connected
       console.log('[KanbanSocket] Emitting kanban:join', {
         boardId,
         companyId
@@ -235,14 +420,15 @@ export function useKanbanSocket({
         setIsJoined(true);
         setBoardData(data.payload);
 
-        // If the join response includes sections, populate them
+        // If join response includes sections, populate them and fetch tasks
         if (data.payload.sections && Array.isArray(data.payload.sections)) {
           setSections(data.payload.sections);
+          fetchTasksForSections(socket, data.payload.sections);
         }
 
         onBoardJoinedRef.current?.(data.payload);
 
-        // Also fetch sections explicitly after joining
+        // Also explicitly fetch the sections list (server of truth)
         console.log('[KanbanSocket] Emitting section:list after join');
         socket.emit(KANBAN_EVENTS.SECTION_LIST, { boardId, companyId });
       } else {
@@ -277,6 +463,9 @@ export function useKanbanSocket({
       if (data.success && data.payload) {
         setSections(data.payload);
         onSectionsListedRef.current?.(data.payload);
+
+        // Auto-fetch tasks for every section
+        fetchTasksForSections(socket, data.payload);
       } else {
         const msg = data.error || data.message || 'Failed to list sections';
         console.error('[KanbanSocket] section:list:response error:', msg);
@@ -308,11 +497,117 @@ export function useKanbanSocket({
       if (data.success && data.payload) {
         const deleted = data.payload;
         setSections((prev) => prev.filter((s) => s.id !== deleted.id));
+        // Also drop any tasks that belonged to it
+        setTasks((prev) => prev.filter((t) => t.sectionId !== deleted.id));
         onSectionDeletedRef.current?.(deleted);
       } else {
         const msg = data.error || data.message || 'Failed to delete section';
         console.error('[KanbanSocket] section:delete:response error:', msg);
         onErrorRef.current?.(msg);
+      }
+    };
+
+    // ── 📋 task:list:response ───────────────────────────────────────
+    const handleTaskListResponse = (data: TaskListResponse) => {
+      console.log('[KanbanSocket] task:list:response', data);
+
+      // Always shift off the queue so it stays in sync with emits.
+      const queuedSectionId = pendingTaskListRef.current.shift();
+
+      if (data.success && Array.isArray(data.payload)) {
+        const tasksFromResp = data.payload;
+
+        // Prefer sectionId from the payload; fall back to the queue
+        // (needed when the response is an empty array).
+        const sectionId =
+          tasksFromResp[0]?.sectionId ?? queuedSectionId ?? null;
+
+        if (!sectionId) {
+          console.warn(
+            '[KanbanSocket] task:list:response — unable to determine sectionId'
+          );
+          return;
+        }
+
+        // Replace all tasks for this section with the fresh list
+        setTasks((prev) => [
+          ...prev.filter((t) => t.sectionId !== sectionId),
+          ...tasksFromResp
+        ]);
+
+        onTasksListedRef.current?.(tasksFromResp, sectionId);
+      } else {
+        const msg = data.error || data.message || 'Failed to list tasks';
+        console.error('[KanbanSocket] task:list:response error:', msg);
+        onErrorRef.current?.(msg);
+      }
+    };
+
+    // ── ➕ task:create:response ────────────────────────────────────
+    // TODO: confirm payload shape against backend spec
+    const handleTaskCreateResponse = (data: TaskResponse) => {
+      console.log('[KanbanSocket] task:create:response', data);
+
+      if (data.success && data.payload) {
+        const task = data.payload;
+        setTasks((prev) => {
+          if (prev.some((t) => t.id === task.id)) return prev;
+          return [...prev, task];
+        });
+        onTaskCreatedRef.current?.(task);
+      } else {
+        const msg = data.error || data.message || 'Failed to create task';
+        console.error('[KanbanSocket] task:create:response error:', msg);
+        onErrorRef.current?.(msg);
+      }
+    };
+
+    // ── 🔄 task:move:response ──────────────────────────────────────
+    // TODO: confirm payload shape against backend spec
+    const handleTaskMoveResponse = (data: TaskResponse) => {
+      console.log('[KanbanSocket] task:move:response', data);
+
+      if (data.success && data.payload) {
+        const moved = data.payload;
+        setTasks((prev) => prev.map((t) => (t.id === moved.id ? moved : t)));
+        onTaskMovedRef.current?.(moved);
+      } else {
+        const msg = data.error || data.message || 'Failed to move task';
+        console.error('[KanbanSocket] task:move:response error:', msg);
+        onErrorRef.current?.(msg);
+      }
+    };
+
+    // ── 👤 task:assign:response ────────────────────────────────────
+    // TODO: confirm payload shape against backend spec
+    const handleTaskAssignResponse = (data: TaskResponse) => {
+      console.log('[KanbanSocket] task:assign:response', data);
+
+      if (data.success && data.payload) {
+        const updated = data.payload;
+        setTasks((prev) =>
+          prev.map((t) => (t.id === updated.id ? updated : t))
+        );
+        onTaskUpdatedRef.current?.(updated);
+      } else {
+        const msg = data.error || data.message || 'Failed to assign task';
+        console.error('[KanbanSocket] task:assign:response error:', msg);
+        onErrorRef.current?.(msg);
+      }
+    };
+
+    // ── 🔍 task:get:response ───────────────────────────────────────
+    // TODO: confirm payload shape against backend spec
+    const handleTaskGetResponse = (data: TaskResponse) => {
+      console.log('[KanbanSocket] task:get:response', data);
+
+      if (data.success && data.payload) {
+        const task = data.payload;
+        setTasks((prev) => {
+          const exists = prev.some((t) => t.id === task.id);
+          if (exists) return prev.map((t) => (t.id === task.id ? task : t));
+          return [...prev, task];
+        });
       }
     };
 
@@ -326,19 +621,33 @@ export function useKanbanSocket({
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on(KANBAN_EVENTS.JOIN_RESPONSE, handleJoinResponse);
+
     socket.on(
       KANBAN_EVENTS.SECTION_CREATE_RESPONSE,
       handleSectionCreateResponse
     );
+    socket.on(KANBAN_EVENTS.SECTION_CREATED, handleSectionCreateResponse);
     socket.on(KANBAN_EVENTS.SECTION_LIST_RESPONSE, handleSectionListResponse);
     socket.on(
       KANBAN_EVENTS.SECTION_UPDATE_RESPONSE,
       handleSectionUpdateResponse
     );
+    socket.on(KANBAN_EVENTS.SECTION_UPDATED, handleSectionUpdateResponse);
     socket.on(
       KANBAN_EVENTS.SECTION_DELETE_RESPONSE,
       handleSectionDeleteResponse
     );
+    socket.on(KANBAN_EVENTS.SECTION_DELETED, handleSectionDeleteResponse);
+
+    socket.on(KANBAN_EVENTS.TASK_LIST_RESPONSE, handleTaskListResponse);
+    socket.on(KANBAN_EVENTS.TASK_CREATE_RESPONSE, handleTaskCreateResponse);
+    socket.on(KANBAN_EVENTS.TASK_CREATED, handleTaskCreateResponse);
+    socket.on(KANBAN_EVENTS.TASK_MOVE_RESPONSE, handleTaskMoveResponse);
+    socket.on(KANBAN_EVENTS.TASK_MOVED, handleTaskMoveResponse);
+    socket.on(KANBAN_EVENTS.TASK_ASSIGN_RESPONSE, handleTaskAssignResponse);
+    socket.on(KANBAN_EVENTS.TASK_ASSIGND, handleTaskAssignResponse);
+    socket.on(KANBAN_EVENTS.TASK_GET_RESPONSE, handleTaskGetResponse);
+
     socket.on(boardChannel, handleBoardChannel);
 
     // If already connected (reconnect scenario), emit join immediately
@@ -348,23 +657,23 @@ export function useKanbanSocket({
       socket.emit(KANBAN_EVENTS.JOIN, { boardId, companyId });
     }
 
-    // 2️⃣  Handle page refresh — clean disconnect before unload
     const handleBeforeUnload = () => {
       destroySocket();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
 
-    // 3️⃣  Cleanup — navigate away or boardId/companyId changes
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
 
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off(KANBAN_EVENTS.JOIN_RESPONSE, handleJoinResponse);
+
       socket.off(
         KANBAN_EVENTS.SECTION_CREATE_RESPONSE,
         handleSectionCreateResponse
       );
+      socket.off(KANBAN_EVENTS.SECTION_CREATED, handleSectionCreateResponse);
       socket.off(
         KANBAN_EVENTS.SECTION_LIST_RESPONSE,
         handleSectionListResponse
@@ -373,33 +682,46 @@ export function useKanbanSocket({
         KANBAN_EVENTS.SECTION_UPDATE_RESPONSE,
         handleSectionUpdateResponse
       );
+      socket.off(KANBAN_EVENTS.SECTION_UPDATED, handleSectionUpdateResponse);
       socket.off(
         KANBAN_EVENTS.SECTION_DELETE_RESPONSE,
         handleSectionDeleteResponse
       );
+      socket.off(KANBAN_EVENTS.SECTION_DELETED, handleSectionDeleteResponse);
+
+      socket.off(KANBAN_EVENTS.TASK_LIST_RESPONSE, handleTaskListResponse);
+      socket.off(KANBAN_EVENTS.TASK_CREATE_RESPONSE, handleTaskCreateResponse);
+      socket.off(KANBAN_EVENTS.TASK_CREATED, handleTaskCreateResponse);
+      socket.off(KANBAN_EVENTS.TASK_MOVE_RESPONSE, handleTaskMoveResponse);
+      socket.off(KANBAN_EVENTS.TASK_MOVED, handleTaskMoveResponse);
+      socket.off(KANBAN_EVENTS.TASK_ASSIGN_RESPONSE, handleTaskAssignResponse);
+      socket.off(KANBAN_EVENTS.TASK_ASSIGND, handleTaskAssignResponse);
+      socket.off(KANBAN_EVENTS.TASK_GET_RESPONSE, handleTaskGetResponse);
+
       socket.off(boardChannel, handleBoardChannel);
 
       destroySocket();
 
       socketRef.current = null;
+      pendingTaskListRef.current = [];
       setIsConnected(false);
       setIsJoined(false);
     };
   }, [boardId, companyId]);
 
-  // ── Emit: create section ───────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────
+  // EMITTERS — SECTION
+  // ───────────────────────────────────────────────────────────────────────
+
   const createSection = useCallback(
     (name: string) => {
       const socket = socketRef.current;
       if (!socket?.connected) {
-        console.warn('[KanbanSocket] Cannot emit — not connected');
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
 
-      // Position = current count + 1
       const position = sectionsRef.current.length + 1;
-
       const payload: SectionCreatePayload = {
         boardId,
         companyId,
@@ -412,11 +734,9 @@ export function useKanbanSocket({
     [boardId, companyId]
   );
 
-  // ── Emit: list sections ────────────────────────────────────────────────
   const listSections = useCallback(() => {
     const socket = socketRef.current;
     if (!socket?.connected) {
-      console.warn('[KanbanSocket] Cannot emit — not connected');
       onErrorRef.current?.('Socket not connected. Please try again.');
       return;
     }
@@ -426,17 +746,14 @@ export function useKanbanSocket({
     socket.emit(KANBAN_EVENTS.SECTION_LIST, payload);
   }, [boardId, companyId]);
 
-  // ── Emit: update section ───────────────────────────────────────────────
   const updateSection = useCallback(
     (sectionId: string, updates: { name?: string; position?: number }) => {
       const socket = socketRef.current;
       if (!socket?.connected) {
-        console.warn('[KanbanSocket] Cannot emit — not connected');
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
 
-      // If position is not explicitly provided, look up the section's current position
       let position = updates.position;
       if (position === undefined) {
         const existing = sectionsRef.current.find((s) => s.id === sectionId);
@@ -456,12 +773,10 @@ export function useKanbanSocket({
     [boardId, companyId]
   );
 
-  // ── Emit: delete section ───────────────────────────────────────────────
   const deleteSection = useCallback(
     (sectionId: string) => {
       const socket = socketRef.current;
       if (!socket?.connected) {
-        console.warn('[KanbanSocket] Cannot emit — not connected');
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
@@ -473,12 +788,10 @@ export function useKanbanSocket({
     [boardId, companyId]
   );
 
-  // ── Emit: get section by id ────────────────────────────────────────────
   const getSection = useCallback(
     (sectionId: string) => {
       const socket = socketRef.current;
       if (!socket?.connected) {
-        console.warn('[KanbanSocket] Cannot emit — not connected');
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
@@ -490,22 +803,177 @@ export function useKanbanSocket({
     [boardId, companyId]
   );
 
-  // ── Reset ──────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────
+  // EMITTERS — TASK
+  // ───────────────────────────────────────────────────────────────────────
+
+  /** List tasks for a specific section. */
+  const listTasks = useCallback(
+    (sectionId: string) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) {
+        onErrorRef.current?.('Socket not connected. Please try again.');
+        return;
+      }
+
+      const payload: TaskListPayload = { boardId, companyId, sectionId };
+      pendingTaskListRef.current.push(sectionId);
+      console.log('[KanbanSocket] Emitting task:list', payload);
+      socket.emit(KANBAN_EVENTS.TASK_LIST, payload);
+    },
+    [boardId, companyId]
+  );
+
+  /** Re-fetch tasks for every section currently known. */
+  const refreshAllTasks = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    fetchTasksForSections(socket, sectionsRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardId, companyId]);
+
+  /**
+   * STUB — create a task. Backend payload/response shape not yet confirmed.
+   * Adjust once the `task:create` event spec is provided.
+   */
+  const createTask = useCallback(
+    (input: {
+      sectionId: string;
+      title: string;
+      description?: string;
+      priority?: string;
+      dueDate?: string;
+    }) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) {
+        onErrorRef.current?.('Socket not connected. Please try again.');
+        return;
+      }
+
+      const payload: TaskCreatePayload = {
+        boardId,
+        companyId,
+        ...input
+      };
+      console.log('[KanbanSocket] Emitting task:create (STUB)', payload);
+      socket.emit(KANBAN_EVENTS.TASK_CREATE, payload);
+    },
+    [boardId, companyId]
+  );
+
+  /**
+   * STUB — move a task to another section. Also used for drag-and-drop
+   * between columns.
+   */
+  const moveTask = useCallback(
+    (taskId: string, toSectionId: string) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) {
+        onErrorRef.current?.('Socket not connected. Please try again.');
+        return;
+      }
+
+      const payload: TaskMovePayload = {
+        boardId,
+        companyId,
+        taskId,
+        toSectionId
+      };
+      console.log('[KanbanSocket] Emitting task:move (STUB)', payload);
+      socket.emit(KANBAN_EVENTS.TASK_MOVE, payload);
+    },
+    [boardId, companyId]
+  );
+
+  /** STUB — assign a user to a task. */
+  const assignTask = useCallback(
+    (taskId: string, userId: string) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) {
+        onErrorRef.current?.('Socket not connected. Please try again.');
+        return;
+      }
+
+      const payload: TaskAssignPayload = {
+        boardId,
+        companyId,
+        taskId,
+        userId
+      };
+      console.log('[KanbanSocket] Emitting task:assign (STUB)', payload);
+      socket.emit(KANBAN_EVENTS.TASK_ASSIGN, payload);
+    },
+    [boardId, companyId]
+  );
+
+  /** STUB — fetch a single task by id. */
+  const getTask = useCallback(
+    (taskId: string) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) {
+        onErrorRef.current?.('Socket not connected. Please try again.');
+        return;
+      }
+
+      const payload: TaskGetPayload = { boardId, companyId, taskId };
+      console.log('[KanbanSocket] Emitting task:get (STUB)', payload);
+      socket.emit(KANBAN_EVENTS.TASK_GET, payload);
+    },
+    [boardId, companyId]
+  );
+
+  /** STUB — fetch the activity log for a task. */
+  const listTaskActivity = useCallback(
+    (taskId: string) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) {
+        onErrorRef.current?.('Socket not connected. Please try again.');
+        return;
+      }
+
+      const payload: TaskActivityListPayload = {
+        boardId,
+        companyId,
+        taskId
+      };
+      console.log('[KanbanSocket] Emitting task:activity:list (STUB)', payload);
+      socket.emit(KANBAN_EVENTS.TASK_ACTIVITY_LIST, payload);
+    },
+    [boardId, companyId]
+  );
+
   const resetSections = useCallback(() => {
     setSections([]);
+    setTasks([]);
   }, []);
 
   return {
+    // state
     isConnected,
     isJoined,
     boardData,
     sections,
     setSections,
+    tasks,
+    setTasks,
+
+    // section emitters
     createSection,
     listSections,
     updateSection,
     deleteSection,
     getSection,
+
+    // task emitters
+    listTasks,
+    refreshAllTasks,
+    createTask,
+    moveTask,
+    assignTask,
+    getTask,
+    listTaskActivity,
+
+    // misc
     resetSections,
     socket: socketRef.current
   };
