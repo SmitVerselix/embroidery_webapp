@@ -98,6 +98,12 @@ export interface SectionListPayload {
   companyId: string;
 }
 
+export interface SectionReorderPayload {
+  sectionIds: string[];
+  boardId: string;
+  companyId: string;
+}
+
 // =============================================================================
 // TYPES — TASK
 // =============================================================================
@@ -239,6 +245,10 @@ export const KANBAN_EVENTS = {
   SECTION_DELETE_RESPONSE: 'section:delete:response',
   SECTION_DELETED: 'section:deleted',
 
+  SECTION_REORDER: 'section:reorder',
+  SECTION_REORDER_RESPONSE: 'section:reorder:response',
+  SECTION_REORDERD: 'section:reorderd',
+
   // ── Task CRUD ──────────────────────────────────────────────────────────
   TASK_LIST: 'task:list',
   TASK_LIST_RESPONSE: 'task:list:response',
@@ -274,6 +284,7 @@ interface UseKanbanSocketOptions {
   onSectionUpdated?: (section: KanbanSection) => void;
   onSectionDeleted?: (section: KanbanSection) => void;
   onSectionsListed?: (sections: KanbanSection[]) => void;
+  onSectionsReordered?: (sections: KanbanSection[], message: string) => void;
   onTasksListed?: (tasks: KanbanTask[], sectionId: string) => void;
   onTaskCreated?: (task: KanbanTask) => void;
   onTaskUpdated?: (task: KanbanTask) => void;
@@ -294,6 +305,7 @@ export function useKanbanSocket({
   onSectionUpdated,
   onSectionDeleted,
   onSectionsListed,
+  onSectionsReordered,
   onTasksListed,
   onTaskCreated,
   onTaskUpdated,
@@ -329,6 +341,7 @@ export function useKanbanSocket({
   const onSectionUpdatedRef = useRef(onSectionUpdated);
   const onSectionDeletedRef = useRef(onSectionDeleted);
   const onSectionsListedRef = useRef(onSectionsListed);
+  const onSectionsReorderedRef = useRef(onSectionsReordered);
   const onTasksListedRef = useRef(onTasksListed);
   const onTaskCreatedRef = useRef(onTaskCreated);
   const onTaskUpdatedRef = useRef(onTaskUpdated);
@@ -351,6 +364,9 @@ export function useKanbanSocket({
   useEffect(() => {
     onSectionsListedRef.current = onSectionsListed;
   }, [onSectionsListed]);
+  useEffect(() => {
+    onSectionsReorderedRef.current = onSectionsReordered;
+  }, [onSectionsReordered]);
   useEffect(() => {
     onTasksListedRef.current = onTasksListed;
   }, [onTasksListed]);
@@ -507,6 +523,31 @@ export function useKanbanSocket({
       }
     };
 
+    // ── 🔀 section:reorder:response ─────────────────────────────────
+    const handleSectionReorderResponse = (data: SectionListResponse) => {
+      console.log('[KanbanSocket] section:reorder:response', data);
+
+      if (data.success) {
+        // Fire the success callback with the server message so the
+        // view layer can display it in a toast.
+        const successMsg = data.message || 'Sections reordered successfully';
+        onSectionsReorderedRef.current?.(
+          Array.isArray(data.payload) ? data.payload : sectionsRef.current,
+          successMsg
+        );
+
+        // Always re-fetch the authoritative section list from the server
+        // so local state stays perfectly in sync after the reorder.
+        socket.emit(KANBAN_EVENTS.SECTION_LIST, { boardId, companyId });
+      } else {
+        const msg = data.error || data.message || 'Failed to reorder sections';
+        console.error('[KanbanSocket] section:reorder:response error:', msg);
+        onErrorRef.current?.(msg);
+        // Reorder failed — re-fetch to restore the real server order.
+        socket.emit(KANBAN_EVENTS.SECTION_LIST, { boardId, companyId });
+      }
+    };
+
     // ── 📋 task:list:response ───────────────────────────────────────
     const handleTaskListResponse = (data: TaskListResponse) => {
       console.log('[KanbanSocket] task:list:response', data);
@@ -544,7 +585,6 @@ export function useKanbanSocket({
     };
 
     // ── ➕ task:create:response ────────────────────────────────────
-    // TODO: confirm payload shape against backend spec
     const handleTaskCreateResponse = (data: TaskResponse) => {
       console.log('[KanbanSocket] task:create:response', data);
 
@@ -563,7 +603,6 @@ export function useKanbanSocket({
     };
 
     // ── 🔄 task:move:response ──────────────────────────────────────
-    // TODO: confirm payload shape against backend spec
     const handleTaskMoveResponse = (data: TaskResponse) => {
       console.log('[KanbanSocket] task:move:response', data);
 
@@ -579,7 +618,6 @@ export function useKanbanSocket({
     };
 
     // ── 👤 task:assign:response ────────────────────────────────────
-    // TODO: confirm payload shape against backend spec
     const handleTaskAssignResponse = (data: TaskResponse) => {
       console.log('[KanbanSocket] task:assign:response', data);
 
@@ -597,7 +635,6 @@ export function useKanbanSocket({
     };
 
     // ── 🔍 task:get:response ───────────────────────────────────────
-    // TODO: confirm payload shape against backend spec
     const handleTaskGetResponse = (data: TaskResponse) => {
       console.log('[KanbanSocket] task:get:response', data);
 
@@ -638,6 +675,11 @@ export function useKanbanSocket({
       handleSectionDeleteResponse
     );
     socket.on(KANBAN_EVENTS.SECTION_DELETED, handleSectionDeleteResponse);
+    socket.on(
+      KANBAN_EVENTS.SECTION_REORDER_RESPONSE,
+      handleSectionReorderResponse
+    );
+    socket.on(KANBAN_EVENTS.SECTION_REORDERD, handleSectionReorderResponse);
 
     socket.on(KANBAN_EVENTS.TASK_LIST_RESPONSE, handleTaskListResponse);
     socket.on(KANBAN_EVENTS.TASK_CREATE_RESPONSE, handleTaskCreateResponse);
@@ -688,6 +730,11 @@ export function useKanbanSocket({
         handleSectionDeleteResponse
       );
       socket.off(KANBAN_EVENTS.SECTION_DELETED, handleSectionDeleteResponse);
+      socket.off(
+        KANBAN_EVENTS.SECTION_REORDER_RESPONSE,
+        handleSectionReorderResponse
+      );
+      socket.off(KANBAN_EVENTS.SECTION_REORDERD, handleSectionReorderResponse);
 
       socket.off(KANBAN_EVENTS.TASK_LIST_RESPONSE, handleTaskListResponse);
       socket.off(KANBAN_EVENTS.TASK_CREATE_RESPONSE, handleTaskCreateResponse);
@@ -799,6 +846,21 @@ export function useKanbanSocket({
       const payload: SectionGetPayload = { sectionId, boardId, companyId };
       console.log('[KanbanSocket] Emitting section:get', payload);
       socket.emit(KANBAN_EVENTS.SECTION_GET, payload);
+    },
+    [boardId, companyId]
+  );
+
+  const reorderSections = useCallback(
+    (sectionIds: string[]) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) {
+        onErrorRef.current?.('Socket not connected. Please try again.');
+        return;
+      }
+
+      const payload: SectionReorderPayload = { sectionIds, boardId, companyId };
+      console.log('[KanbanSocket] Emitting section:reorder', payload);
+      socket.emit(KANBAN_EVENTS.SECTION_REORDER, payload);
     },
     [boardId, companyId]
   );
@@ -963,6 +1025,7 @@ export function useKanbanSocket({
     updateSection,
     deleteSection,
     getSection,
+    reorderSections,
 
     // task emitters
     listTasks,

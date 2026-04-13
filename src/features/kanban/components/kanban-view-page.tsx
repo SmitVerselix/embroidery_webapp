@@ -38,6 +38,7 @@ export default function KanbanViewPage() {
     createSection,
     updateSection,
     deleteSection,
+    reorderSections,
     createTask,
     moveTask
   } = useKanbanSocket({
@@ -58,6 +59,12 @@ export default function KanbanViewPage() {
     onSectionsListed: useCallback((_sections: KanbanSection[]) => {
       // Sections + tasks are fetched by the hook automatically.
     }, []),
+    onSectionsReordered: useCallback(
+      (_sections: KanbanSection[], message: string) => {
+        toast.success(message);
+      },
+      []
+    ),
     onTasksListed: useCallback((_tasks: KanbanTask[], _sectionId: string) => {
       // Tasks are merged into state by the hook.
     }, []),
@@ -125,6 +132,7 @@ export default function KanbanViewPage() {
         createSection={createSection}
         updateSection={updateSection}
         deleteSection={deleteSection}
+        reorderSections={reorderSections}
         createTask={createTask}
         moveTask={moveTask}
         isConnected={isConnected}

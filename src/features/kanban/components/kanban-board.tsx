@@ -41,6 +41,7 @@ interface KanbanBoardProps {
     updates: { name?: string; position?: number }
   ) => void;
   deleteSection: (sectionId: string) => void;
+  reorderSections: (sectionIds: string[]) => void;
   createTask: (input: {
     sectionId: string;
     title: string;
@@ -77,6 +78,7 @@ export function KanbanBoard({
   createSection,
   updateSection,
   deleteSection,
+  reorderSections,
   createTask,
   moveTask,
   isConnected
@@ -209,16 +211,16 @@ export function KanbanBoard({
     // ── COLUMN reorder ──────────────────────────────────────────────────
     if (activeData?.type === 'Column') {
       if (active.id === over.id) return;
+
       const activeIdx = columns.findIndex((c) => c.id === active.id);
       const overIdx = columns.findIndex((c) => c.id === over.id);
 
+      // Optimistic update — reorder locally immediately
       const reordered = arrayMove(sections, activeIdx, overIdx);
       setSections(reordered);
 
-      const movedSection = reordered[overIdx];
-      if (movedSection) {
-        updateSection(movedSection.id, { position: overIdx + 1 });
-      }
+      // Emit the full ordered list of section IDs to the server
+      reorderSections(reordered.map((s) => s.id));
       return;
     }
 
@@ -235,11 +237,6 @@ export function KanbanBoard({
         previousSectionId &&
         newSectionId !== previousSectionId
       ) {
-        // Compute new position within the destination section
-        const tasksInDest = tasks.filter((t) => t.sectionId === newSectionId);
-        const position =
-          tasksInDest.findIndex((t) => t.id === draggedTask.id) + 1;
-
         moveTask(draggedTask.id, newSectionId);
       }
     }

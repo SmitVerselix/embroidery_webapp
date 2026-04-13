@@ -65,9 +65,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import Link from 'next/link';
 import type { ExtraValuesMap } from '@/features/orders/components/order-extra-values';
-import OrderTemplatePDF, {
-  type FinalCalcData
-} from '@/features/orders/components/order-template-pdf';
 import type { TemplateLayoutItem } from '@/features/orders/components/template-layout-canvas';
 import TemplateCanvasContainer from '@/features/orders/components/template-canvas-container';
 import type { TemplateValuesMap } from '@/features/orders/components/order-template-values';
@@ -82,6 +79,7 @@ import OrderFormFieldsDisplay, {
 } from '@/features/orders-form/components/order-form-fields-display';
 import { toast } from 'sonner';
 import api from '@/lib/api/axios';
+import OrdersFormPDF, { type FinalCalcData } from './orders-form-pdf';
 
 // =============================================================================
 // HELPERS
@@ -1114,13 +1112,14 @@ export default function OrdersFormDetail({
                 )}{' '}
                 Recalculate
               </Button>
-              <OrderTemplatePDF
+              <OrdersFormPDF
                 order={order}
                 entries={entries}
                 templateValues={templateValues}
-                extraValues={extraValues}
-                blockValues={blockValues}
                 finalCalc={finalCalcData}
+                resolvedFields={resolvedFields}
+                orderSelectedRowIds={(order as any)?.selectedRowIds || []}
+                totalSelectedValue={totalSelectedValue}
               />
               <Button
                 variant='outline'
