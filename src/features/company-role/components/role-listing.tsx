@@ -37,6 +37,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
@@ -51,11 +52,13 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Loader2,
-  Shield
+  Shield,
+  KeyRound
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { format } from 'date-fns';
 import RoleFormDialog from './role-form-dialog';
+import RolePermissionDialog from './role-permission-dialog';
 
 // =============================================================================
 // PROPS
@@ -100,6 +103,11 @@ export default function RoleListing({ onRefresh }: RoleListingProps) {
   const [roleToEdit, setRoleToEdit] = useState<CompanyRole | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
+  // Permission dialog
+  const [roleForPermission, setRoleForPermission] =
+    useState<CompanyRole | null>(null);
+  const [permissionDialogOpen, setPermissionDialogOpen] = useState(false);
+
   // Fetch roles
   const fetchRoles = useCallback(async () => {
     if (!companyId) return;
@@ -116,8 +124,13 @@ export default function RoleListing({ onRefresh }: RoleListingProps) {
         sortOrder: 'DESC'
       });
 
-      setRoles(response.rows);
-      setTotalCount(response.count);
+      const filteredRows = response.rows.filter(
+        (role) => role.name.toLowerCase() !== 'owner'
+      );
+      setRoles(filteredRows);
+      setTotalCount(
+        response.count - (response.rows.length - filteredRows.length)
+      );
     } catch (err) {
       setError(getError(err));
     } finally {
@@ -144,6 +157,12 @@ export default function RoleListing({ onRefresh }: RoleListingProps) {
   const handleEditClick = (role: CompanyRole) => {
     setRoleToEdit(role);
     setEditDialogOpen(true);
+  };
+
+  // Handle permission click
+  const handlePermissionClick = (role: CompanyRole) => {
+    setRoleForPermission(role);
+    setPermissionDialogOpen(true);
   };
 
   // Handle delete click
@@ -327,14 +346,23 @@ export default function RoleListing({ onRefresh }: RoleListingProps) {
                           <Pencil className='mr-2 h-4 w-4' />
                           Edit
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handlePermissionClick(role)}
+                        >
+                          <KeyRound className='mr-2 h-4 w-4' />
+                          Permissions
+                        </DropdownMenuItem>
                         {!role.isDefault && (
-                          <DropdownMenuItem
-                            onClick={() => handleDeleteClick(role)}
-                            className='text-destructive focus:text-destructive'
-                          >
-                            <Trash2 className='mr-2 h-4 w-4' />
-                            Delete
-                          </DropdownMenuItem>
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteClick(role)}
+                              className='text-destructive focus:text-destructive'
+                            >
+                              <Trash2 className='mr-2 h-4 w-4' />
+                              Delete
+                            </DropdownMenuItem>
+                          </>
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -464,6 +492,18 @@ export default function RoleListing({ onRefresh }: RoleListingProps) {
             setEditDialogOpen(false);
             setRoleToEdit(null);
             fetchRoles();
+          }}
+        />
+      )}
+
+      {/* Permission Dialog */}
+      {permissionDialogOpen && roleForPermission && (
+        <RolePermissionDialog
+          role={roleForPermission}
+          open={permissionDialogOpen}
+          onOpenChange={(value) => {
+            setPermissionDialogOpen(value);
+            if (!value) setRoleForPermission(null);
           }}
         />
       )}

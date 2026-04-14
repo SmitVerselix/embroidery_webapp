@@ -1486,3 +1486,69 @@ export type UpdateOrderFormMasterData = {
 export type ReorderOrderFormMasterData = {
   ids: string[];
 };
+
+// =============================================================================
+// PERMISSION TYPES
+// =============================================================================
+
+export type Permission = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PermissionListParams = {
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+};
+
+// =============================================================================
+// COMPANY ROLE PERMISSION TYPES
+// =============================================================================
+
+export type CompanyRolePermission = {
+  id: string;
+  isActive: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  deletedBy: string | null;
+  deletedAt: string | null;
+  companyId: string;
+  roleId: string;
+  permissionId: string;
+  createdAt: string;
+  updatedAt: string;
+  role?: {
+    id: string;
+    name: string;
+  };
+  permission?: {
+    id: string;
+    name: string;
+  };
+};
+
+export type CompanyRolePermissionListResponse = {
+  count: number;
+  rows: CompanyRolePermission[];
+};
+
+export type CompanyRolePermissionListParams = {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'ASC' | 'DESC';
+  search?: string;
+};
+
+export type CreateCompanyRolePermissionData = {
+  roleId: string;
+  permissionId: string;
+};

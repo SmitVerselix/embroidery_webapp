@@ -52,6 +52,8 @@ export interface KanbanJoinResponse {
   error?: string;
 }
 
+// ── Response types (single object payload) ────────────────────────────────────
+
 export interface SectionResponse {
   success: boolean;
   message?: string;
@@ -60,6 +62,18 @@ export interface SectionResponse {
 }
 
 export interface SectionListResponse {
+  success: boolean;
+  message?: string;
+  payload?: KanbanSection[];
+  error?: string;
+}
+
+// ── Broadcast types (array payload) ───────────────────────────────────────────
+// Broadcast events (section:created, section:updated, section:deleted,
+// section:reordered) always carry an array in `payload`, even when only
+// one record is affected.
+
+export interface SectionBroadcast {
   success: boolean;
   message?: string;
   payload?: KanbanSection[];
@@ -171,15 +185,20 @@ export interface TaskResponse {
   error?: string;
 }
 
+// ── Task broadcast type (array payload) ──────────────────────────────────────
+
+export interface TaskBroadcast {
+  success: boolean;
+  message?: string;
+  payload?: KanbanTask[];
+  error?: string;
+}
+
 export interface TaskListPayload {
   boardId: string;
   companyId: string;
   sectionId: string;
 }
-
-// ── Stub payloads for events you'll provide later ──────────────────────
-// These are best guesses based on the section pattern; adjust when your
-// backend specs arrive.
 
 export interface TaskCreatePayload {
   boardId: string;
@@ -247,7 +266,7 @@ export const KANBAN_EVENTS = {
 
   SECTION_REORDER: 'section:reorder',
   SECTION_REORDER_RESPONSE: 'section:reorder:response',
-  SECTION_REORDERD: 'section:reorderd',
+  SECTION_REORDERED: 'section:reordered',
 
   // ── Task CRUD ──────────────────────────────────────────────────────────
   TASK_LIST: 'task:list',
@@ -411,14 +430,10 @@ export function useKanbanSocket({
     const socket = connectSocket();
     socketRef.current = socket;
 
-    // ── Connection state ─────────────────────────────────────────────
+    // ── Connection state ─────────────────────────────────────────────────
     const handleConnect = () => {
       console.log('[KanbanSocket] Connected:', socket.id);
       setIsConnected(true);
-      console.log('[KanbanSocket] Emitting kanban:join', {
-        boardId,
-        companyId
-      });
       socket.emit(KANBAN_EVENTS.JOIN, { boardId, companyId });
     };
 
@@ -428,24 +443,22 @@ export function useKanbanSocket({
       setIsJoined(false);
     };
 
-    // ── 🔵 kanban:join:response ─────────────────────────────────────
+    // =========================================================================
+    // RESPONSE HANDLERS  (caller-only, single-object payload)
+    // These fire only for the socket that made the request.
+    // =========================================================================
+
+    // ── kanban:join:response ─────────────────────────────────────────────
     const handleJoinResponse = (data: KanbanJoinResponse) => {
       console.log('[KanbanSocket] kanban:join:response', data);
-
       if (data.success && data.payload) {
         setIsJoined(true);
         setBoardData(data.payload);
-
-        // If join response includes sections, populate them and fetch tasks
         if (data.payload.sections && Array.isArray(data.payload.sections)) {
           setSections(data.payload.sections);
           fetchTasksForSections(socket, data.payload.sections);
         }
-
         onBoardJoinedRef.current?.(data.payload);
-
-        // Also explicitly fetch the sections list (server of truth)
-        console.log('[KanbanSocket] Emitting section:list after join');
         socket.emit(KANBAN_EVENTS.SECTION_LIST, { boardId, companyId });
       } else {
         const msg = data.error || data.message || 'Failed to join board';
@@ -454,68 +467,63 @@ export function useKanbanSocket({
       }
     };
 
-    // ── 🟢 section:create:response ──────────────────────────────────
+    // ── section:create:response ──────────────────────────────────────────
     const handleSectionCreateResponse = (data: SectionResponse) => {
       console.log('[KanbanSocket] section:create:response', data);
-
       if (data.success && data.payload) {
         const section = data.payload;
-        setSections((prev) => {
-          if (prev.some((s) => s.id === section.id)) return prev;
-          return [...prev, section];
-        });
+        setSections((prev) =>
+          prev.some((s) => s.id === section.id) ? prev : [...prev, section]
+        );
         onSectionCreatedRef.current?.(section);
-      } else {
+      } else if (!data.success) {
         const msg = data.error || data.message || 'Failed to create section';
         console.error('[KanbanSocket] section:create:response error:', msg);
         onErrorRef.current?.(msg);
       }
     };
 
-    // ── 🟣 section:list:response ────────────────────────────────────
+    // ── section:list:response ────────────────────────────────────────────
     const handleSectionListResponse = (data: SectionListResponse) => {
       console.log('[KanbanSocket] section:list:response', data);
-
       if (data.success && data.payload) {
         setSections(data.payload);
         onSectionsListedRef.current?.(data.payload);
-
-        // Auto-fetch tasks for every section
         fetchTasksForSections(socket, data.payload);
-      } else {
+      } else if (!data.success) {
         const msg = data.error || data.message || 'Failed to list sections';
         console.error('[KanbanSocket] section:list:response error:', msg);
         onErrorRef.current?.(msg);
       }
     };
 
-    // ── 🟠 section:update:response ──────────────────────────────────
+    // ── section:update:response ──────────────────────────────────────────
     const handleSectionUpdateResponse = (data: SectionResponse) => {
       console.log('[KanbanSocket] section:update:response', data);
-
       if (data.success && data.payload) {
         const updated = data.payload;
         setSections((prev) =>
           prev.map((s) => (s.id === updated.id ? updated : s))
         );
         onSectionUpdatedRef.current?.(updated);
-      } else {
+      } else if (!data.success) {
         const msg = data.error || data.message || 'Failed to update section';
         console.error('[KanbanSocket] section:update:response error:', msg);
         onErrorRef.current?.(msg);
       }
     };
 
-    // ── 🔴 section:delete:response ──────────────────────────────────
+    // ── section:delete:response ──────────────────────────────────────────
     const handleSectionDeleteResponse = (data: SectionResponse) => {
       console.log('[KanbanSocket] section:delete:response', data);
-
-      if (data.success && data.payload) {
-        const deleted = data.payload;
-        setSections((prev) => prev.filter((s) => s.id !== deleted.id));
-        // Also drop any tasks that belonged to it
-        setTasks((prev) => prev.filter((t) => t.sectionId !== deleted.id));
-        onSectionDeletedRef.current?.(deleted);
+      if (data.success) {
+        if (data.payload) {
+          const deleted = data.payload;
+          setSections((prev) => prev.filter((s) => s.id !== deleted.id));
+          setTasks((prev) => prev.filter((t) => t.sectionId !== deleted.id));
+          onSectionDeletedRef.current?.(deleted);
+        }
+        // No payload on response is fine — broadcast will carry the array.
       } else {
         const msg = data.error || data.message || 'Failed to delete section';
         console.error('[KanbanSocket] section:delete:response error:', msg);
@@ -523,179 +531,263 @@ export function useKanbanSocket({
       }
     };
 
-    // ── 🔀 section:reorder:response ─────────────────────────────────
+    // ── section:reorder:response ─────────────────────────────────────────
     const handleSectionReorderResponse = (data: SectionListResponse) => {
       console.log('[KanbanSocket] section:reorder:response', data);
-
       if (data.success) {
-        // Fire the success callback with the server message so the
-        // view layer can display it in a toast.
-        const successMsg = data.message || 'Sections reordered successfully';
+        const msg = data.message || 'Sections reordered successfully';
         onSectionsReorderedRef.current?.(
           Array.isArray(data.payload) ? data.payload : sectionsRef.current,
-          successMsg
+          msg
         );
-
-        // Always re-fetch the authoritative section list from the server
-        // so local state stays perfectly in sync after the reorder.
+        // Re-fetch authoritative order from server.
         socket.emit(KANBAN_EVENTS.SECTION_LIST, { boardId, companyId });
       } else {
         const msg = data.error || data.message || 'Failed to reorder sections';
         console.error('[KanbanSocket] section:reorder:response error:', msg);
         onErrorRef.current?.(msg);
-        // Reorder failed — re-fetch to restore the real server order.
         socket.emit(KANBAN_EVENTS.SECTION_LIST, { boardId, companyId });
       }
     };
 
-    // ── 📋 task:list:response ───────────────────────────────────────
+    // ── task:list:response ───────────────────────────────────────────────
     const handleTaskListResponse = (data: TaskListResponse) => {
       console.log('[KanbanSocket] task:list:response', data);
-
-      // Always shift off the queue so it stays in sync with emits.
       const queuedSectionId = pendingTaskListRef.current.shift();
-
       if (data.success && Array.isArray(data.payload)) {
         const tasksFromResp = data.payload;
-
-        // Prefer sectionId from the payload; fall back to the queue
-        // (needed when the response is an empty array).
         const sectionId =
           tasksFromResp[0]?.sectionId ?? queuedSectionId ?? null;
-
         if (!sectionId) {
           console.warn(
             '[KanbanSocket] task:list:response — unable to determine sectionId'
           );
           return;
         }
-
-        // Replace all tasks for this section with the fresh list
         setTasks((prev) => [
           ...prev.filter((t) => t.sectionId !== sectionId),
           ...tasksFromResp
         ]);
-
         onTasksListedRef.current?.(tasksFromResp, sectionId);
-      } else {
+      } else if (!data.success) {
         const msg = data.error || data.message || 'Failed to list tasks';
         console.error('[KanbanSocket] task:list:response error:', msg);
         onErrorRef.current?.(msg);
       }
     };
 
-    // ── ➕ task:create:response ────────────────────────────────────
+    // ── task:create:response ─────────────────────────────────────────────
     const handleTaskCreateResponse = (data: TaskResponse) => {
       console.log('[KanbanSocket] task:create:response', data);
-
       if (data.success && data.payload) {
         const task = data.payload;
-        setTasks((prev) => {
-          if (prev.some((t) => t.id === task.id)) return prev;
-          return [...prev, task];
-        });
+        setTasks((prev) =>
+          prev.some((t) => t.id === task.id) ? prev : [...prev, task]
+        );
         onTaskCreatedRef.current?.(task);
-      } else {
+      } else if (!data.success) {
         const msg = data.error || data.message || 'Failed to create task';
         console.error('[KanbanSocket] task:create:response error:', msg);
         onErrorRef.current?.(msg);
       }
     };
 
-    // ── 🔄 task:move:response ──────────────────────────────────────
+    // ── task:move:response ───────────────────────────────────────────────
     const handleTaskMoveResponse = (data: TaskResponse) => {
       console.log('[KanbanSocket] task:move:response', data);
-
       if (data.success && data.payload) {
         const moved = data.payload;
         setTasks((prev) => prev.map((t) => (t.id === moved.id ? moved : t)));
         onTaskMovedRef.current?.(moved);
-      } else {
+      } else if (!data.success) {
         const msg = data.error || data.message || 'Failed to move task';
         console.error('[KanbanSocket] task:move:response error:', msg);
         onErrorRef.current?.(msg);
       }
     };
 
-    // ── 👤 task:assign:response ────────────────────────────────────
+    // ── task:assign:response ─────────────────────────────────────────────
     const handleTaskAssignResponse = (data: TaskResponse) => {
       console.log('[KanbanSocket] task:assign:response', data);
-
       if (data.success && data.payload) {
         const updated = data.payload;
         setTasks((prev) =>
           prev.map((t) => (t.id === updated.id ? updated : t))
         );
         onTaskUpdatedRef.current?.(updated);
-      } else {
+      } else if (!data.success) {
         const msg = data.error || data.message || 'Failed to assign task';
         console.error('[KanbanSocket] task:assign:response error:', msg);
         onErrorRef.current?.(msg);
       }
     };
 
-    // ── 🔍 task:get:response ───────────────────────────────────────
+    // ── task:get:response ────────────────────────────────────────────────
     const handleTaskGetResponse = (data: TaskResponse) => {
       console.log('[KanbanSocket] task:get:response', data);
-
       if (data.success && data.payload) {
         const task = data.payload;
         setTasks((prev) => {
           const exists = prev.some((t) => t.id === task.id);
-          if (exists) return prev.map((t) => (t.id === task.id ? task : t));
-          return [...prev, task];
+          return exists
+            ? prev.map((t) => (t.id === task.id ? task : t))
+            : [...prev, task];
         });
       }
     };
 
-    // ── 🟡 board-{boardId} (room-level channel) ────────────────────
+    // =========================================================================
+    // BROADCAST HANDLERS  (room-wide, array payload)
+    // These fire for ALL connected clients, including the sender.
+    // Payload is always KanbanSection[] / KanbanTask[].
+    // =========================================================================
+
+    // ── section:created (broadcast) ─────────────────────────────────────
+    const handleSectionCreatedBroadcast = (data: SectionBroadcast) => {
+      console.log('[KanbanSocket] section:created (broadcast)', data);
+      if (!data.success || !Array.isArray(data.payload)) return;
+
+      data.payload.forEach((section) => {
+        setSections((prev) =>
+          prev.some((s) => s.id === section.id) ? prev : [...prev, section]
+        );
+        onSectionCreatedRef.current?.(section);
+      });
+    };
+
+    // ── section:updated (broadcast) ─────────────────────────────────────
+    const handleSectionUpdatedBroadcast = (data: SectionBroadcast) => {
+      console.log('[KanbanSocket] section:updated (broadcast)', data);
+      if (!data.success || !Array.isArray(data.payload)) return;
+
+      data.payload.forEach((updated) => {
+        setSections((prev) =>
+          prev.map((s) => (s.id === updated.id ? updated : s))
+        );
+        onSectionUpdatedRef.current?.(updated);
+      });
+    };
+
+    // ── section:deleted (broadcast) ─────────────────────────────────────
+    const handleSectionDeletedBroadcast = (data: SectionBroadcast) => {
+      console.log('[KanbanSocket] section:deleted (broadcast)', data);
+      if (!data.success || !Array.isArray(data.payload)) return;
+
+      const deletedIds = new Set(data.payload.map((s) => s.id));
+
+      setSections((prev) => prev.filter((s) => !deletedIds.has(s.id)));
+      setTasks((prev) => prev.filter((t) => !deletedIds.has(t.sectionId)));
+
+      data.payload.forEach((section) => {
+        onSectionDeletedRef.current?.(section);
+      });
+    };
+
+    // ── section:reordered (broadcast) ───────────────────────────────────
+    const handleSectionReorderedBroadcast = (data: SectionBroadcast) => {
+      console.log('[KanbanSocket] section:reordered (broadcast)', data);
+      if (!data.success) return;
+
+      if (Array.isArray(data.payload) && data.payload.length > 0) {
+        // Apply the authoritative order from the broadcast directly.
+        setSections(data.payload);
+        const msg = data.message || 'Sections reordered';
+        onSectionsReorderedRef.current?.(data.payload, msg);
+      } else {
+        // Fallback: re-fetch if the broadcast carries no payload.
+        socket.emit(KANBAN_EVENTS.SECTION_LIST, { boardId, companyId });
+      }
+    };
+
+    // ── task:created (broadcast) ─────────────────────────────────────────
+    const handleTaskCreatedBroadcast = (data: TaskBroadcast) => {
+      console.log('[KanbanSocket] task:created (broadcast)', data);
+      if (!data.success || !Array.isArray(data.payload)) return;
+
+      data.payload.forEach((task) => {
+        setTasks((prev) =>
+          prev.some((t) => t.id === task.id) ? prev : [...prev, task]
+        );
+        onTaskCreatedRef.current?.(task);
+      });
+    };
+
+    // ── task:moved (broadcast) ───────────────────────────────────────────
+    const handleTaskMovedBroadcast = (data: TaskBroadcast) => {
+      console.log('[KanbanSocket] task:moved (broadcast)', data);
+      if (!data.success || !Array.isArray(data.payload)) return;
+
+      data.payload.forEach((moved) => {
+        setTasks((prev) => prev.map((t) => (t.id === moved.id ? moved : t)));
+        onTaskMovedRef.current?.(moved);
+      });
+    };
+
+    // ── task:assignd (broadcast) ─────────────────────────────────────────
+    const handleTaskAssignedBroadcast = (data: TaskBroadcast) => {
+      console.log('[KanbanSocket] task:assignd (broadcast)', data);
+      if (!data.success || !Array.isArray(data.payload)) return;
+
+      data.payload.forEach((updated) => {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === updated.id ? updated : t))
+        );
+        onTaskUpdatedRef.current?.(updated);
+      });
+    };
+
+    // ── board-{boardId} (room-level channel) ────────────────────────────
     const handleBoardChannel = (data: unknown) => {
-      console.log(`[KanbanSocket] ${boardChannel}`, data);
+      console.log(`[KanbanSocket] board-${boardId}`, data);
       onBoardEventRef.current?.(data);
     };
 
-    // ── Register all listeners ───────────────────────────────────────
+    // =========================================================================
+    // REGISTER LISTENERS
+    // =========================================================================
+
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
-    socket.on(KANBAN_EVENTS.JOIN_RESPONSE, handleJoinResponse);
 
+    // Response events (caller-only)
+    socket.on(KANBAN_EVENTS.JOIN_RESPONSE, handleJoinResponse);
     socket.on(
       KANBAN_EVENTS.SECTION_CREATE_RESPONSE,
       handleSectionCreateResponse
     );
-    socket.on(KANBAN_EVENTS.SECTION_CREATED, handleSectionCreateResponse);
     socket.on(KANBAN_EVENTS.SECTION_LIST_RESPONSE, handleSectionListResponse);
     socket.on(
       KANBAN_EVENTS.SECTION_UPDATE_RESPONSE,
       handleSectionUpdateResponse
     );
-    socket.on(KANBAN_EVENTS.SECTION_UPDATED, handleSectionUpdateResponse);
     socket.on(
       KANBAN_EVENTS.SECTION_DELETE_RESPONSE,
       handleSectionDeleteResponse
     );
-    socket.on(KANBAN_EVENTS.SECTION_DELETED, handleSectionDeleteResponse);
     socket.on(
       KANBAN_EVENTS.SECTION_REORDER_RESPONSE,
       handleSectionReorderResponse
     );
-    socket.on(KANBAN_EVENTS.SECTION_REORDERD, handleSectionReorderResponse);
-
     socket.on(KANBAN_EVENTS.TASK_LIST_RESPONSE, handleTaskListResponse);
     socket.on(KANBAN_EVENTS.TASK_CREATE_RESPONSE, handleTaskCreateResponse);
-    socket.on(KANBAN_EVENTS.TASK_CREATED, handleTaskCreateResponse);
     socket.on(KANBAN_EVENTS.TASK_MOVE_RESPONSE, handleTaskMoveResponse);
-    socket.on(KANBAN_EVENTS.TASK_MOVED, handleTaskMoveResponse);
     socket.on(KANBAN_EVENTS.TASK_ASSIGN_RESPONSE, handleTaskAssignResponse);
-    socket.on(KANBAN_EVENTS.TASK_ASSIGND, handleTaskAssignResponse);
     socket.on(KANBAN_EVENTS.TASK_GET_RESPONSE, handleTaskGetResponse);
+
+    // Broadcast events (all clients in room — array payload)
+    socket.on(KANBAN_EVENTS.SECTION_CREATED, handleSectionCreatedBroadcast);
+    socket.on(KANBAN_EVENTS.SECTION_UPDATED, handleSectionUpdatedBroadcast);
+    socket.on(KANBAN_EVENTS.SECTION_DELETED, handleSectionDeletedBroadcast);
+    socket.on(KANBAN_EVENTS.SECTION_REORDERED, handleSectionReorderedBroadcast);
+    socket.on(KANBAN_EVENTS.TASK_CREATED, handleTaskCreatedBroadcast);
+    socket.on(KANBAN_EVENTS.TASK_MOVED, handleTaskMovedBroadcast);
+    socket.on(KANBAN_EVENTS.TASK_ASSIGND, handleTaskAssignedBroadcast);
 
     socket.on(boardChannel, handleBoardChannel);
 
     // If already connected (reconnect scenario), emit join immediately
     if (socket.connected) {
       setIsConnected(true);
-      console.log('[KanbanSocket] Already connected, emitting kanban:join');
       socket.emit(KANBAN_EVENTS.JOIN, { boardId, companyId });
     }
 
@@ -709,13 +801,13 @@ export function useKanbanSocket({
 
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
-      socket.off(KANBAN_EVENTS.JOIN_RESPONSE, handleJoinResponse);
 
+      // Response events
+      socket.off(KANBAN_EVENTS.JOIN_RESPONSE, handleJoinResponse);
       socket.off(
         KANBAN_EVENTS.SECTION_CREATE_RESPONSE,
         handleSectionCreateResponse
       );
-      socket.off(KANBAN_EVENTS.SECTION_CREATED, handleSectionCreateResponse);
       socket.off(
         KANBAN_EVENTS.SECTION_LIST_RESPONSE,
         handleSectionListResponse
@@ -724,31 +816,35 @@ export function useKanbanSocket({
         KANBAN_EVENTS.SECTION_UPDATE_RESPONSE,
         handleSectionUpdateResponse
       );
-      socket.off(KANBAN_EVENTS.SECTION_UPDATED, handleSectionUpdateResponse);
       socket.off(
         KANBAN_EVENTS.SECTION_DELETE_RESPONSE,
         handleSectionDeleteResponse
       );
-      socket.off(KANBAN_EVENTS.SECTION_DELETED, handleSectionDeleteResponse);
       socket.off(
         KANBAN_EVENTS.SECTION_REORDER_RESPONSE,
         handleSectionReorderResponse
       );
-      socket.off(KANBAN_EVENTS.SECTION_REORDERD, handleSectionReorderResponse);
-
       socket.off(KANBAN_EVENTS.TASK_LIST_RESPONSE, handleTaskListResponse);
       socket.off(KANBAN_EVENTS.TASK_CREATE_RESPONSE, handleTaskCreateResponse);
-      socket.off(KANBAN_EVENTS.TASK_CREATED, handleTaskCreateResponse);
       socket.off(KANBAN_EVENTS.TASK_MOVE_RESPONSE, handleTaskMoveResponse);
-      socket.off(KANBAN_EVENTS.TASK_MOVED, handleTaskMoveResponse);
       socket.off(KANBAN_EVENTS.TASK_ASSIGN_RESPONSE, handleTaskAssignResponse);
-      socket.off(KANBAN_EVENTS.TASK_ASSIGND, handleTaskAssignResponse);
       socket.off(KANBAN_EVENTS.TASK_GET_RESPONSE, handleTaskGetResponse);
+
+      // Broadcast events
+      socket.off(KANBAN_EVENTS.SECTION_CREATED, handleSectionCreatedBroadcast);
+      socket.off(KANBAN_EVENTS.SECTION_UPDATED, handleSectionUpdatedBroadcast);
+      socket.off(KANBAN_EVENTS.SECTION_DELETED, handleSectionDeletedBroadcast);
+      socket.off(
+        KANBAN_EVENTS.SECTION_REORDERED,
+        handleSectionReorderedBroadcast
+      );
+      socket.off(KANBAN_EVENTS.TASK_CREATED, handleTaskCreatedBroadcast);
+      socket.off(KANBAN_EVENTS.TASK_MOVED, handleTaskMovedBroadcast);
+      socket.off(KANBAN_EVENTS.TASK_ASSIGND, handleTaskAssignedBroadcast);
 
       socket.off(boardChannel, handleBoardChannel);
 
       destroySocket();
-
       socketRef.current = null;
       pendingTaskListRef.current = [];
       setIsConnected(false);
@@ -756,9 +852,9 @@ export function useKanbanSocket({
     };
   }, [boardId, companyId]);
 
-  // ───────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
   // EMITTERS — SECTION
-  // ───────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
 
   const createSection = useCallback(
     (name: string) => {
@@ -767,13 +863,11 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
-      const position = sectionsRef.current.length + 1;
       const payload: SectionCreatePayload = {
         boardId,
         companyId,
         name,
-        position
+        position: sectionsRef.current.length + 1
       };
       console.log('[KanbanSocket] Emitting section:create', payload);
       socket.emit(KANBAN_EVENTS.SECTION_CREATE, payload);
@@ -787,10 +881,7 @@ export function useKanbanSocket({
       onErrorRef.current?.('Socket not connected. Please try again.');
       return;
     }
-
-    const payload: SectionListPayload = { boardId, companyId };
-    console.log('[KanbanSocket] Emitting section:list', payload);
-    socket.emit(KANBAN_EVENTS.SECTION_LIST, payload);
+    socket.emit(KANBAN_EVENTS.SECTION_LIST, { boardId, companyId });
   }, [boardId, companyId]);
 
   const updateSection = useCallback(
@@ -800,13 +891,10 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
-      let position = updates.position;
-      if (position === undefined) {
-        const existing = sectionsRef.current.find((s) => s.id === sectionId);
-        position = existing?.position ?? 1;
-      }
-
+      const position =
+        updates.position ??
+        sectionsRef.current.find((s) => s.id === sectionId)?.position ??
+        1;
       const payload: SectionUpdatePayload = {
         sectionId,
         boardId,
@@ -827,7 +915,6 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
       const payload: SectionDeletePayload = { sectionId, boardId, companyId };
       console.log('[KanbanSocket] Emitting section:delete', payload);
       socket.emit(KANBAN_EVENTS.SECTION_DELETE, payload);
@@ -842,7 +929,6 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
       const payload: SectionGetPayload = { sectionId, boardId, companyId };
       console.log('[KanbanSocket] Emitting section:get', payload);
       socket.emit(KANBAN_EVENTS.SECTION_GET, payload);
@@ -857,7 +943,6 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
       const payload: SectionReorderPayload = { sectionIds, boardId, companyId };
       console.log('[KanbanSocket] Emitting section:reorder', payload);
       socket.emit(KANBAN_EVENTS.SECTION_REORDER, payload);
@@ -865,11 +950,10 @@ export function useKanbanSocket({
     [boardId, companyId]
   );
 
-  // ───────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
   // EMITTERS — TASK
-  // ───────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
 
-  /** List tasks for a specific section. */
   const listTasks = useCallback(
     (sectionId: string) => {
       const socket = socketRef.current;
@@ -877,7 +961,6 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
       const payload: TaskListPayload = { boardId, companyId, sectionId };
       pendingTaskListRef.current.push(sectionId);
       console.log('[KanbanSocket] Emitting task:list', payload);
@@ -886,7 +969,6 @@ export function useKanbanSocket({
     [boardId, companyId]
   );
 
-  /** Re-fetch tasks for every section currently known. */
   const refreshAllTasks = useCallback(() => {
     const socket = socketRef.current;
     if (!socket?.connected) return;
@@ -894,10 +976,6 @@ export function useKanbanSocket({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardId, companyId]);
 
-  /**
-   * STUB — create a task. Backend payload/response shape not yet confirmed.
-   * Adjust once the `task:create` event spec is provided.
-   */
   const createTask = useCallback(
     (input: {
       sectionId: string;
@@ -911,22 +989,13 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
-      const payload: TaskCreatePayload = {
-        boardId,
-        companyId,
-        ...input
-      };
-      console.log('[KanbanSocket] Emitting task:create (STUB)', payload);
+      const payload: TaskCreatePayload = { boardId, companyId, ...input };
+      console.log('[KanbanSocket] Emitting task:create', payload);
       socket.emit(KANBAN_EVENTS.TASK_CREATE, payload);
     },
     [boardId, companyId]
   );
 
-  /**
-   * STUB — move a task to another section. Also used for drag-and-drop
-   * between columns.
-   */
   const moveTask = useCallback(
     (taskId: string, toSectionId: string) => {
       const socket = socketRef.current;
@@ -934,20 +1003,18 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
       const payload: TaskMovePayload = {
         boardId,
         companyId,
         taskId,
         toSectionId
       };
-      console.log('[KanbanSocket] Emitting task:move (STUB)', payload);
+      console.log('[KanbanSocket] Emitting task:move', payload);
       socket.emit(KANBAN_EVENTS.TASK_MOVE, payload);
     },
     [boardId, companyId]
   );
 
-  /** STUB — assign a user to a task. */
   const assignTask = useCallback(
     (taskId: string, userId: string) => {
       const socket = socketRef.current;
@@ -955,20 +1022,13 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
-      const payload: TaskAssignPayload = {
-        boardId,
-        companyId,
-        taskId,
-        userId
-      };
-      console.log('[KanbanSocket] Emitting task:assign (STUB)', payload);
+      const payload: TaskAssignPayload = { boardId, companyId, taskId, userId };
+      console.log('[KanbanSocket] Emitting task:assign', payload);
       socket.emit(KANBAN_EVENTS.TASK_ASSIGN, payload);
     },
     [boardId, companyId]
   );
 
-  /** STUB — fetch a single task by id. */
   const getTask = useCallback(
     (taskId: string) => {
       const socket = socketRef.current;
@@ -976,15 +1036,13 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
       const payload: TaskGetPayload = { boardId, companyId, taskId };
-      console.log('[KanbanSocket] Emitting task:get (STUB)', payload);
+      console.log('[KanbanSocket] Emitting task:get', payload);
       socket.emit(KANBAN_EVENTS.TASK_GET, payload);
     },
     [boardId, companyId]
   );
 
-  /** STUB — fetch the activity log for a task. */
   const listTaskActivity = useCallback(
     (taskId: string) => {
       const socket = socketRef.current;
@@ -992,13 +1050,8 @@ export function useKanbanSocket({
         onErrorRef.current?.('Socket not connected. Please try again.');
         return;
       }
-
-      const payload: TaskActivityListPayload = {
-        boardId,
-        companyId,
-        taskId
-      };
-      console.log('[KanbanSocket] Emitting task:activity:list (STUB)', payload);
+      const payload: TaskActivityListPayload = { boardId, companyId, taskId };
+      console.log('[KanbanSocket] Emitting task:activity:list', payload);
       socket.emit(KANBAN_EVENTS.TASK_ACTIVITY_LIST, payload);
     },
     [boardId, companyId]

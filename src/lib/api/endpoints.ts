@@ -295,6 +295,21 @@ export const ENDPOINTS = {
       `${API_PREFIX}/user/${companyId}/company-role/${roleId}`
   },
 
+  // Permission endpoints
+  PERMISSION: {
+    ALL: `${API_PREFIX}/user/permission/all`
+  },
+
+  // Company Role Permission endpoints (company-scoped)
+  COMPANY_ROLE_PERMISSION: {
+    CREATE: (companyId: string) =>
+      `${API_PREFIX}/user/${companyId}/company-role/permission`,
+    LIST: (companyId: string) =>
+      `${API_PREFIX}/user/${companyId}/company-role/permission/list`,
+    DELETE: (companyId: string, id: string) =>
+      `${API_PREFIX}/user/${companyId}/company-role/permission/${id}`
+  },
+
   // Login history endpoints
   LOGIN_HISTORY: {
     LIST: `${API_PREFIX}/user/login-history`
@@ -353,5 +368,8 @@ export const QUERY_KEYS = {
   KANBAN_ROLE_PERMISSIONS: (companyId: string, kanbanId: string) =>
     ['kanban-role-permissions', companyId, kanbanId] as const,
   COMPANY_ROLES: (companyId: string) => ['company-roles', companyId] as const,
+  PERMISSIONS: ['permissions'] as const,
+  COMPANY_ROLE_PERMISSIONS: (companyId: string) =>
+    ['company-role-permissions', companyId] as const,
   LOGIN_HISTORY: ['login-history'] as const
 } as const;

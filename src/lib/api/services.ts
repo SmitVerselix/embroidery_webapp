@@ -90,7 +90,13 @@ import type {
   KanbanRolePermission,
   UpdateKanbanPermissionRoleData,
   KanbanRolePermissionListResponse,
-  KanbanRolePermissionListParams
+  KanbanRolePermissionListParams,
+  CompanyRolePermissionListParams,
+  CompanyRolePermissionListResponse,
+  CreateCompanyRolePermissionData,
+  CompanyRolePermission,
+  PermissionListParams,
+  Permission
 } from './types';
 
 // =============================================================================
@@ -1272,6 +1278,73 @@ export const deleteCompanyRole = async (
 ): Promise<void> => {
   await api.delete<ApiResponse<number[]>>(
     ENDPOINTS.COMPANY_ROLE.DELETE(companyId, roleId)
+  );
+};
+
+// =============================================================================
+// PERMISSION SERVICES
+// =============================================================================
+
+export const getAllPermissions = async (
+  params?: PermissionListParams
+): Promise<Permission[]> => {
+  const defaultParams: PermissionListParams = {
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  const res = await api.post<ApiResponse<Permission[]>>(
+    ENDPOINTS.PERMISSION.ALL,
+    defaultParams
+  );
+
+  return res.data.payload;
+};
+
+// =============================================================================
+// COMPANY ROLE PERMISSION SERVICES
+// =============================================================================
+
+export const getCompanyRolePermissions = async (
+  companyId: string,
+  params?: CompanyRolePermissionListParams
+): Promise<CompanyRolePermissionListResponse> => {
+  const defaultParams: CompanyRolePermissionListParams = {
+    page: 1,
+    limit: 10,
+    sortBy: 'createdAt',
+    sortOrder: 'DESC',
+    search: '',
+    ...params
+  };
+
+  const res = await api.post<ApiResponse<CompanyRolePermissionListResponse>>(
+    ENDPOINTS.COMPANY_ROLE_PERMISSION.LIST(companyId),
+    defaultParams
+  );
+
+  return res.data.payload;
+};
+
+export const createCompanyRolePermission = async (
+  companyId: string,
+  data: CreateCompanyRolePermissionData
+): Promise<CompanyRolePermission> => {
+  const res = await api.post<ApiResponse<CompanyRolePermission>>(
+    ENDPOINTS.COMPANY_ROLE_PERMISSION.CREATE(companyId),
+    data
+  );
+  return res.data.payload;
+};
+
+export const deleteCompanyRolePermission = async (
+  companyId: string,
+  id: string
+): Promise<void> => {
+  await api.delete<ApiResponse<Record<string, never>>>(
+    ENDPOINTS.COMPANY_ROLE_PERMISSION.DELETE(companyId, id)
   );
 };
 
