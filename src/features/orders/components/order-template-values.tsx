@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useRef, useEffect } from 'react';
 import type {
   TemplateWithDetails,
   TemplateColumn,
@@ -415,6 +415,107 @@ export default function OrderTemplateValues({
     [orderedBlockColumns]
   );
 
+  /** Set of column IDs that are the first column of a NEW block (i.e. not the first block).
+   *  Used to render a vertical separator line between blocks. */
+  const blockBoundaryColumnIds = useMemo(() => {
+    const ids = new Set<string>();
+    orderedBlockColumns.forEach((group, idx) => {
+      if (idx > 0 && group.columns.length > 0) {
+        ids.add(group.columns[0].id);
+      }
+    });
+    return ids;
+  }, [orderedBlockColumns]);
+
+  const tableWrapperRef = useRef<HTMLDivElement>(null);
+
+  // ── JS-based sticky for canvas scroll (CSS sticky breaks through CSS zoom) ──
+  useEffect(() => {
+    const el = tableWrapperRef.current;
+    if (!el) return;
+
+    const scrollContainer = el.closest(
+      '[data-canvas-scroll]'
+    ) as HTMLElement | null;
+    if (!scrollContainer) return;
+
+    let rafId: number | null = null;
+
+    const update = () => {
+      const zoom = parseFloat(
+        scrollContainer.getAttribute('data-canvas-zoom') || '1'
+      );
+      const scrollRect = scrollContainer.getBoundingClientRect();
+      const tableRect = el.getBoundingClientRect();
+
+      // ── Vertical: translate thead ──
+      const thead = el.querySelector('thead') as HTMLElement | null;
+      if (thead) {
+        const theadH = thead.getBoundingClientRect().height;
+        if (
+          tableRect.top < scrollRect.top &&
+          tableRect.bottom > scrollRect.top + theadH + 20 * zoom
+        ) {
+          const offset = (scrollRect.top - tableRect.top) / zoom;
+          thead.style.transform = `translateY(${offset}px)`;
+          thead.style.position = 'relative';
+          thead.style.zIndex = '20';
+        } else {
+          thead.style.transform = '';
+          thead.style.position = '';
+          thead.style.zIndex = '';
+        }
+      }
+
+      // ── Horizontal: translate row-label cells ──
+      const stickyCells =
+        el.querySelectorAll<HTMLElement>('[data-sticky-left]');
+      if (
+        tableRect.left < scrollRect.left &&
+        tableRect.right > scrollRect.left + 100 * zoom
+      ) {
+        const offset = (scrollRect.left - tableRect.left) / zoom;
+        stickyCells.forEach((cell) => {
+          cell.style.transform = `translateX(${offset}px)`;
+          cell.style.position = 'relative';
+          cell.style.zIndex = '15';
+        });
+      } else {
+        stickyCells.forEach((cell) => {
+          cell.style.transform = '';
+          cell.style.position = '';
+          cell.style.zIndex = '';
+        });
+      }
+    };
+
+    const onScroll = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        update();
+      });
+    };
+
+    scrollContainer.addEventListener('scroll', onScroll, { passive: true });
+
+    // React to zoom changes
+    const observer = new MutationObserver(() => requestAnimationFrame(update));
+    observer.observe(scrollContainer, {
+      attributes: true,
+      attributeFilter: ['data-canvas-zoom']
+    });
+
+    // Initial positioning
+    requestAnimationFrame(update);
+
+    return () => {
+      scrollContainer.removeEventListener('scroll', onScroll);
+      observer.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
   const hasMultipleBlocks = orderedBlockColumns.length > 1;
   const hasColumns = columns.length > 0;
   const hasRows = rows.length > 0;
@@ -792,7 +893,7 @@ export default function OrderTemplateValues({
     }
 
     return (
-      <div className='min-w-0 flex-1 overflow-hidden rounded-lg border'>
+      <div ref={tableWrapperRef} className='min-w-0 flex-1 rounded-lg border'>
         {/* Single-block selector */}
         {!hasMultipleBlocks && hasApiBlocks && !readOnly && (
           <div className='flex items-center gap-3 border-b px-4 py-2.5'>
@@ -837,14 +938,15 @@ export default function OrderTemplateValues({
             </div>
           )}
 
-        <div className='overflow-x-auto'>
+        <div>
           <Table>
             <TableHeader>
               {/* Block group headers */}
               {hasMultipleBlocks && hasColumns && (
-                <TableRow className='bg-muted/30 border-b-2'>
+                <TableRow className='bg-muted border-b-2'>
                   <TableHead
-                    className='bg-muted/30 sticky left-0 z-10 min-w-[140px] border-r font-semibold'
+                    data-sticky-left
+                    className='bg-muted border-r font-semibold'
                     rowSpan={2}
                   >
                     Row / Item
@@ -907,16 +1009,24 @@ export default function OrderTemplateValues({
               )}
 
               {/* Column headers */}
-              <TableRow className='bg-muted/50'>
+              <TableRow className='bg-muted'>
                 {!hasMultipleBlocks && (
-                  <TableHead className='bg-muted/50 sticky left-0 z-10 min-w-[140px] font-semibold'>
+                  <TableHead
+                    data-sticky-left
+                    className='bg-muted font-semibold'
+                  >
                     Row / Item
                   </TableHead>
                 )}
                 {flatOrderedColumns.map((column) => (
                   <TableHead
                     key={column.id}
-                    className='min-w-[140px] text-center'
+                    className={cn(
+                      'text-center',
+                      hasMultipleBlocks &&
+                        blockBoundaryColumnIds.has(column.id) &&
+                        'border-l-border border-l-2'
+                    )}
                   >
                     <div className='flex flex-col items-center gap-1'>
                       <span className='font-semibold'>{column.label}</span>
@@ -953,7 +1063,13 @@ export default function OrderTemplateValues({
                     className={cn(isTotal && 'bg-muted font-semibold')}
                   >
                     {/* Row label */}
-                    <TableCell className='bg-background sticky left-0 z-10 font-medium'>
+                    <TableCell
+                      data-sticky-left
+                      className={cn(
+                        'font-medium',
+                        isTotal ? 'bg-muted' : 'bg-background'
+                      )}
+                    >
                       <div className='flex items-center gap-2'>
                         <span>{row.label}</span>
                         {isTotal && (
@@ -977,7 +1093,13 @@ export default function OrderTemplateValues({
                         return (
                           <TableCell
                             key={column.id}
-                            className={cn('text-center', isTotal && 'bg-muted')}
+                            className={cn(
+                              'text-center',
+                              isTotal && 'bg-muted',
+                              hasMultipleBlocks &&
+                                blockBoundaryColumnIds.has(column.id) &&
+                                'border-l-border border-l-2'
+                            )}
                           >
                             <div className='flex flex-col items-center gap-1'>
                               <div className='flex items-center gap-1.5'>
@@ -1006,7 +1128,12 @@ export default function OrderTemplateValues({
                         return (
                           <TableCell
                             key={column.id}
-                            className='bg-muted text-center'
+                            className={cn(
+                              'bg-muted text-center',
+                              hasMultipleBlocks &&
+                                blockBoundaryColumnIds.has(column.id) &&
+                                'border-l-border border-l-2'
+                            )}
                           >
                             <span className='font-mono text-sm font-medium'>
                               {displayValue}
@@ -1017,7 +1144,14 @@ export default function OrderTemplateValues({
 
                       // ── Regular editable / read-only cell ──────────────
                       return (
-                        <TableCell key={column.id}>
+                        <TableCell
+                          key={column.id}
+                          className={cn(
+                            hasMultipleBlocks &&
+                              blockBoundaryColumnIds.has(column.id) &&
+                              'border-l-border border-l-2'
+                          )}
+                        >
                           <div className='space-y-1'>
                             <Input
                               type={
@@ -1042,7 +1176,7 @@ export default function OrderTemplateValues({
                               }
                               disabled={disabled || readOnly}
                               className={cn(
-                                'h-9 min-w-[100px] text-center',
+                                'h-7 w-[5.5rem] text-center text-xs',
                                 cellError && 'border-destructive'
                               )}
                               step={

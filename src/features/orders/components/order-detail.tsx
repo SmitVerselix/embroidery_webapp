@@ -925,6 +925,17 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     return grouped;
   }, [entries]);
 
+  const sortedGroupedEntries = useMemo(() => {
+    const productTemplates = (order?.product?.templates ||
+      []) as TemplateWithDetails[];
+    const templateOrder = new Map(productTemplates.map((t, i) => [t.id, i]));
+
+    return Object.entries(groupedByTemplate).sort(
+      ([a], [b]) =>
+        (templateOrder.get(a) ?? 999) - (templateOrder.get(b) ?? 999)
+    );
+  }, [groupedByTemplate, order]);
+
   // ── FINAL CALC DATA ─────────────────────────────────────────────────
   const finalCalcData: FinalCalcData | undefined = useMemo(() => {
     if (!order || entries.length === 0) return undefined;
@@ -980,7 +991,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   // ── TEMPLATE LAYOUT ITEMS ───────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(
     () =>
-      Object.entries(groupedByTemplate).map(([templateId, templateEntries]) => {
+      sortedGroupedEntries.map(([templateId, templateEntries]) => {
         const parentEntry = templateEntries.find((e) => !e.isChild);
         const childEntries = templateEntries.filter((e) => e.isChild);
         const duplicateAllowed = canDuplicate(templateId);

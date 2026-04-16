@@ -345,6 +345,8 @@ export default function TemplateCanvasContainer({
         <div
           ref={containerRef}
           tabIndex={0}
+          data-canvas-scroll
+          data-canvas-zoom={zoom}
           className={cn(
             'absolute inset-0 overflow-auto outline-none',
             isDragging ? 'cursor-grabbing' : 'cursor-grab'
