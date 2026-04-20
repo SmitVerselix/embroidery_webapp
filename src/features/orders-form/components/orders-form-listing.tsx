@@ -198,7 +198,7 @@ export default function OrdersFormListing({ companyId }: OrderListingProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Order Form No</TableHead>
+              <TableHead>Invoice No</TableHead>
               <TableHead>Customer Name</TableHead>
               <TableHead>Product</TableHead>
               <TableHead>Design Type</TableHead>
@@ -237,7 +237,7 @@ export default function OrdersFormListing({ companyId }: OrderListingProps) {
                   onClick={() => handleViewOrder(order.id)}
                 >
                   <TableCell className='font-medium'>
-                    #{order.orderNo}
+                    {order.invoiceNo}
                   </TableCell>
                   <TableCell className='font-medium'>
                     {order.customer?.name || '—'}

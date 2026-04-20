@@ -55,7 +55,8 @@ const MULTI_VALUE_TYPES: OrderFormFieldType[] = [
 
 const TEMPLATE_LINKED_TYPES: OrderFormFieldType[] = [
   'SELECT_TEMPLATE_EXTRA_FIELD',
-  'SELECT_TEMPLATE_VALUE'
+  'SELECT_TEMPLATE_VALUE',
+  'SELECT_TEMPLATE'
 ];
 
 // =============================================================================
@@ -78,7 +79,8 @@ const orderFormMasterSchema = z
         'FILE',
         'RADIO',
         'SELECT_TEMPLATE_EXTRA_FIELD',
-        'SELECT_TEMPLATE_VALUE'
+        'SELECT_TEMPLATE_VALUE',
+        'SELECT_TEMPLATE'
       ],
       { message: 'Please select a field type' }
     ),
@@ -579,7 +581,7 @@ export default function OrderFormMasterForm({
                     )}
                   </div>
 
-                  {/* ── Extra Field selector ─────────────────────────── */}
+                  {/* ── Extra Field selector (SELECT_TEMPLATE_EXTRA_FIELD only) ── */}
                   {showExtraFields && (
                     <div className='space-y-4 rounded-md border p-4'>
                       <h5 className='text-sm font-medium'>
@@ -655,7 +657,7 @@ export default function OrderFormMasterForm({
                     </div>
                   )}
 
-                  {/* ── Row & Column selector ────────────────────────── */}
+                  {/* ── Row & Column selector (SELECT_TEMPLATE_VALUE only) ── */}
                   {showRowColumn && (
                     <div className='space-y-4 rounded-md border p-4'>
                       <h5 className='text-sm font-medium'>

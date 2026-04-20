@@ -18,7 +18,8 @@ import type {
   TemplateWithDetails,
   OrderTemplateData,
   OrderFormMaster,
-  CreateJobcardOrderData
+  CreateJobcardOrderData,
+  JobcardSelectedRow
 } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,17 +59,15 @@ import {
   PopoverTrigger
 } from '@/components/ui/popover';
 import { useDebounce } from '@/hooks/use-debounce';
-import TemplateRowColumnSelector, {
-  type SelectedRowsColumnsMap,
-  type ManualValue,
-  type RowBlockSelectionsMap
+import type {
+  SelectedRowsColumnsMap,
+  ManualValue,
+  RowBlockSelectionsMap
 } from './template-row-column-selector';
 import OrderFormFieldsDisplay, {
   resolveOrderFormFields,
   type ResolvedOrderFormField
 } from './order-form-fields-display';
-import type { TemplateLayoutItem } from '../../orders/components/template-layout-canvas';
-import TemplateCanvasContainer from '../../orders/components/template-canvas-container';
 import type { TemplateValuesMap } from '../../orders/components/order-template-values';
 
 // =============================================================================
@@ -84,26 +83,19 @@ function isNullOrZero(v: string | null | undefined): boolean {
   return !isNaN(n) && n === 0;
 }
 
-/**
- * Build default selection for a template:
- *   - rows  → empty (user must check)
- *   - columns → ALL isFinalCalculation column IDs (any dataType including FORMULA)
- */
 function buildAutoSelection(
   template: TemplateWithDetails
 ): SelectedRowsColumnsMap {
   const finalCalcCols = (template.columns || []).filter(
     (c) => c.isFinalCalculation === true
   );
+  const normalRows = (template.rows || []).filter((r) => r.rowType !== 'TOTAL');
   return {
-    rows: new Set<string>(),
+    rows: new Set(normalRows.map((r) => r.id)),
     columns: new Set(finalCalcCols.map((c) => c.id))
   };
 }
 
-/**
- * Get block groups for a template.
- */
 function getBlockGroupsForTemplate(template: TemplateWithDetails) {
   const finalCalcCols = (template.columns || []).filter(
     (c) => c.isFinalCalculation === true
@@ -123,8 +115,8 @@ function getBlockGroupsForTemplate(template: TemplateWithDetails) {
 }
 
 /**
- * Validate that all selected rows have values entered.
- * Returns true if valid, false if there are missing values.
+ * Validate template row/column values (the table checkboxes only).
+ * SELECT_TEMPLATE_VALUE order form fields are validated separately.
  */
 function validateTemplateValues(
   template: TemplateWithDetails,
@@ -160,9 +152,44 @@ function validateTemplateValues(
   return valid;
 }
 
-/** Check whether a fieldType holds multiple values */
 function isMultiValueFieldType(fieldType: string): boolean {
   return fieldType === 'CHECKBOX' || fieldType === 'MULTI_SELECT';
+}
+
+function hasNonZeroResolvedValue(value: string | null | undefined): boolean {
+  if (value == null || value === '') return false;
+  const n = parseFloat(value);
+  return !isNaN(n) && n !== 0;
+}
+
+/**
+ * Validate SELECT_TEMPLATE_VALUE fields.
+ *
+ * Simple rules:
+ *   - field.value is EMPTY  → checkbox is UNCHECKED → skip, not required.
+ *   - field.value is NON-EMPTY → checkbox is CHECKED → must be a valid
+ *     non-zero number. This covers both:
+ *       (a) fields with a resolved value shown as "(−)" — their resolvedValue
+ *           is already stored in field.value so they pass automatically.
+ *       (b) fields where the user typed a value manually.
+ */
+function validateSelectTemplateValueFields(fields: ResolvedOrderFormField[]): {
+  valid: boolean;
+  errorField: string | null;
+} {
+  for (const field of fields.filter(
+    (f) => f.fieldType === 'SELECT_TEMPLATE_VALUE' && f.templateId
+  )) {
+    // Empty → unchecked → not required.
+    if (!field.value || field.value.trim() === '') continue;
+
+    // Non-empty → checked → must be a valid non-zero number.
+    const n = parseFloat(field.value);
+    if (isNaN(n) || n === 0) {
+      return { valid: false, errorField: field.fieldName };
+    }
+  }
+  return { valid: true, errorField: null };
 }
 
 // =============================================================================
@@ -199,17 +226,14 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const [referenceNoDisplay, setReferenceNoDisplay] = useState('');
 
-  // ── Templates from the referenced order's product ───────────────────
+  // ── Templates ───────────────────────────────────────────────────────
   const [templates, setTemplates] = useState<TemplateWithDetails[]>([]);
-
   const [templateValues, setTemplateValues] = useState<
     Record<string, TemplateValuesMap>
   >({});
-
   const [selections, setSelections] = useState<
     Record<string, SelectedRowsColumnsMap>
   >({});
-
   const [manualValues, setManualValues] = useState<
     Record<string, ManualValue[]>
   >({});
@@ -240,11 +264,12 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
   const [resolvedFields, setResolvedFields] = useState<
     ResolvedOrderFormField[]
   >([]);
-
-  // ── Order form file upload tracking ─────────────────────────────────
   const [uploadingFieldIds, setUploadingFieldIds] = useState<Set<string>>(
     new Set()
   );
+  const [templateSummariesMap, setTemplateSummariesMap] = useState<
+    Record<string, { finalPayableAmount: string | null }>
+  >({});
 
   // ── Submit state ────────────────────────────────────────────────────
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -253,10 +278,10 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
   const isReferenceMode = !!referencedOrder;
 
   // ══════════════════════════════════════════════════════════════════════
-  // COMPUTED TOTAL OF SELECTED ROWS (frontend-only, not sent to API)
+  // COMPUTED TOTAL
   // ══════════════════════════════════════════════════════════════════════
 
-  const totalSelectedValue = useMemo(() => {
+  const totalSelectedValue = useMemo<number>(() => {
     if (!referencedOrder) return 0;
     let total = 0;
 
@@ -285,14 +310,11 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
             const manual = manuals.find(
               (m) => m.rowId === rowId && m.columnId === col.id
             );
-            if (manual) {
-              total += parseFloat(manual.value) || 0;
-            }
+            if (manual) total += parseFloat(manual.value) || 0;
           }
         });
       });
 
-      // Child templates
       (refChildrenMeta[tmpl.id] || []).forEach((_, idx) => {
         const ck = getChildKey(tmpl.id, idx);
         const cSel = childSelections[ck];
@@ -300,7 +322,6 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
         const cVals = childTemplateValues[ck] || {};
         const cManuals = childManualValues[ck] || [];
         const cRbs = childRowBlockSelectionsMap[ck] || {};
-
         cSel.rows.forEach((rowId) => {
           let colsForRow = finalCalcCols;
           if (hasMultipleBlocks) {
@@ -317,9 +338,7 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
               const manual = cManuals.find(
                 (m) => m.rowId === rowId && m.columnId === col.id
               );
-              if (manual) {
-                total += parseFloat(manual.value) || 0;
-              }
+              if (manual) total += parseFloat(manual.value) || 0;
             }
           });
         });
@@ -367,7 +386,7 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
   }, [companyId]);
 
   // ══════════════════════════════════════════════════════════════════════
-  // FETCH ORDERS LIST (for design picker popover)
+  // FETCH ORDERS LIST
   // ══════════════════════════════════════════════════════════════════════
 
   useEffect(() => {
@@ -420,6 +439,16 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
           resolveOrderFormFields(forms, orderData.templates || [], tCache)
         );
 
+        const summaries: Record<string, { finalPayableAmount: string | null }> =
+          {};
+        (orderData.templates || []).forEach((td: OrderTemplateData) => {
+          const rawSummary = (td as any).summary;
+          summaries[td.templateId] = {
+            finalPayableAmount: rawSummary?.finalPayableAmount ?? null
+          };
+        });
+        setTemplateSummariesMap(summaries);
+
         const loadedVals: Record<string, TemplateValuesMap> = {};
         const loadedSels: Record<string, SelectedRowsColumnsMap> = {};
         const loadedChildMeta: Record<string, { templateId: string }[]> = {};
@@ -428,7 +457,10 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
 
         fullTemplates.forEach((t) => {
           loadedVals[t.id] = {};
-          loadedSels[t.id] = buildAutoSelection(t);
+          loadedSels[t.id] = {
+            rows: new Set<string>(),
+            columns: new Set<string>()
+          };
         });
 
         (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
@@ -451,10 +483,10 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
                 cvm[v.rowId][v.columnId] = v.calculatedValue ?? v.value ?? '';
               });
               loadedChildVals[ck] = cvm;
-              const parentTmpl = tCache[tid];
-              loadedChildSels[ck] = parentTmpl
-                ? buildAutoSelection(parentTmpl)
-                : { rows: new Set<string>(), columns: new Set<string>() };
+              loadedChildSels[ck] = {
+                rows: new Set<string>(),
+                columns: new Set<string>()
+              };
             });
           }
         });
@@ -499,54 +531,13 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
     setRowBlockSelectionsMap({});
     setChildRowBlockSelectionsMap({});
     setUploadingFieldIds(new Set());
+    setTemplateSummariesMap({});
     setSubmitError(null);
   }, []);
 
   // ══════════════════════════════════════════════════════════════════════
-  // SELECTION HANDLERS
+  // FIELD CHANGE HANDLERS
   // ══════════════════════════════════════════════════════════════════════
-
-  const handleSelectionChange = useCallback(
-    (templateId: string, sel: SelectedRowsColumnsMap) => {
-      setSelections((p) => ({ ...p, [templateId]: sel }));
-    },
-    []
-  );
-
-  const handleChildSelectionChange = useCallback(
-    (childKey: string, sel: SelectedRowsColumnsMap) => {
-      setChildSelections((p) => ({ ...p, [childKey]: sel }));
-    },
-    []
-  );
-
-  const handleManualValuesChange = useCallback(
-    (templateId: string, vals: ManualValue[]) => {
-      setManualValues((p) => ({ ...p, [templateId]: vals }));
-    },
-    []
-  );
-
-  const handleChildManualValuesChange = useCallback(
-    (childKey: string, vals: ManualValue[]) => {
-      setChildManualValues((p) => ({ ...p, [childKey]: vals }));
-    },
-    []
-  );
-
-  const handleRowBlockSelectionsChange = useCallback(
-    (templateId: string, map: RowBlockSelectionsMap) => {
-      setRowBlockSelectionsMap((p) => ({ ...p, [templateId]: map }));
-    },
-    []
-  );
-
-  const handleChildRowBlockSelectionsChange = useCallback(
-    (childKey: string, map: RowBlockSelectionsMap) => {
-      setChildRowBlockSelectionsMap((p) => ({ ...p, [childKey]: map }));
-    },
-    []
-  );
 
   const handleOrderFormFieldChange = useCallback(
     (fieldId: string, value: string) => {
@@ -557,9 +548,6 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
     []
   );
 
-  /**
-   * Upload a file for an order form field (IMAGE / FILE type).
-   */
   const handleOrderFormFileUpload = useCallback(
     async (fieldId: string, file: File) => {
       setUploadingFieldIds((prev) => new Set(prev).add(fieldId));
@@ -584,96 +572,6 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
   );
 
   // ══════════════════════════════════════════════════════════════════════
-  // TEMPLATE LAYOUT ITEMS
-  // ══════════════════════════════════════════════════════════════════════
-
-  const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
-    return templates.map((tmpl) => {
-      const childMeta = refChildrenMeta[tmpl.id];
-      const hasChildren = childMeta && childMeta.length > 0;
-
-      return {
-        id: tmpl.id,
-        label: tmpl.name || tmpl.id,
-        children: (
-          <div className={hasChildren ? 'flex items-start gap-4' : ''}>
-            <div className={hasChildren ? 'min-w-0 flex-1' : ''}>
-              {hasChildren && (
-                <div className='mb-2'>
-                  <Badge variant='outline' className='text-xs font-normal'>
-                    Parent Template
-                  </Badge>
-                </div>
-              )}
-              <TemplateRowColumnSelector
-                template={tmpl}
-                values={templateValues[tmpl.id] || {}}
-                selection={selections[tmpl.id] || buildAutoSelection(tmpl)}
-                onSelectionChange={(sel) => handleSelectionChange(tmpl.id, sel)}
-                onManualValuesChange={(vals) =>
-                  handleManualValuesChange(tmpl.id, vals)
-                }
-                onRowBlockSelectionsChange={(map) =>
-                  handleRowBlockSelectionsChange(tmpl.id, map)
-                }
-                disabled={isSubmitting}
-              />
-            </div>
-
-            {hasChildren &&
-              childMeta.map((_, idx) => {
-                const ck = getChildKey(tmpl.id, idx);
-                return (
-                  <div key={ck} className='min-w-0 flex-1'>
-                    <div className='mb-2'>
-                      <Badge
-                        variant='secondary'
-                        className='text-xs font-normal'
-                      >
-                        Duplicate #{idx + 1}
-                      </Badge>
-                    </div>
-                    <TemplateRowColumnSelector
-                      template={tmpl}
-                      values={childTemplateValues[ck] || {}}
-                      selection={
-                        childSelections[ck] || buildAutoSelection(tmpl)
-                      }
-                      onSelectionChange={(sel) =>
-                        handleChildSelectionChange(ck, sel)
-                      }
-                      onManualValuesChange={(vals) =>
-                        handleChildManualValuesChange(ck, vals)
-                      }
-                      onRowBlockSelectionsChange={(map) =>
-                        handleChildRowBlockSelectionsChange(ck, map)
-                      }
-                      disabled={isSubmitting}
-                    />
-                  </div>
-                );
-              })}
-          </div>
-        )
-      };
-    });
-  }, [
-    templates,
-    refChildrenMeta,
-    templateValues,
-    childTemplateValues,
-    selections,
-    childSelections,
-    isSubmitting,
-    handleSelectionChange,
-    handleChildSelectionChange,
-    handleManualValuesChange,
-    handleChildManualValuesChange,
-    handleRowBlockSelectionsChange,
-    handleChildRowBlockSelectionsChange
-  ]);
-
-  // ══════════════════════════════════════════════════════════════════════
   // SUBMIT
   // ══════════════════════════════════════════════════════════════════════
 
@@ -694,29 +592,60 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
       return;
     }
 
-    // ── Validate all selected rows have values ──────────────────────
+    // ── Validate SELECT_TEMPLATE fields ─────────────────────────────
+    for (const field of resolvedFields.filter(
+      (f) => f.fieldType === 'SELECT_TEMPLATE' && f.templateId
+    )) {
+      if (field.value && field.value.trim() !== '') {
+        const n = parseFloat(field.value);
+        if (isNaN(n) || n === 0) {
+          setSubmitError(
+            `Please enter a valid value for "${field.fieldName}".`
+          );
+          return;
+        }
+      }
+    }
+
+    // ── Validate SELECT_TEMPLATE_VALUE fields ────────────────────────
+    const stvValidation = validateSelectTemplateValueFields(resolvedFields);
+    if (!stvValidation.valid) {
+      setSubmitError(
+        `Please enter a valid value for "${stvValidation.errorField}".`
+      );
+      return;
+    }
+
+    // ── Validate template row/column table (checked rows only) ───────
     let hasEmptyValues = false;
     templates.forEach((tmpl) => {
       const sel = selections[tmpl.id] || buildAutoSelection(tmpl);
       if (sel.rows.size === 0) return;
-      const vals = templateValues[tmpl.id] || {};
-      const manuals = manualValues[tmpl.id] || [];
-      const rbs = rowBlockSelectionsMap[tmpl.id] || {};
-
-      if (!validateTemplateValues(tmpl, sel, vals, manuals, rbs)) {
+      if (
+        !validateTemplateValues(
+          tmpl,
+          sel,
+          templateValues[tmpl.id] || {},
+          manualValues[tmpl.id] || [],
+          rowBlockSelectionsMap[tmpl.id] || {}
+        )
+      ) {
         hasEmptyValues = true;
       }
 
-      // Check children
       (refChildrenMeta[tmpl.id] || []).forEach((_, idx) => {
         const ck = getChildKey(tmpl.id, idx);
         const cSel = childSelections[ck] || buildAutoSelection(tmpl);
         if (cSel.rows.size === 0) return;
-        const cVals = childTemplateValues[ck] || {};
-        const cManuals = childManualValues[ck] || [];
-        const cRbs = childRowBlockSelectionsMap[ck] || {};
-
-        if (!validateTemplateValues(tmpl, cSel, cVals, cManuals, cRbs)) {
+        if (
+          !validateTemplateValues(
+            tmpl,
+            cSel,
+            childTemplateValues[ck] || {},
+            childManualValues[ck] || [],
+            childRowBlockSelectionsMap[ck] || {}
+          )
+        ) {
           hasEmptyValues = true;
         }
       });
@@ -724,84 +653,201 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
 
     if (hasEmptyValues) {
       setSubmitError(
-        'Please enter values for all selected rows before submitting. Look for fields marked "Required".'
+        'Please enter values for all selected rows before saving. Look for fields marked "Required".'
       );
       return;
     }
 
     setIsSubmitting(true);
     try {
-      // ── selectedRowIds: { rowId, columnId }[] ──────────────────────
-      const selectedRowIds: { rowId: string; columnId: string }[] = [];
+      // ── Build selectedRowIds ───────────────────────────────────────
+      const selectedRowIds: JobcardSelectedRow[] = [];
 
       templates.forEach((tmpl) => {
         const { finalCalcCols, hasMultipleBlocks, defaultBlockIndex } =
           getBlockGroupsForTemplate(tmpl);
         const rbs = rowBlockSelectionsMap[tmpl.id] || {};
+        const sel = selections[tmpl.id];
+        if (!sel || sel.rows.size === 0) return;
 
-        // Parent template rows
-        const sel = selections[tmpl.id] || buildAutoSelection(tmpl);
         sel.rows.forEach((rowId) => {
-          let colsForRow = finalCalcCols;
+          let cols = finalCalcCols;
           if (hasMultipleBlocks) {
-            const blockIdx = rbs[rowId] ?? defaultBlockIndex;
-            colsForRow = finalCalcCols.filter(
-              (c) => (c.blockIndex ?? 0) === blockIdx
-            );
+            const bi = rbs[rowId] ?? defaultBlockIndex;
+            cols = finalCalcCols.filter((c) => (c.blockIndex ?? 0) === bi);
           }
-          colsForRow.forEach((col) => {
-            selectedRowIds.push({ rowId, columnId: col.id });
-          });
-        });
-
-        // Child template rows
-        (refChildrenMeta[tmpl.id] || []).forEach((_, idx) => {
-          const ck = getChildKey(tmpl.id, idx);
-          const cSel = childSelections[ck] || buildAutoSelection(tmpl);
-          const cRbs = childRowBlockSelectionsMap[ck] || {};
-          cSel.rows.forEach((rowId) => {
-            let colsForRow = finalCalcCols;
-            if (hasMultipleBlocks) {
-              const blockIdx = cRbs[rowId] ?? defaultBlockIndex;
-              colsForRow = finalCalcCols.filter(
-                (c) => (c.blockIndex ?? 0) === blockIdx
-              );
-            }
-            colsForRow.forEach((col) => {
-              selectedRowIds.push({ rowId, columnId: col.id });
-            });
-          });
-        });
-      });
-
-      // ── manualValues ───────────────────────────────────────────────
-      const allManualValues: CreateJobcardOrderData['manualValues'] = [];
-      templates.forEach((tmpl) => {
-        (manualValues[tmpl.id] || []).forEach((mv) => allManualValues.push(mv));
-        (refChildrenMeta[tmpl.id] || []).forEach((_, idx) => {
-          const ck = getChildKey(tmpl.id, idx);
-          (childManualValues[ck] || []).forEach((mv) =>
-            allManualValues.push(mv)
+          cols.forEach((col) =>
+            selectedRowIds.push({
+              rowId,
+              columnId: col.id,
+              templateId: tmpl.id
+            })
           );
         });
+
+        (refChildrenMeta[tmpl.id] || []).forEach((childMeta, idx) => {
+          const ck = getChildKey(tmpl.id, idx);
+          const cSel = childSelections[ck];
+          if (!cSel || cSel.rows.size === 0) return;
+          const cRbs = childRowBlockSelectionsMap[ck] || {};
+          cSel.rows.forEach((rowId) => {
+            let cols = finalCalcCols;
+            if (hasMultipleBlocks) {
+              const bi = cRbs[rowId] ?? defaultBlockIndex;
+              cols = finalCalcCols.filter((c) => (c.blockIndex ?? 0) === bi);
+            }
+            cols.forEach((col) =>
+              selectedRowIds.push({
+                rowId,
+                columnId: col.id,
+                templateId: childMeta.templateId
+              })
+            );
+          });
+        });
       });
 
-      // ── orderFormValues ────────────────────────────────────────────
-      // All fields → value: string (multi-value fields as comma-separated)
-      const orderFormValues = resolvedFields
-        .filter((f) => f.value && f.value.trim() !== '')
-        .map((f) => ({
-          orderFormsMasterId: f.id,
-          value: f.value ?? ''
-        }));
+      // SELECT_TEMPLATE fields → rowId and columnId as null
+      resolvedFields
+        .filter(
+          (f) =>
+            f.fieldType === 'SELECT_TEMPLATE' &&
+            f.templateId &&
+            f.value &&
+            f.value.trim() !== ''
+        )
+        .forEach((f) => {
+          selectedRowIds.push({
+            rowId: null,
+            columnId: null,
+            templateId: f.templateId!
+          });
+        });
 
-      // ── Final payload ──────────────────────────────────────────────
+      // SELECT_TEMPLATE_VALUE fields → send rowId and columnId in selectedRowIds
+      resolvedFields
+        .filter(
+          (f) =>
+            f.fieldType === 'SELECT_TEMPLATE_VALUE' &&
+            f.templateId &&
+            f.rowId &&
+            f.columnId &&
+            f.value &&
+            f.value.trim() !== ''
+        )
+        .forEach((f) => {
+          selectedRowIds.push({
+            rowId: f.rowId!,
+            columnId: f.columnId!,
+            templateId: f.templateId!
+          });
+        });
+
+      // ── Build allManualValues ──────────────────────────────────────
+      const allManualValues: any[] = [];
+
+      templates.forEach((tmpl) => {
+        (manualValues[tmpl.id] || [])
+          .filter((mv) => mv.value.trim() !== '' && !isNullOrZero(mv.value))
+          .forEach((mv) =>
+            allManualValues.push({
+              templateId: tmpl.id,
+              rowId: mv.rowId,
+              columnId: mv.columnId,
+              value: mv.value
+            })
+          );
+        (refChildrenMeta[tmpl.id] || []).forEach((childMeta, idx) => {
+          const ck = getChildKey(tmpl.id, idx);
+          (childManualValues[ck] || [])
+            .filter((mv) => mv.value.trim() !== '' && !isNullOrZero(mv.value))
+            .forEach((mv) =>
+              allManualValues.push({
+                templateId: childMeta.templateId,
+                rowId: mv.rowId,
+                columnId: mv.columnId,
+                value: mv.value
+              })
+            );
+        });
+      });
+
+      // SELECT_TEMPLATE_VALUE manual values
+      resolvedFields
+        .filter(
+          (f) =>
+            f.fieldType === 'SELECT_TEMPLATE_VALUE' &&
+            f.templateId &&
+            f.rowId &&
+            f.columnId &&
+            f.value &&
+            f.value.trim() !== ''
+        )
+        .forEach((f) => {
+          if (!hasNonZeroResolvedValue(f.resolvedValue)) {
+            allManualValues.push({
+              type: 'SELECT_TEMPLATE_VALUE',
+              templateId: f.templateId!,
+              rowId: f.rowId!,
+              columnId: f.columnId!,
+              value: f.value
+            });
+          }
+        });
+
+      // SELECT_TEMPLATE manual values
+      resolvedFields
+        .filter(
+          (f) =>
+            f.fieldType === 'SELECT_TEMPLATE' &&
+            f.templateId &&
+            f.value &&
+            f.value.trim() !== ''
+        )
+        .forEach((f) => {
+          allManualValues.push({
+            type: 'SELECT_TEMPLATE',
+            templateId: f.templateId!,
+            rowId: null,
+            columnId: null,
+            value: f.value
+          });
+        });
+
+      // ── orderFormValues (exclude SELECT_TEMPLATE and SELECT_TEMPLATE_VALUE) ──
+      const orderFormValues: {
+        orderFormsMasterId: string;
+        value?: string;
+        jsonValue?: string[];
+      }[] = resolvedFields
+        .filter(
+          (f) =>
+            f.value &&
+            f.value.trim() !== '' &&
+            f.fieldType !== 'SELECT_TEMPLATE_VALUE' &&
+            f.fieldType !== 'SELECT_TEMPLATE'
+        )
+        .map((f) => {
+          if (isMultiValueFieldType(f.fieldType)) {
+            const jsonValue = f.value
+              .split(',')
+              .map((v) => v.trim())
+              .filter(Boolean);
+            return jsonValue.length > 0
+              ? { orderFormsMasterId: f.id, jsonValue }
+              : { orderFormsMasterId: f.id, value: f.value };
+          }
+          return { orderFormsMasterId: f.id, value: f.value ?? '' };
+        });
+
       const payload: CreateJobcardOrderData = {
         designId: referencedOrder.id,
         customerId: selectedCustomerId,
         selectedRowIds,
-        manualValues: allManualValues,
-        orderFormValues
+        ...(allManualValues.length > 0
+          ? { manualValues: allManualValues }
+          : {}),
+        ...(orderFormValues.length > 0 ? { orderFormValues } : {})
       };
 
       await createJobcardOrder(companyId, payload);
@@ -815,7 +861,6 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
   };
 
   const backUrl = `/dashboard/${companyId}/orders`;
-  const hasTemplates = templates.length > 0;
 
   // ══════════════════════════════════════════════════════════════════════
   // RENDER
@@ -987,7 +1032,7 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
               )}
             </div>
 
-            {/* ── Value: sum of selected rows (frontend-only) ── */}
+            {/* Value: sum of selected rows */}
             {isReferenceMode && !isLoadingReference && (
               <div className='space-y-2'>
                 <Label>Value</Label>
@@ -1017,6 +1062,7 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
                     onFieldValueChange={handleOrderFormFieldChange}
                     onFileUpload={handleOrderFormFileUpload}
                     uploadingFieldIds={uploadingFieldIds}
+                    templateSummaries={templateSummariesMap}
                     disabled={isSubmitting}
                   />
                 </>
@@ -1024,7 +1070,7 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
           </CardContent>
         </Card>
 
-        {/* ── Referenced Design Info Card ──────────────────────────── */}
+        {/* Referenced Design Info Card */}
         {isReferenceMode && referencedOrder && (
           <Card className='border-primary/20 bg-primary/5'>
             <CardHeader className='pb-3'>
@@ -1033,8 +1079,8 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
                 Referenced Design — #{referencedOrder.orderNo}
               </CardTitle>
               <CardDescription>
-                Check the rows you want to include. Where a final calculation
-                value is missing, enter it manually.
+                Use the checkboxes above to select which templates to include.
+                Where a value is missing, enter it manually.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1075,31 +1121,6 @@ export default function OrdersForm({ companyId }: OrderFormProps) {
               </p>
             </div>
           </div>
-        )}
-
-        {isReferenceMode && !isLoadingReference && hasTemplates && (
-          <>
-            <Separator />
-            <TemplateCanvasContainer
-              items={templateLayoutItems}
-              persistKey={`create-${referencedOrder?.productId || 'new'}`}
-              title='Select Rows'
-              subtitle='Check rows to include. Select a block per row, then enter a value manually where final calculation is missing.'
-            />
-          </>
-        )}
-
-        {isReferenceMode && !isLoadingReference && !hasTemplates && (
-          <Card>
-            <CardContent className='py-8'>
-              <div className='flex flex-col items-center justify-center text-center'>
-                <AlertCircle className='text-muted-foreground mb-2 h-8 w-8' />
-                <p className='text-muted-foreground text-sm'>
-                  No templates found for this product.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
         )}
 
         {submitError && (

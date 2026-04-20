@@ -83,6 +83,8 @@ function getFieldTypeIcon(fieldType: OrderFormFieldType) {
       return <LayoutTemplate className='h-3.5 w-3.5' />;
     case 'SELECT_TEMPLATE_VALUE':
       return <Table2 className='h-3.5 w-3.5' />;
+    case 'SELECT_TEMPLATE':
+      return <LayoutTemplate className='h-3.5 w-3.5' />;
     default:
       return <Type className='h-3.5 w-3.5' />;
   }
@@ -234,6 +236,19 @@ function InlineInput({ field }: { field: OrderFormMaster }) {
         </div>
       );
 
+    case 'SELECT_TEMPLATE':
+      return (
+        <div className='border-muted-foreground/30 flex h-8 flex-1 items-center justify-between border-b border-dashed px-1'>
+          <div className='flex items-center gap-1.5'>
+            <LayoutTemplate className='text-muted-foreground/40 h-3 w-3' />
+            <span className='text-muted-foreground/40 text-xs italic'>
+              Select template…
+            </span>
+          </div>
+          {chevron}
+        </div>
+      );
+
     default:
       return (
         <div className='border-muted-foreground/30 flex h-8 flex-1 items-center border-b border-dashed px-1'>
@@ -330,7 +345,8 @@ function SortableFormRow({ field }: { field: OrderFormMaster }) {
         {/* Template link info */}
         {field.templateId &&
           (field.fieldType === 'SELECT_TEMPLATE_EXTRA_FIELD' ||
-            field.fieldType === 'SELECT_TEMPLATE_VALUE') && (
+            field.fieldType === 'SELECT_TEMPLATE_VALUE' ||
+            field.fieldType === 'SELECT_TEMPLATE') && (
             <div className='mt-1 flex items-center gap-2 text-[10px]'>
               {field.template ? (
                 <span className='text-muted-foreground/60'>

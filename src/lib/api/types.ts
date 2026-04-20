@@ -662,6 +662,7 @@ export type Order = {
   id: string;
   isActive: boolean;
   orderNo: string;
+  invoiceNo: string | null;
   productId: string;
   orderType: OrderType;
   description: string | null;
@@ -788,25 +789,45 @@ export type UpdateFinalCalculationData = {
 // ORDER FORM JOBCARD TYPES
 // =============================================================================
 
+export type JobcardSelectedRow =
+  | { rowId: string; columnId: string; templateId: string }
+  | { rowId: null; columnId: null; templateId: string };
+
 export interface CreateJobcardOrderData {
   designId: string;
   customerId: string;
-  selectedRowIds: { rowId: string; columnId: string }[];
-  manualValues: { rowId: string; columnId: string; value: string }[];
-  orderFormValues: { orderFormsMasterId: string; value: string }[];
+  selectedRowIds: JobcardSelectedRow[];
+  manualValues?: {
+    type?: string;
+    templateId?: string;
+    rowId?: string;
+    columnId?: string;
+    value: string;
+  }[];
+  orderFormValues?: {
+    orderFormsMasterId: string;
+    value?: string;
+    jsonValue?: string[];
+  }[];
 }
 
 export interface UpdateJobcardOrderData {
   designId: string;
   customerId: string;
-  selectedRowIds: { rowId: string; columnId: string }[];
-  manualValues: {
+  selectedRowIds: JobcardSelectedRow[];
+  manualValues?: {
+    type?: string;
     orderTemplateId?: string;
-    rowId: string;
-    columnId: string;
+    templateId?: string;
+    rowId?: string;
+    columnId?: string;
     value: string;
   }[];
-  orderFormValues: { orderFormsMasterId: string; value: string }[];
+  orderFormValues?: {
+    orderFormsMasterId: string;
+    value?: string;
+    jsonValue?: string[];
+  }[];
   deleteOrderFormValueIds?: string[];
 }
 
@@ -1389,7 +1410,8 @@ export type OrderFormFieldType =
   | 'FILE'
   | 'RADIO'
   | 'SELECT_TEMPLATE_EXTRA_FIELD'
-  | 'SELECT_TEMPLATE_VALUE';
+  | 'SELECT_TEMPLATE_VALUE'
+  | 'SELECT_TEMPLATE';
 
 export const ORDER_FORM_FIELD_TYPES: {
   label: string;
@@ -1416,6 +1438,11 @@ export const ORDER_FORM_FIELD_TYPES: {
     label: 'Template Value',
     value: 'SELECT_TEMPLATE_VALUE',
     description: 'Link to a template row/column value'
+  },
+  {
+    value: 'SELECT_TEMPLATE',
+    label: 'Select Template',
+    description: 'Let user pick a template from the list'
   }
 ];
 

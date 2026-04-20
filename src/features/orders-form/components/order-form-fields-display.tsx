@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   OrderFormMaster,
   OrderTemplateData,
@@ -10,6 +10,7 @@ import type {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -46,6 +47,12 @@ export type ResolvedOrderFormField = {
   extraIndex: number | null;
   extraValueType: ExtraValueType | null;
   sortOrder: number;
+  /** Name of the referenced template (for SELECT_TEMPLATE_VALUE) */
+  templateName: string | null;
+  /** Label of the referenced row (for SELECT_TEMPLATE_VALUE) */
+  rowLabel: string | null;
+  /** Label of the referenced column (for SELECT_TEMPLATE_VALUE) */
+  columnLabel: string | null;
 };
 
 // =============================================================================
@@ -73,6 +80,38 @@ export function resolveOrderFormFields(
       let resolvedValue = '';
       let extraValueType: ExtraValueType | null = null;
       const sortOrder = (field as any).index ?? field.orderNo ?? 0;
+
+      // ── Extract template / row / column names ────────────────────
+      const templateName: string | null =
+        (field as any).template?.name ??
+        (field.templateId
+          ? (templateCache[field.templateId]?.name ?? null)
+          : null);
+
+      let rowLabel: string | null = (field as any).row?.label ?? null;
+      let columnLabel: string | null = (field as any).column?.label ?? null;
+
+      // Fallback: look up from templateCache if not embedded
+      if (
+        !rowLabel &&
+        field.templateId &&
+        field.rowId &&
+        templateCache[field.templateId]
+      ) {
+        const tmpl = templateCache[field.templateId];
+        const row = (tmpl.rows || []).find((r) => r.id === field.rowId);
+        if (row) rowLabel = row.label;
+      }
+      if (
+        !columnLabel &&
+        field.templateId &&
+        field.columnId &&
+        templateCache[field.templateId]
+      ) {
+        const tmpl = templateCache[field.templateId];
+        const col = (tmpl.columns || []).find((c) => c.id === field.columnId);
+        if (col) columnLabel = col.label;
+      }
 
       if (
         field.fieldType === 'SELECT_TEMPLATE_VALUE' &&
@@ -150,7 +189,10 @@ export function resolveOrderFormFields(
         extraId: field.extraId,
         extraIndex: field.extraIndex ?? null,
         extraValueType,
-        sortOrder
+        sortOrder,
+        templateName,
+        rowLabel,
+        columnLabel
       };
     });
 }
@@ -174,6 +216,24 @@ const getFileNameFromUrl = (url: string): string => {
   }
 };
 
+/**
+ * Check if a finalPayableAmount value is valid (non-null, non-empty, non-zero).
+ */
+function isValidFinalPayableAmount(value: string | null | undefined): boolean {
+  if (value == null || value === '') return false;
+  const n = parseFloat(value);
+  return !isNaN(n) && n !== 0;
+}
+
+/**
+ * Check whether a resolved value is a "real" non-zero value.
+ */
+function hasNonZeroResolvedValue(value: string | null | undefined): boolean {
+  if (value == null || value.trim() === '') return false;
+  const n = parseFloat(value);
+  return !isNaN(n) && n !== 0;
+}
+
 // =============================================================================
 // PROPS
 // =============================================================================
@@ -187,140 +247,12 @@ interface OrderFormFieldsDisplayProps {
   onFileUpload?: (fieldId: string, file: File) => Promise<void>;
   /** Set of field IDs that currently have an upload in progress. */
   uploadingFieldIds?: Set<string>;
+  /**
+   * Template summaries keyed by templateId.
+   * Used by SELECT_TEMPLATE fields to derive checkbox state from finalPayableAmount.
+   */
+  templateSummaries?: Record<string, { finalPayableAmount: string | null }>;
   disabled?: boolean;
-}
-
-// =============================================================================
-// SHARED SUB-COMPONENTS (to avoid duplicating the image/file UI)
-// =============================================================================
-
-/** Shared image field UI — used for both SELECT_TEMPLATE_EXTRA_FIELD+IMAGE and standalone IMAGE */
-function ImageFieldRenderer({
-  field,
-  isUploading,
-  disabled,
-  onFileUpload,
-  fileInputRef,
-  onFileInputChange,
-  onRemoveFile
-}: {
-  field: ResolvedOrderFormField;
-  isUploading: boolean;
-  disabled: boolean;
-  onFileUpload?: (fieldId: string, file: File) => Promise<void>;
-  fileInputRef: (el: HTMLInputElement | null) => void;
-  onFileInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onRemoveFile: () => void;
-}) {
-  const hasValue = !!field.value?.trim();
-
-  return (
-    <div className='space-y-2'>
-      <Label>{field.fieldName}</Label>
-
-      {/* Hidden file input */}
-      <input
-        type='file'
-        ref={fileInputRef}
-        accept='image/*'
-        onChange={onFileInputChange}
-        className='hidden'
-        disabled={disabled || isUploading}
-      />
-
-      {isUploading ? (
-        <div className='bg-muted/30 flex h-32 flex-col items-center justify-center rounded-lg border-2 border-dashed'>
-          <Loader2 className='text-primary mb-1 h-6 w-6 animate-spin' />
-          <span className='text-muted-foreground text-xs'>
-            Uploading image…
-          </span>
-        </div>
-      ) : hasValue ? (
-        <div className='overflow-hidden rounded-lg border'>
-          {isImageUrl(field.value) ? (
-            <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={field.value}
-                alt={field.fieldName}
-                className='h-auto max-h-64 w-full object-contain'
-                onError={(e) => {
-                  const img = e.target as HTMLImageElement;
-                  img.style.display = 'none';
-                  const fb = img.nextElementSibling;
-                  if (fb) (fb as HTMLElement).style.display = 'flex';
-                }}
-              />
-              <div className='bg-muted text-muted-foreground hidden h-32 items-center justify-center gap-2 text-sm'>
-                <ImageIcon className='h-5 w-5' />
-                Failed to load image
-              </div>
-            </>
-          ) : (
-            <div className='bg-muted text-muted-foreground flex h-32 items-center justify-center gap-2 text-sm'>
-              <ImageIcon className='h-5 w-5' />
-              Image uploaded
-            </div>
-          )}
-
-          {onFileUpload && (
-            <div className='bg-muted/30 flex items-center gap-1 border-t p-1.5'>
-              <Button
-                type='button'
-                size='sm'
-                variant='ghost'
-                className='h-7 flex-1 text-xs'
-                onClick={() => {
-                  const input = (fileInputRef as any)?.__el;
-                  input?.click();
-                }}
-                disabled={disabled}
-              >
-                <Upload className='mr-1 h-3 w-3' />
-                Replace
-              </Button>
-              <Button
-                type='button'
-                size='sm'
-                variant='ghost'
-                className='text-destructive hover:text-destructive h-7 flex-1 text-xs'
-                onClick={onRemoveFile}
-                disabled={disabled}
-              >
-                <X className='mr-1 h-3 w-3' />
-                Remove
-              </Button>
-            </div>
-          )}
-        </div>
-      ) : onFileUpload ? (
-        <button
-          type='button'
-          onClick={() => {
-            const input = (fileInputRef as any)?.__el;
-            input?.click();
-          }}
-          disabled={disabled}
-          className={cn(
-            'bg-muted/30 flex h-32 w-full flex-col items-center justify-center rounded-lg border-2 border-dashed',
-            'hover:bg-muted/50 hover:border-primary/50 cursor-pointer transition-colors',
-            'focus:ring-ring focus:ring-2 focus:ring-offset-2 focus:outline-none',
-            disabled && 'cursor-not-allowed opacity-50'
-          )}
-        >
-          <Upload className='text-muted-foreground mb-1 h-5 w-5' />
-          <span className='text-muted-foreground text-xs'>
-            Click to upload image
-          </span>
-        </button>
-      ) : (
-        <div className='bg-muted text-muted-foreground flex h-32 items-center justify-center gap-2 rounded-lg border text-sm'>
-          <ImageIcon className='h-5 w-5' />
-          No image uploaded
-        </div>
-      )}
-    </div>
-  );
 }
 
 // =============================================================================
@@ -332,9 +264,109 @@ export default function OrderFormFieldsDisplay({
   onFieldValueChange,
   onFileUpload,
   uploadingFieldIds,
+  templateSummaries,
   disabled = false
 }: OrderFormFieldsDisplayProps) {
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // ── SELECT_TEMPLATE checkbox state ──────────────────────────────────
+  const [selectTemplateChecked, setSelectTemplateChecked] = useState<
+    Record<string, boolean>
+  >({});
+  const initRef = useRef(false);
+
+  // ── SELECT_TEMPLATE_VALUE checkbox state ────────────────────────────
+  const [selectTemplateValueChecked, setSelectTemplateValueChecked] = useState<
+    Record<string, boolean>
+  >({});
+  const stvInitRef = useRef(false);
+
+  // Initialize SELECT_TEMPLATE checkbox states once
+  useEffect(() => {
+    if (initRef.current) return;
+
+    const selectTemplateFields = fields.filter(
+      (f) => f.fieldType === 'SELECT_TEMPLATE' && f.templateId
+    );
+    if (selectTemplateFields.length === 0) return;
+
+    initRef.current = true;
+
+    const states: Record<string, boolean> = {};
+    selectTemplateFields.forEach((field) => {
+      const fpa =
+        templateSummaries?.[field.templateId!]?.finalPayableAmount ?? null;
+      const hasValidFpa = isValidFinalPayableAmount(fpa);
+      const hasFieldValue = isValidFinalPayableAmount(field.value);
+
+      if (hasValidFpa || hasFieldValue) {
+        states[field.id] = true;
+        if (hasValidFpa && !hasFieldValue) {
+          onFieldValueChange(field.id, fpa!);
+        }
+      } else {
+        states[field.id] = false;
+      }
+    });
+    setSelectTemplateChecked(states);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fields, templateSummaries]);
+
+  // Initialize SELECT_TEMPLATE_VALUE checkbox states once — checked by default
+  useEffect(() => {
+    if (stvInitRef.current) return;
+
+    const stvFields = fields.filter(
+      (f) => f.fieldType === 'SELECT_TEMPLATE_VALUE' && f.templateId
+    );
+    if (stvFields.length === 0) return;
+
+    stvInitRef.current = true;
+
+    const states: Record<string, boolean> = {};
+    stvFields.forEach((field) => {
+      // Checked by default
+      states[field.id] = true;
+    });
+    setSelectTemplateValueChecked(states);
+  }, [fields]);
+
+  const handleSelectTemplateToggle = useCallback(
+    (fieldId: string, templateId: string, checked: boolean) => {
+      setSelectTemplateChecked((prev) => ({ ...prev, [fieldId]: checked }));
+
+      if (!checked) {
+        onFieldValueChange(fieldId, '');
+      } else {
+        const fpa = templateSummaries?.[templateId]?.finalPayableAmount ?? null;
+        if (isValidFinalPayableAmount(fpa)) {
+          onFieldValueChange(fieldId, fpa!);
+        }
+      }
+    },
+    [onFieldValueChange, templateSummaries]
+  );
+
+  const handleSelectTemplateValueToggle = useCallback(
+    (fieldId: string, checked: boolean) => {
+      setSelectTemplateValueChecked((prev) => ({
+        ...prev,
+        [fieldId]: checked
+      }));
+
+      if (!checked) {
+        // Unchecked → clear the value
+        onFieldValueChange(fieldId, '');
+      } else {
+        // Checked → restore resolvedValue if it was non-zero
+        const field = fields.find((f) => f.id === fieldId);
+        if (field && hasNonZeroResolvedValue(field.resolvedValue)) {
+          onFieldValueChange(fieldId, field.resolvedValue);
+        }
+      }
+    },
+    [onFieldValueChange, fields]
+  );
 
   const handleFileInputChange = useCallback(
     (fieldId: string, event: React.ChangeEvent<HTMLInputElement>) => {
@@ -342,7 +374,6 @@ export default function OrderFormFieldsDisplay({
       if (file && onFileUpload) {
         onFileUpload(fieldId, file);
       }
-      // Reset so the same file can be re-selected
       event.target.value = '';
     },
     [onFileUpload]
@@ -362,6 +393,171 @@ export default function OrderFormFieldsDisplay({
       {fields.map((field) => {
         const isUploading = uploadingFieldIds?.has(field.id) ?? false;
 
+        // ── SELECT_TEMPLATE → checkbox + conditional input ──────────
+        if (field.fieldType === 'SELECT_TEMPLATE' && field.templateId) {
+          const fpa =
+            templateSummaries?.[field.templateId]?.finalPayableAmount ?? null;
+          const hasValidFpa = isValidFinalPayableAmount(fpa);
+          const isChecked = selectTemplateChecked[field.id] ?? false;
+
+          const showInput = isChecked && !hasValidFpa;
+
+          const isValueMissing =
+            isChecked &&
+            !hasValidFpa &&
+            (!field.value ||
+              field.value.trim() === '' ||
+              parseFloat(field.value) === 0);
+
+          return (
+            <div key={field.id} className='space-y-2'>
+              <div className='flex items-center gap-3'>
+                <Checkbox
+                  id={`select-template-${field.id}`}
+                  checked={isChecked}
+                  onCheckedChange={(checked) =>
+                    handleSelectTemplateToggle(
+                      field.id,
+                      field.templateId!,
+                      !!checked
+                    )
+                  }
+                  disabled={disabled}
+                />
+                <Label
+                  htmlFor={`select-template-${field.id}`}
+                  className='cursor-pointer text-sm font-medium'
+                >
+                  {field.fieldName}
+                </Label>
+
+                {isChecked && hasValidFpa && (
+                  <span className='text-muted-foreground font-mono text-sm tabular-nums'>
+                    ₹{parseFloat(fpa!).toFixed(2)}
+                  </span>
+                )}
+              </div>
+
+              {showInput && (
+                <div className='ml-7 space-y-1'>
+                  <Input
+                    type='number'
+                    step='0.01'
+                    min='0'
+                    value={field.value || ''}
+                    onChange={(e) =>
+                      onFieldValueChange(field.id, e.target.value)
+                    }
+                    disabled={disabled}
+                    placeholder='Enter value'
+                    className={cn(
+                      'max-w-[220px] font-mono tabular-nums',
+                      isValueMissing &&
+                        'border-red-400 ring-1 ring-red-300 focus-visible:ring-red-400 dark:border-red-600 dark:ring-red-700'
+                    )}
+                  />
+                  {isValueMissing && (
+                    <p className='text-[10px] font-medium text-red-500 dark:text-red-400'>
+                      Required — enter a value to include this template
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {field.description && (
+                <p className='text-muted-foreground ml-7 text-xs'>
+                  {field.description}
+                </p>
+              )}
+            </div>
+          );
+        }
+
+        // ── SELECT_TEMPLATE_VALUE → checkbox + template/row/column ref ──
+        if (field.fieldType === 'SELECT_TEMPLATE_VALUE') {
+          const isChecked = selectTemplateValueChecked[field.id] ?? true;
+          const hasResolved = hasNonZeroResolvedValue(field.resolvedValue);
+
+          // When checked & no resolved value → user must enter a value
+          const needsInput = isChecked && !hasResolved;
+          const isValueMissing =
+            needsInput &&
+            (!field.value ||
+              field.value.trim() === '' ||
+              parseFloat(field.value) === 0);
+
+          return (
+            <div key={field.id} className='space-y-2'>
+              <div className='flex items-center gap-3'>
+                <Checkbox
+                  id={`stv-${field.id}`}
+                  checked={isChecked}
+                  onCheckedChange={(checked) =>
+                    handleSelectTemplateValueToggle(field.id, !!checked)
+                  }
+                  disabled={disabled}
+                />
+                <div className='flex-1'>
+                  <Label
+                    htmlFor={`stv-${field.id}`}
+                    className='cursor-pointer text-sm font-medium'
+                  >
+                    {field.fieldName}
+                  </Label>
+                  {(field.templateName ||
+                    field.rowLabel ||
+                    field.columnLabel) && (
+                    <p className='text-muted-foreground text-xs'>
+                      {[field.templateName, field.rowLabel, field.columnLabel]
+                        .filter(Boolean)
+                        .join(' › ')}
+                    </p>
+                  )}
+                </div>
+
+                {/* If checked and value exists → show (-) */}
+                {isChecked && hasResolved && (
+                  <span className='text-muted-foreground rounded bg-gray-100 px-2 py-0.5 font-mono text-sm tabular-nums dark:bg-gray-800'>
+                    (-)
+                  </span>
+                )}
+              </div>
+
+              {/* If checked and no resolved value → mandatory input */}
+              {needsInput && (
+                <div className='ml-7 space-y-1'>
+                  <Input
+                    type='number'
+                    step='0.01'
+                    value={field.value || ''}
+                    onChange={(e) =>
+                      onFieldValueChange(field.id, e.target.value)
+                    }
+                    disabled={disabled}
+                    placeholder='Enter value'
+                    className={cn(
+                      'max-w-[220px] font-mono tabular-nums',
+                      isValueMissing &&
+                        'border-red-400 ring-1 ring-red-300 focus-visible:ring-red-400 dark:border-red-600 dark:ring-red-700'
+                    )}
+                  />
+                  {isValueMissing && (
+                    <p className='text-[10px] font-medium text-red-500 dark:text-red-400'>
+                      Required — enter a value
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {field.description && (
+                <p className='text-muted-foreground ml-7 text-xs'>
+                  {field.description}
+                </p>
+              )}
+            </div>
+          );
+        }
+
         // ── IMAGE extra → image preview + upload ────────────────────
         if (
           field.fieldType === 'SELECT_TEMPLATE_EXTRA_FIELD' &&
@@ -373,7 +569,6 @@ export default function OrderFormFieldsDisplay({
             <div key={field.id} className='space-y-2'>
               <Label>{field.fieldName}</Label>
 
-              {/* Hidden file input */}
               <input
                 type='file'
                 ref={(el) => {
@@ -386,7 +581,6 @@ export default function OrderFormFieldsDisplay({
               />
 
               {isUploading ? (
-                /* Uploading state */
                 <div className='bg-muted/30 flex h-32 flex-col items-center justify-center rounded-lg border-2 border-dashed'>
                   <Loader2 className='text-primary mb-1 h-6 w-6 animate-spin' />
                   <span className='text-muted-foreground text-xs'>
@@ -394,7 +588,6 @@ export default function OrderFormFieldsDisplay({
                   </span>
                 </div>
               ) : hasValue ? (
-                /* Has image → show preview with replace / remove */
                 <div className='overflow-hidden rounded-lg border'>
                   {isImageUrl(field.value) ? (
                     <>
@@ -450,7 +643,6 @@ export default function OrderFormFieldsDisplay({
                   )}
                 </div>
               ) : onFileUpload ? (
-                /* No image + upload enabled → upload button */
                 <button
                   type='button'
                   onClick={() => fileInputRefs.current[field.id]?.click()}
@@ -468,7 +660,6 @@ export default function OrderFormFieldsDisplay({
                   </span>
                 </button>
               ) : (
-                /* No image + no upload handler → read-only placeholder */
                 <div className='bg-muted text-muted-foreground flex h-32 items-center justify-center gap-2 rounded-lg border text-sm'>
                   <ImageIcon className='h-5 w-5' />
                   No image uploaded
@@ -489,7 +680,6 @@ export default function OrderFormFieldsDisplay({
             <div key={field.id} className='space-y-2'>
               <Label>{field.fieldName}</Label>
 
-              {/* Hidden file input */}
               <input
                 type='file'
                 ref={(el) => {
@@ -715,7 +905,6 @@ export default function OrderFormFieldsDisplay({
                 </div>
               ) : hasValue ? (
                 <div className='overflow-hidden rounded-md border'>
-                  {/* If the file URL is an image, show a preview above the link */}
                   {isImageUrl(field.value) && (
                     <>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -909,12 +1098,6 @@ export default function OrderFormFieldsDisplay({
               disabled={disabled}
               placeholder={`Enter ${field.fieldName}`}
               type={field.fieldType === 'NUMBER' ? 'number' : 'text'}
-              className={
-                field.fieldType === 'NUMBER' ||
-                field.fieldType === 'SELECT_TEMPLATE_VALUE'
-                  ? 'font-mono tabular-nums'
-                  : ''
-              }
             />
           </div>
         );

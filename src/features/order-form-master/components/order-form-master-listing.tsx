@@ -72,6 +72,7 @@ function getFieldTypeBadgeVariant(
       return 'secondary';
     case 'SELECT_TEMPLATE_EXTRA_FIELD':
     case 'SELECT_TEMPLATE_VALUE':
+    case 'SELECT_TEMPLATE':
       return 'outline';
     default:
       return 'secondary';
@@ -314,6 +315,23 @@ export default function OrderFormMasterListing({
                                   </Badge>
                                 )}
                               </div>
+                            ) : (
+                              <span className='text-muted-foreground text-xs'>
+                                —
+                              </span>
+                            )
+                          ) : item.fieldType === 'SELECT_TEMPLATE' ? (
+                            item.template ? (
+                              <Badge variant='outline' className='text-xs'>
+                                <span className='text-muted-foreground mr-1'>
+                                  Template:
+                                </span>
+                                {item.template.name}
+                              </Badge>
+                            ) : item.templateId ? (
+                              <span className='text-muted-foreground font-mono text-xs'>
+                                {item.templateId.slice(0, 8)}…
+                              </span>
                             ) : (
                               <span className='text-muted-foreground text-xs'>
                                 —

@@ -1,19 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  getOrder,
-  updateOrderValues,
-  recalculateOrder
-} from '@/lib/api/services';
+import { getOrder, recalculateOrder } from '@/lib/api/services';
 import { getError } from '@/lib/api/axios';
 import type {
   OrderWithDetails,
   TemplateWithDetails,
-  OrderTemplateData,
-  UpdateOrderValuesData,
-  OrderValue
+  OrderTemplateData
 } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,60 +20,21 @@ import {
   CardTitle
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select';
 import {
   ArrowLeft,
   AlertCircle,
   Pencil,
-  Copy,
   Loader2,
   RotateCw,
-  Check,
-  X,
   History,
-  Trash2,
   Link2
 } from 'lucide-react';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger
-} from '@/components/ui/tooltip';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle
-} from '@/components/ui/alert-dialog';
 import Link from 'next/link';
-import type { ExtraValuesMap } from '@/features/orders/components/order-extra-values';
-import type { TemplateLayoutItem } from '@/features/orders/components/template-layout-canvas';
-import TemplateCanvasContainer from '@/features/orders/components/template-canvas-container';
-import type { TemplateValuesMap } from '@/features/orders/components/order-template-values';
-import TemplateRowColumnSelector, {
-  type SelectedRowsColumnsMap,
-  type RowBlockSelectionsMap,
-  type ManualFlagsMap
-} from '@/features/orders-form/components/template-row-column-selector';
 import OrderFormFieldsDisplay, {
   resolveOrderFormFields,
   type ResolvedOrderFormField
 } from '@/features/orders-form/components/order-form-fields-display';
 import { toast } from 'sonner';
-import api from '@/lib/api/axios';
-import OrdersFormPDF, { type FinalCalcData } from './orders-form-pdf';
 
 // =============================================================================
 // HELPERS
@@ -111,66 +66,6 @@ const getOrderTypeBadgeVariant = (type: string) => {
   }
 };
 
-const formatAmount = (value: string | null | undefined): string => {
-  if (!value) return '0';
-  const num = parseFloat(value);
-  if (isNaN(num)) return '0';
-  if (num === 0) return '0';
-  return num.toFixed(2);
-};
-
-// =============================================================================
-// INTERNAL TYPES
-// =============================================================================
-
-type OrderTemplateSummary = {
-  id: string;
-  total: string;
-  discount: string | null;
-  discountAmount: string;
-  discountType: string | null;
-  finalPayableAmount: string;
-  notes: string | null;
-};
-
-type OrderTemplateEntry = {
-  orderTemplateId: string;
-  templateId: string;
-  template: TemplateWithDetails;
-  parentOrderTemplateId: string | null;
-  isChild: boolean;
-  summary: OrderTemplateSummary | null;
-  isNew?: boolean;
-};
-
-type DiscountType = 'AMOUNT' | 'PERCENT';
-type BlockValuesMap = Record<number, string>;
-
-// =============================================================================
-// UPDATE FINAL CALCULATION API
-// =============================================================================
-
-type UpdateFinalCalculationPayload = {
-  notes: { orderTemplateId: string; notes: string }[];
-  discount: number;
-  discountType: DiscountType;
-  marginDiscount: number;
-  marginType: DiscountType;
-  addonDiscount: number;
-  addonType: DiscountType;
-};
-
-const updateFinalCalculation = async (
-  companyId: string,
-  orderId: string,
-  data: UpdateFinalCalculationPayload
-): Promise<void> => {
-  await api.put(
-    `/api/v1/web/user/${companyId}/order/update-final-calculation/${orderId}`,
-    data
-  );
-};
-
 // =============================================================================
 // PROPS
 // =============================================================================
@@ -178,382 +73,6 @@ const updateFinalCalculation = async (
 interface OrdersFormDetailProps {
   companyId: string;
   orderId: string;
-}
-
-// =============================================================================
-// FINAL CALCULATION TABLE TYPES
-// =============================================================================
-
-type FinalCalcTemplateRow = {
-  label: string;
-  orderTemplateId: string;
-  total: string;
-  childTotal: string | null;
-  notes: string | null;
-};
-
-// =============================================================================
-// FINAL CALCULATION TABLE COMPONENT
-// =============================================================================
-
-interface FinalCalculationTableProps {
-  templateRows: FinalCalcTemplateRow[];
-  total: string;
-  discount: string;
-  discountType: string | null;
-  addonDiscount: string;
-  addonType: string | null;
-  marginDiscount: string;
-  marginType: string | null;
-  marginTotal: string;
-  finalPayableAmount: string;
-  hasAnyChildren: boolean;
-  companyId: string;
-  orderId: string;
-  onSaved: () => Promise<void>;
-}
-
-function FinalCalculationTable({
-  templateRows,
-  total,
-  discount,
-  discountType: orderDiscountType,
-  addonDiscount,
-  addonType: orderAddonType,
-  marginDiscount,
-  marginType: orderMarginType,
-  marginTotal,
-  finalPayableAmount,
-  hasAnyChildren,
-  companyId,
-  orderId,
-  onSaved
-}: FinalCalculationTableProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-
-  const [formDiscount, setFormDiscount] = useState(discount);
-  const [formDiscountType, setFormDiscountType] = useState<DiscountType>(
-    (orderDiscountType as DiscountType) || 'AMOUNT'
-  );
-  const [formMarginDiscount, setFormMarginDiscount] = useState(marginDiscount);
-  const [formMarginType, setFormMarginType] = useState<DiscountType>(
-    (orderMarginType as DiscountType) || 'AMOUNT'
-  );
-  const [formAddonDiscount, setFormAddonDiscount] = useState(addonDiscount);
-  const [formAddonType, setFormAddonType] = useState<DiscountType>(
-    (orderAddonType as DiscountType) || 'AMOUNT'
-  );
-  const [formNotes, setFormNotes] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
-    )
-  );
-
-  useEffect(() => {
-    if (!isEditing) {
-      setFormDiscount(discount);
-      setFormMarginDiscount(marginDiscount);
-      setFormAddonDiscount(addonDiscount);
-    }
-  }, [discount, marginDiscount, addonDiscount, isEditing]);
-
-  const handleEdit = () => {
-    setFormDiscount(discount);
-    setFormDiscountType((orderDiscountType as DiscountType) || 'AMOUNT');
-    setFormMarginDiscount(marginDiscount);
-    setFormMarginType((orderMarginType as DiscountType) || 'AMOUNT');
-    setFormAddonDiscount(addonDiscount);
-    setFormAddonType((orderAddonType as DiscountType) || 'AMOUNT');
-    setFormNotes(
-      Object.fromEntries(
-        templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
-      )
-    );
-    setIsEditing(true);
-  };
-
-  const handleCancel = () => setIsEditing(false);
-
-  const handleSubmit = async () => {
-    setIsSaving(true);
-    try {
-      const notes = templateRows
-        .map((r) => ({
-          orderTemplateId: r.orderTemplateId,
-          notes: formNotes[r.orderTemplateId] ?? ''
-        }))
-        .filter((n) => n.notes.trim() !== '');
-
-      await updateFinalCalculation(companyId, orderId, {
-        notes,
-        discount: parseFloat(formDiscount) || 0,
-        discountType: formDiscountType,
-        addonDiscount: parseFloat(formAddonDiscount) || 0,
-        addonType: formAddonType,
-        marginDiscount: parseFloat(formMarginDiscount) || 0,
-        marginType: formMarginType
-      });
-
-      toast.success('Final calculation updated successfully');
-      setIsEditing(false);
-      await onSaved();
-    } catch (err) {
-      toast.error(getError(err) || 'Failed to update final calculation');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  return (
-    <div className='w-full min-w-[520px]'>
-      <div className='my-2 flex items-center justify-between px-4'>
-        <h3 className='text-sm font-semibold'>Final Calculation</h3>
-        {!isEditing ? (
-          <Button
-            variant='outline'
-            size='sm'
-            className='gap-1.5'
-            onClick={handleEdit}
-          >
-            <Pencil className='h-3.5 w-3.5' /> Edit
-          </Button>
-        ) : (
-          <div className='flex items-center gap-2'>
-            <Button
-              variant='outline'
-              size='sm'
-              className='gap-1.5'
-              onClick={handleCancel}
-              disabled={isSaving}
-            >
-              <X className='h-3.5 w-3.5' /> Cancel
-            </Button>
-            <Button
-              size='sm'
-              className='gap-1.5'
-              onClick={handleSubmit}
-              disabled={isSaving}
-            >
-              {isSaving ? (
-                <Loader2 className='h-3.5 w-3.5 animate-spin' />
-              ) : (
-                <Check className='h-3.5 w-3.5' />
-              )}{' '}
-              Submit
-            </Button>
-          </div>
-        )}
-      </div>
-
-      <div className='overflow-hidden rounded-md border'>
-        <table className='w-full text-sm'>
-          <thead>
-            <tr className='bg-muted/50 border-b'>
-              <th className='px-4 py-2.5 text-left font-medium' />
-              <th className='px-4 py-2.5 text-left font-medium'>Total</th>
-              {hasAnyChildren && (
-                <th className='px-4 py-2.5 text-left font-medium'>
-                  Child Total
-                </th>
-              )}
-              <th className='px-4 py-2.5 text-left font-medium'>Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {templateRows.map((row) => (
-              <tr key={row.orderTemplateId} className='border-b'>
-                <td className='px-4 py-2 font-medium'>{row.label}</td>
-                <td className='px-4 py-2 font-mono tabular-nums'>
-                  {row.total}
-                </td>
-                {hasAnyChildren && (
-                  <td className='text-muted-foreground px-4 py-2 font-mono tabular-nums'>
-                    {row.childTotal ?? '—'}
-                  </td>
-                )}
-                <td className='px-4 py-2'>
-                  {isEditing ? (
-                    <Input
-                      className='h-7 min-w-[160px] text-xs'
-                      placeholder='Add notes…'
-                      value={formNotes[row.orderTemplateId] ?? ''}
-                      onChange={(e) =>
-                        setFormNotes((prev) => ({
-                          ...prev,
-                          [row.orderTemplateId]: e.target.value
-                        }))
-                      }
-                      onKeyDown={handleKeyDown}
-                    />
-                  ) : row.notes ? (
-                    <span className='text-foreground text-xs'>{row.notes}</span>
-                  ) : (
-                    <span className='text-muted-foreground text-xs'>—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-
-            <tr className='border-t-2 border-b font-semibold'>
-              <td className='px-4 py-2'>Total</td>
-              <td
-                className='px-4 py-2 font-mono tabular-nums'
-                colSpan={hasAnyChildren ? 2 : 1}
-              >
-                {total}
-              </td>
-              <td className='px-4 py-2' />
-            </tr>
-
-            {/* Margin Discount */}
-            <tr className='border-b'>
-              <td className='px-4 py-2 font-medium'>Margin Discount</td>
-              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
-                {isEditing ? (
-                  <div className='flex items-center gap-2'>
-                    <Input
-                      className='h-7 w-28 font-mono text-xs tabular-nums'
-                      type='number'
-                      min='0'
-                      step='0.01'
-                      value={formMarginDiscount}
-                      onChange={(e) => setFormMarginDiscount(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                    />
-                    <Select
-                      value={formMarginType}
-                      onValueChange={(v) =>
-                        setFormMarginType(v as DiscountType)
-                      }
-                    >
-                      <SelectTrigger className='h-7 w-28 text-xs'>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value='AMOUNT'>Amount (₹)</SelectItem>
-                        <SelectItem value='PERCENT'>Percent (%)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : (
-                  <span className='font-mono tabular-nums'>
-                    {marginDiscount} {orderMarginType === 'PERCENT' ? '%' : '₹'}
-                  </span>
-                )}
-              </td>
-              <td className='px-4 py-2' />
-            </tr>
-
-            <tr className='border-b'>
-              <td className='px-4 py-2 font-medium'>Margin Total</td>
-              <td
-                className='px-4 py-2 font-mono tabular-nums'
-                colSpan={hasAnyChildren ? 2 : 1}
-              >
-                {marginTotal}
-              </td>
-              <td className='px-4 py-2' />
-            </tr>
-
-            {/* Discount */}
-            <tr className='border-b'>
-              <td className='px-4 py-2 font-medium'>Discount</td>
-              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
-                {isEditing ? (
-                  <div className='flex items-center gap-2'>
-                    <Input
-                      className='h-7 w-28 font-mono text-xs tabular-nums'
-                      type='number'
-                      min='0'
-                      step='0.01'
-                      value={formDiscount}
-                      onChange={(e) => setFormDiscount(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                    />
-                    <Select
-                      value={formDiscountType}
-                      onValueChange={(v) =>
-                        setFormDiscountType(v as DiscountType)
-                      }
-                    >
-                      <SelectTrigger className='h-7 w-28 text-xs'>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value='AMOUNT'>Amount (₹)</SelectItem>
-                        <SelectItem value='PERCENT'>Percent (%)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : (
-                  <span className='font-mono tabular-nums'>
-                    {discount} {orderDiscountType === 'PERCENT' ? '%' : '₹'}
-                  </span>
-                )}
-              </td>
-              <td className='px-4 py-2' />
-            </tr>
-
-            {/* Addon Discount */}
-            <tr className='border-b'>
-              <td className='px-4 py-2 font-medium'>Addon Discount</td>
-              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
-                {isEditing ? (
-                  <div className='flex items-center gap-2'>
-                    <Input
-                      className='h-7 w-28 font-mono text-xs tabular-nums'
-                      type='number'
-                      min='0'
-                      step='0.01'
-                      value={formAddonDiscount}
-                      onChange={(e) => setFormAddonDiscount(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                    />
-                    <Select
-                      value={formAddonType}
-                      onValueChange={(v) => setFormAddonType(v as DiscountType)}
-                    >
-                      <SelectTrigger className='h-7 w-28 text-xs'>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value='AMOUNT'>Amount (₹)</SelectItem>
-                        <SelectItem value='PERCENT'>Percent (%)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : (
-                  <span className='font-mono tabular-nums'>
-                    {addonDiscount} {orderAddonType === 'PERCENT' ? '%' : '₹'}
-                  </span>
-                )}
-              </td>
-              <td className='px-4 py-2' />
-            </tr>
-
-            <tr className='border-t-2 font-semibold'>
-              <td className='px-4 py-2'>Final Payable Amount</td>
-              <td
-                className='px-4 py-2 font-mono tabular-nums'
-                colSpan={hasAnyChildren ? 2 : 1}
-              >
-                {finalPayableAmount}
-              </td>
-              <td className='px-4 py-2' />
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
 }
 
 // =============================================================================
@@ -567,145 +86,38 @@ export default function OrdersFormDetail({
   const router = useRouter();
 
   const [order, setOrder] = useState<OrderWithDetails | null>(null);
-  const [entries, setEntries] = useState<OrderTemplateEntry[]>([]);
-  const [templateValues, setTemplateValues] = useState<
-    Record<string, TemplateValuesMap>
-  >({});
-  const [extraValues, setExtraValues] = useState<
-    Record<string, ExtraValuesMap>
-  >({});
-  const [blockValues, setBlockValues] = useState<
-    Record<string, BlockValuesMap>
-  >({});
-  // manualFlagsPerEntry: orderTemplateId → ManualFlagsMap (rowId → columnId → true)
-  const [manualFlagsPerEntry, setManualFlagsPerEntry] = useState<
-    Record<string, ManualFlagsMap>
-  >({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isRecalculating, setIsRecalculating] = useState(false);
   const [resolvedFields, setResolvedFields] = useState<
     ResolvedOrderFormField[]
   >([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [templateSummariesMap, setTemplateSummariesMap] = useState<
+    Record<string, { finalPayableAmount: string | null }>
+  >({});
 
-  const [isRecalculating, setIsRecalculating] = useState(false);
+  // ==========================================================================
+  // PROCESS ORDER DATA
+  // ==========================================================================
 
-  // ── PROCESS TEMPLATE DATA ───────────────────────────────────────────
-  const processOrderTemplates = useCallback((orderData: OrderWithDetails) => {
+  const processOrderData = useCallback((orderData: OrderWithDetails) => {
     const productTemplates = (orderData.product?.templates ||
       []) as TemplateWithDetails[];
 
-    if (productTemplates.length === 0) {
-      setEntries([]);
-      setTemplateValues({});
-      setExtraValues({});
-      setBlockValues({});
-      setManualFlagsPerEntry({});
-      setResolvedFields([]);
-      return;
-    }
+    const tCache: Record<string, TemplateWithDetails> = {};
+    productTemplates.forEach((t) => (tCache[t.id] = t));
 
-    const templateCache: Record<string, TemplateWithDetails> = {};
-    for (const tmpl of productTemplates) templateCache[tmpl.id] = tmpl;
+    // Build summaries keyed by templateId
+    const summaries: Record<string, { finalPayableAmount: string | null }> = {};
+    (orderData.templates || []).forEach((td: OrderTemplateData) => {
+      const rawSummary = (td as any).summary;
+      summaries[td.templateId] = {
+        finalPayableAmount: rawSummary?.finalPayableAmount ?? null
+      };
+    });
+    setTemplateSummariesMap(summaries);
 
-    const loadedEntries: OrderTemplateEntry[] = [];
-    const loadedValues: Record<string, TemplateValuesMap> = {};
-    const loadedExtraValues: Record<string, ExtraValuesMap> = {};
-    const loadedBlockValues: Record<string, BlockValuesMap> = {};
-    const loadedManualFlags: Record<string, ManualFlagsMap> = {};
-    const processedTemplateIds = new Set<string>();
-
-    const processTemplate = (
-      tmplData: OrderTemplateData,
-      parentOrderTemplateId: string | null,
-      isChild: boolean
-    ) => {
-      const orderTemplateId = tmplData.id;
-      const fullTemplate = templateCache[tmplData.templateId];
-      if (!fullTemplate) return;
-      processedTemplateIds.add(tmplData.templateId);
-
-      const rawSummary = (tmplData as any).summary;
-      const summary: OrderTemplateSummary | null = rawSummary
-        ? {
-            id: rawSummary.id,
-            total: rawSummary.total ?? '0.00',
-            discount: rawSummary.discount ?? null,
-            discountAmount: rawSummary.discountAmount ?? '0.00',
-            discountType: rawSummary.discountType ?? null,
-            finalPayableAmount: rawSummary.finalPayableAmount ?? '0.00',
-            notes: rawSummary.notes ?? null
-          }
-        : null;
-
-      loadedEntries.push({
-        orderTemplateId,
-        templateId: tmplData.templateId,
-        template: fullTemplate,
-        parentOrderTemplateId,
-        isChild,
-        summary
-      });
-
-      // Build values map
-      const valuesMap: TemplateValuesMap = {};
-      (tmplData.values || []).forEach((v) => {
-        if (!valuesMap[v.rowId]) valuesMap[v.rowId] = {};
-        valuesMap[v.rowId][v.columnId] = v.calculatedValue ?? v.value ?? '';
-      });
-      loadedValues[orderTemplateId] = valuesMap;
-
-      // Build manual flags map — only entries with isManual: true
-      const manualFlags: ManualFlagsMap = {};
-      (tmplData.values || []).forEach((v: any) => {
-        if (v.isManual) {
-          if (!manualFlags[v.rowId]) manualFlags[v.rowId] = {};
-          manualFlags[v.rowId][v.columnId] = true;
-        }
-      });
-      loadedManualFlags[orderTemplateId] = manualFlags;
-
-      const extValMap: ExtraValuesMap = {};
-      (tmplData.extraValues || []).forEach((ev) => {
-        if (!extValMap[ev.templateExtraFieldId])
-          extValMap[ev.templateExtraFieldId] = [];
-        extValMap[ev.templateExtraFieldId].push({
-          value: ev.value,
-          orderExtraValueId: ev.id,
-          orderIndex: ev.orderIndex ?? extValMap[ev.templateExtraFieldId].length
-        });
-      });
-      Object.values(extValMap).forEach((arr) =>
-        arr.sort((a, b) => a.orderIndex - b.orderIndex)
-      );
-      loadedExtraValues[orderTemplateId] = extValMap;
-
-      const bvMap: BlockValuesMap = {};
-      ((tmplData as any).blockValues || []).forEach((bv: any) => {
-        const idx = parseInt(
-          (bv.blockIndex as string).replace('block_', ''),
-          10
-        );
-        if (!isNaN(idx)) bvMap[idx] = bv.templateBlockId;
-      });
-      loadedBlockValues[orderTemplateId] = bvMap;
-
-      if (tmplData.children && tmplData.children.length > 0)
-        tmplData.children.forEach((child) =>
-          processTemplate(child, orderTemplateId, true)
-        );
-    };
-
-    (orderData.templates || []).forEach((tmplData: OrderTemplateData) =>
-      processTemplate(tmplData, null, false)
-    );
-
-    setEntries(loadedEntries);
-    setTemplateValues(loadedValues);
-    setExtraValues(loadedExtraValues);
-    setBlockValues(loadedBlockValues);
-    setManualFlagsPerEntry(loadedManualFlags);
-
-    // ── Resolve order form fields (read-only) ────────────────────────
+    // Resolve order form fields (read-only)
     const forms = (orderData.product?.orderForms || []) as any[];
     const existingFormValues = (orderData as any).orderFormValues || [];
     const formValueMap: Record<string, string> = {};
@@ -719,49 +131,42 @@ export default function OrdersFormDetail({
     const resolved = resolveOrderFormFields(
       forms,
       orderData.templates || [],
-      templateCache
+      tCache
     );
-
-    // Override with saved form values
     resolved.forEach((field: any) => {
       if (formValueMap[field.id] !== undefined) {
         field.value = formValueMap[field.id];
       }
     });
-
     setResolvedFields(resolved);
   }, []);
 
-  // ── FETCH ORDER ─────────────────────────────────────────────────────
+  // ==========================================================================
+  // FETCH
+  // ==========================================================================
+
   const fetchOrder = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
       const orderData = await getOrder(companyId, orderId);
       setOrder(orderData);
-      processOrderTemplates(orderData);
+      processOrderData(orderData);
     } catch (err) {
       setError(getError(err));
     } finally {
       setIsLoading(false);
     }
-  }, [companyId, orderId, processOrderTemplates]);
+  }, [companyId, orderId, processOrderData]);
 
   useEffect(() => {
     fetchOrder();
   }, [fetchOrder]);
 
-  const refreshOrder = useCallback(async () => {
-    try {
-      const orderData = await getOrder(companyId, orderId);
-      setOrder(orderData);
-      processOrderTemplates(orderData);
-    } catch (err) {
-      toast.error(getError(err) || 'Failed to refresh order');
-    }
-  }, [companyId, orderId, processOrderTemplates]);
+  // ==========================================================================
+  // RECALCULATE
+  // ==========================================================================
 
-  // ── RECALCULATE ─────────────────────────────────────────────────────
   const handleRecalculate = useCallback(async () => {
     setIsRecalculating(true);
     try {
@@ -769,258 +174,21 @@ export default function OrdersFormDetail({
       toast.success('Order recalculated successfully');
       const orderData = await getOrder(companyId, orderId);
       setOrder(orderData);
-      processOrderTemplates(orderData);
+      processOrderData(orderData);
     } catch (err) {
       toast.error(getError(err) || 'Failed to recalculate order');
     } finally {
       setIsRecalculating(false);
     }
-  }, [companyId, orderId, processOrderTemplates]);
-
-  // ── GROUPED BY TEMPLATE ─────────────────────────────────────────────
-  const groupedByTemplate = useMemo(() => {
-    const grouped: Record<string, OrderTemplateEntry[]> = {};
-    entries.forEach((entry) => {
-      if (!grouped[entry.templateId]) grouped[entry.templateId] = [];
-      grouped[entry.templateId].push(entry);
-    });
-    return grouped;
-  }, [entries]);
-
-  // ── BUILD SELECTION FROM order.selectedRowIds ───────────────────────
-  const buildSelectionForTemplate = useCallback(
-    (
-      template: TemplateWithDetails,
-      vals: TemplateValuesMap
-    ): SelectedRowsColumnsMap => {
-      const finalCalcCols = (template.columns || []).filter(
-        (c) => c.isFinalCalculation === true
-      );
-      const finalCalcColIds = new Set(finalCalcCols.map((c) => c.id));
-
-      const templateRowIds = new Set((template.rows || []).map((r) => r.id));
-
-      const orderSelectedRowIds: Set<string> = new Set(
-        ((order as any)?.selectedRowIds || [])
-          .filter((s: any) => templateRowIds.has(s.rowId))
-          .map((s: any) => s.rowId as string)
-      );
-
-      const inferredRows = new Set<string>();
-      Object.entries(vals).forEach(([rowId, colMap]) => {
-        if (!templateRowIds.has(rowId)) return;
-        Object.keys(colMap).forEach((colId) => {
-          if (finalCalcColIds.has(colId)) {
-            inferredRows.add(rowId);
-          }
-        });
-      });
-
-      const selectedRows =
-        orderSelectedRowIds.size > 0 ? orderSelectedRowIds : inferredRows;
-
-      return {
-        rows: selectedRows,
-        columns: finalCalcColIds
-      };
-    },
-    [order]
-  );
-
-  const buildBlockSelectionsForTemplate = useCallback(
-    (template: TemplateWithDetails): RowBlockSelectionsMap => {
-      const finalCalcCols = (template.columns || []).filter(
-        (c) => c.isFinalCalculation === true
-      );
-      const colBlockMap = new Map<string, number>();
-      finalCalcCols.forEach((col) =>
-        colBlockMap.set(col.id, col.blockIndex ?? 0)
-      );
-
-      const templateRowIds = new Set((template.rows || []).map((r) => r.id));
-      const blockSelections: RowBlockSelectionsMap = {};
-
-      ((order as any)?.selectedRowIds || []).forEach((s: any) => {
-        if (templateRowIds.has(s.rowId) && colBlockMap.has(s.columnId)) {
-          blockSelections[s.rowId] = colBlockMap.get(s.columnId)!;
-        }
-      });
-
-      return blockSelections;
-    },
-    [order]
-  );
-
-  // ── TOTAL SELECTED VALUE (read-only display) ────────────────────────
-  const totalSelectedValue = useMemo(() => {
-    if (!order) return 0;
-    let total = 0;
-
-    entries.forEach((entry) => {
-      if (entry.isNew) return;
-      const vals = templateValues[entry.orderTemplateId] || {};
-      const sel = buildSelectionForTemplate(entry.template, vals);
-
-      sel.rows.forEach((rowId: any) => {
-        sel.columns.forEach((colId: any) => {
-          const v = vals[rowId]?.[colId];
-          if (v != null && v !== '') {
-            const n = parseFloat(v);
-            if (!isNaN(n)) total += n;
-          }
-        });
-      });
-    });
-
-    return total;
-  }, [order, entries, templateValues, buildSelectionForTemplate]);
-
-  // ── FINAL CALC DATA ─────────────────────────────────────────────────
-  const finalCalcData: FinalCalcData | undefined = useMemo(() => {
-    if (!order || entries.length === 0) return undefined;
-    const hasAnyChildren = Object.values(groupedByTemplate).some((te) =>
-      te.some((e) => e.isChild)
-    );
-    const templateRows = Object.entries(groupedByTemplate).map(
-      ([templateId, templateEntries]) => {
-        const parentEntry = templateEntries.find((e) => !e.isChild);
-        const childEntries = templateEntries.filter((e) => e.isChild);
-        const templateName =
-          parentEntry?.template?.name ||
-          childEntries[0]?.template?.name ||
-          templateId;
-        const parentTotal =
-          parentEntry?.summary?.finalPayableAmount ?? '0.0000';
-        let childTotal: string | null = null;
-        if (childEntries.length > 0) {
-          const sum = childEntries.reduce(
-            (acc, child) =>
-              acc + parseFloat(child.summary?.finalPayableAmount || '0'),
-            0
-          );
-          childTotal = formatAmount(String(sum));
-        }
-        return {
-          label: templateName,
-          orderTemplateId:
-            parentEntry && !parentEntry.isNew
-              ? parentEntry.orderTemplateId
-              : (childEntries[0]?.orderTemplateId ?? templateId),
-          total: formatAmount(parentTotal),
-          childTotal,
-          notes: parentEntry?.summary?.notes ?? null
-        };
-      }
-    );
-    return {
-      templateRows,
-      total: formatAmount((order as any).total),
-      discount: formatAmount(order.discount),
-      discountType: (order as any).discountType ?? null,
-      addonDiscount: formatAmount((order as any).addonDiscount),
-      addonType: (order as any).addonType ?? null,
-      marginDiscount: formatAmount(order.marginDiscount),
-      marginType: (order as any).marginType ?? null,
-      marginTotal: formatAmount((order as any).marginTotal),
-      finalPayableAmount: formatAmount(order.finalPayableAmount),
-      hasAnyChildren
-    };
-  }, [order, entries, groupedByTemplate]);
-
-  // ── TEMPLATE LAYOUT ITEMS ───────────────────────────────────────────
-  const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
-    if (!order) return [];
-
-    return Object.entries(groupedByTemplate).map(
-      ([templateId, templateEntries]) => {
-        const parentEntry = templateEntries.find((e) => !e.isChild);
-        const childEntries = templateEntries.filter((e) => e.isChild);
-        const hasChildren = childEntries.length > 0;
-        const tmpl = parentEntry?.template || childEntries[0]?.template;
-
-        return {
-          id: templateId,
-          label: tmpl?.name || templateId,
-          children: (
-            <div className={hasChildren ? 'flex items-start gap-4' : ''}>
-              {parentEntry && (
-                <div className={hasChildren ? 'min-w-0 flex-1' : ''}>
-                  {hasChildren && (
-                    <div className='mb-2'>
-                      <Badge variant='outline' className='text-xs font-normal'>
-                        Parent Template
-                      </Badge>
-                    </div>
-                  )}
-                  <TemplateRowColumnSelector
-                    template={parentEntry.template}
-                    values={templateValues[parentEntry.orderTemplateId] || {}}
-                    selection={buildSelectionForTemplate(
-                      parentEntry.template,
-                      templateValues[parentEntry.orderTemplateId] || {}
-                    )}
-                    onSelectionChange={() => {}}
-                    initialRowBlockSelections={buildBlockSelectionsForTemplate(
-                      parentEntry.template
-                    )}
-                    manualFlags={
-                      manualFlagsPerEntry[parentEntry.orderTemplateId]
-                    }
-                    disabled={true}
-                  />
-                </div>
-              )}
-
-              {childEntries.map((childEntry, idx) => (
-                <div
-                  key={childEntry.orderTemplateId}
-                  className={hasChildren ? 'min-w-0 flex-1' : ''}
-                >
-                  <div className='mb-2'>
-                    <Badge variant='secondary' className='text-xs font-normal'>
-                      Duplicate #{idx + 1}
-                    </Badge>
-                  </div>
-                  <TemplateRowColumnSelector
-                    template={childEntry.template}
-                    values={templateValues[childEntry.orderTemplateId] || {}}
-                    selection={buildSelectionForTemplate(
-                      childEntry.template,
-                      templateValues[childEntry.orderTemplateId] || {}
-                    )}
-                    onSelectionChange={() => {}}
-                    initialRowBlockSelections={buildBlockSelectionsForTemplate(
-                      childEntry.template
-                    )}
-                    manualFlags={
-                      manualFlagsPerEntry[childEntry.orderTemplateId]
-                    }
-                    disabled={true}
-                  />
-                </div>
-              ))}
-            </div>
-          )
-        };
-      }
-    );
-  }, [
-    order,
-    groupedByTemplate,
-    templateValues,
-    manualFlagsPerEntry,
-    buildSelectionForTemplate,
-    buildBlockSelectionsForTemplate
-  ]);
-
-  const layoutItems: TemplateLayoutItem[] = useMemo(() => {
-    return [...templateLayoutItems];
-  }, [templateLayoutItems]);
+  }, [companyId, orderId, processOrderData]);
 
   const backUrl = `/dashboard/${companyId}/orders-form`;
   const editUrl = `/dashboard/${companyId}/orders-form/${orderId}/edit`;
 
-  // ── LOADING ─────────────────────────────────────────────────────────
+  // ==========================================================================
+  // LOADING
+  // ==========================================================================
+
   if (isLoading) {
     return (
       <div className='space-y-6'>
@@ -1040,7 +208,10 @@ export default function OrdersFormDetail({
     );
   }
 
-  // ── ERROR ───────────────────────────────────────────────────────────
+  // ==========================================================================
+  // ERROR
+  // ==========================================================================
+
   if (error || !order) {
     return (
       <div className='space-y-6'>
@@ -1069,7 +240,10 @@ export default function OrdersFormDetail({
     );
   }
 
-  // ── RENDER ──────────────────────────────────────────────────────────
+  // ==========================================================================
+  // RENDER
+  // ==========================================================================
+
   return (
     <div className='space-y-6'>
       <Link
@@ -1112,15 +286,6 @@ export default function OrdersFormDetail({
                 )}{' '}
                 Recalculate
               </Button>
-              <OrdersFormPDF
-                order={order}
-                entries={entries}
-                templateValues={templateValues}
-                finalCalc={finalCalcData}
-                resolvedFields={resolvedFields}
-                orderSelectedRowIds={(order as any)?.selectedRowIds || []}
-                totalSelectedValue={totalSelectedValue}
-              />
               <Button
                 variant='outline'
                 size='sm'
@@ -1135,7 +300,7 @@ export default function OrdersFormDetail({
                 size='sm'
                 onClick={() =>
                   router.push(
-                    `/dashboard/${companyId}/orders/${orderId}/history`
+                    `/dashboard/${companyId}/orders-form/${orderId}/history`
                   )
                 }
                 className='gap-1.5'
@@ -1146,8 +311,9 @@ export default function OrdersFormDetail({
             </div>
           </div>
         </CardHeader>
+
         <CardContent className='space-y-4'>
-          {/* Order metadata */}
+          {/* Order metadata grid */}
           <div className='grid grid-cols-2 gap-4 text-sm md:grid-cols-4'>
             <div>
               <span className='text-muted-foreground'>Product</span>
@@ -1162,12 +328,12 @@ export default function OrdersFormDetail({
               <p className='font-medium'>{order.orderNo}</p>
             </div>
             <div>
-              <span className='text-muted-foreground'>Type</span>
-              <p className='font-medium'>{order.orderType}</p>
-            </div>
-            <div>
               <span className='text-muted-foreground'>Status</span>
               <p className='font-medium'>{order.status || 'DRAFT'}</p>
+            </div>
+            <div>
+              <span className='text-muted-foreground'>Type</span>
+              <p className='font-medium'>{order.orderType}</p>
             </div>
             <div>
               <span className='text-muted-foreground'>Created</span>
@@ -1177,25 +343,36 @@ export default function OrdersFormDetail({
             </div>
           </div>
 
-          {/* Design reference banner */}
-          {order.referenceNo && (
-            <div className='border-primary/20 bg-primary/5 flex items-center gap-2 rounded-md border px-3 py-2 text-sm'>
-              <Link2 className='text-primary h-4 w-4 flex-shrink-0' />
-              <span className='text-muted-foreground'>Design No:</span>
-              <span className='font-medium'>#{order.referenceNo}</span>
+          {/* Customer */}
+          {order.customer && (
+            <div className='space-y-1'>
+              <p className='text-muted-foreground text-sm'>Customer</p>
+              <div className='bg-muted flex items-center gap-2 rounded-md border px-3 py-2'>
+                <span className='text-sm font-medium'>
+                  {order.customer.name}
+                </span>
+                {(order.customer as any).referenceCode && (
+                  <span className='text-muted-foreground text-xs'>
+                    ({(order.customer as any).referenceCode})
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
-          {/* Total selected value */}
-          {totalSelectedValue > 0 && (
-            <div className='bg-muted flex items-center gap-2 rounded-md border px-3 py-2 text-sm'>
-              <span className='text-muted-foreground'>Value:</span>
-              <span className='font-mono font-medium tabular-nums'>
-                {totalSelectedValue.toFixed(2)}
-              </span>
-              <span className='text-muted-foreground text-xs'>
-                (sum of selected rows)
-              </span>
+          {/* Design Number */}
+          {order.referenceNo && (
+            <div className='space-y-1'>
+              <p className='text-muted-foreground text-sm'>Design Number</p>
+              <div className='bg-muted flex items-center gap-2 rounded-md border px-3 py-2'>
+                <Link2 className='text-primary h-4 w-4 flex-shrink-0' />
+                <span className='text-sm font-medium'>
+                  #{order.referenceNo}
+                </span>
+                <Badge variant='secondary' className='ml-1 text-[10px]'>
+                  {(order as any).parentOrder?.orderType ?? 'SAMPLE'}
+                </Badge>
+              </div>
             </div>
           )}
 
@@ -1206,25 +383,13 @@ export default function OrdersFormDetail({
               <OrderFormFieldsDisplay
                 fields={resolvedFields}
                 onFieldValueChange={() => {}}
+                templateSummaries={templateSummariesMap}
                 disabled={true}
               />
             </>
           )}
         </CardContent>
       </Card>
-
-      {/* Template row selector (read-only) */}
-      {entries.length > 0 && (
-        <>
-          <Separator />
-          <TemplateCanvasContainer
-            items={layoutItems}
-            persistKey={`${orderId}-orders-form-detail`}
-            title='Selected Rows'
-            subtitle='Rows selected for this order form, with their final calculation values'
-          />
-        </>
-      )}
     </div>
   );
 }
