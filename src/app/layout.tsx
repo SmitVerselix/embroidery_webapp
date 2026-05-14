@@ -10,6 +10,7 @@ import NextTopLoader from 'nextjs-toploader';
 import { NuqsAdapter } from 'nuqs/adapters/next/app';
 import '../styles/globals.css';
 import Providers from '@/providers';
+import { DisableNumberScroll } from '@/components/disable-number-scroll';
 
 const META_THEME_COLORS = {
   light: '#ffffff',
@@ -68,6 +69,7 @@ export default async function RootLayout({
             <ActiveThemeProvider initialTheme={themeToApply}>
               <Providers>
                 <Toaster />
+                <DisableNumberScroll />
                 {children}
               </Providers>
             </ActiveThemeProvider>

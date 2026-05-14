@@ -104,12 +104,17 @@ export default function TemplateLayoutCanvas({
     return changed;
   }, [items, zoom]);
 
+  // ── Recompute layout from current measurements ──────────────────────
+  const relayout = useCallback(() => {
+    const ids = items.map((i) => i.id);
+    setPositions(verticalLayout(ids, mH.current));
+  }, [items]);
+
   // ── First render: measure → position ────────────────────────────────
   useLayoutEffect(() => {
     if (items.length === 0) return;
     measure();
-    const ids = items.map((i) => i.id);
-    setPositions(verticalLayout(ids, mH.current));
+    relayout();
     setHasMeasured(true);
   }, [items.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -118,13 +123,48 @@ export default function TemplateLayoutCanvas({
     if (!hasMeasured || items.length === 0) return;
     const timer = setTimeout(() => {
       const changed = measure();
-      if (changed) {
-        const ids = items.map((i) => i.id);
-        setPositions(verticalLayout(ids, mH.current));
-      }
+      if (changed) relayout();
     }, 150);
     return () => clearTimeout(timer);
-  }, [hasMeasured, items, measure]);
+  }, [hasMeasured, items, measure, relayout]);
+
+  // ══════════════════════════════════════════════════════════════════════
+  // RESIZE OBSERVER — re-measure & re-layout when any card changes size
+  //
+  // This is the key fix: when content inside a card changes (e.g. rows
+  // are toggled via the visibility dropdown), the card's height changes.
+  // Without this observer, the layout positions stay stale and cards
+  // overlap. The observer detects the size change, re-measures all cards,
+  // and recomputes the vertical layout so everything shifts properly.
+  // ══════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!hasMeasured || items.length === 0) return;
+
+    let rafId: number | null = null;
+
+    const handleResize = () => {
+      // Debounce via rAF to batch multiple simultaneous resizes
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const changed = measure();
+        if (changed) relayout();
+      });
+    };
+
+    const observer = new ResizeObserver(handleResize);
+
+    // Observe all card elements
+    items.forEach((item) => {
+      const el = cardRefs.current[item.id];
+      if (el) observer.observe(el);
+    });
+
+    return () => {
+      observer.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [hasMeasured, items, measure, relayout]);
 
   // ══════════════════════════════════════════════════════════════════════
   // COMPUTE CARD CONTAINER BOUNDS

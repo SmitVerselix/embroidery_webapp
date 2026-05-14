@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useCallback, useRef, useEffect, useState } from 'react';
 import type {
   TemplateWithDetails,
   TemplateColumn,
@@ -42,7 +42,9 @@ import {
   LayoutTemplate,
   Percent,
   IndianRupee,
-  Layers
+  Layers,
+  ChevronDown,
+  Check
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -52,6 +54,13 @@ import {
 import OrderExtraValues, { type ExtraValuesMap } from './order-extra-values';
 import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger
+} from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
 
 // =============================================================================
 // TYPES
@@ -110,14 +119,6 @@ const blockColors = [
 // FORMULA HELPERS — OPTIMISED
 // =============================================================================
 
-/**
- * Recursively collect the IDs of all NUMBER/TEXT (user-input) columns that a
- * formula depends on — follows FORMULA→FORMULA chains.
- *
- * NOTE: The shared `_visited` set is CORRECT here because we are collecting a
- * union of input-column IDs. Re-visiting a formula key would only yield the
- * same IDs again, so skipping it is both safe and desirable.
- */
 function getReferencedInputColumnIds(
   formula: string | null | undefined,
   columns: TemplateColumn[],
@@ -157,11 +158,6 @@ function getReferencedInputColumnIds(
   return ids;
 }
 
-/**
- * Topologically sort formula columns so that dependencies are evaluated first.
- * Uses Kahn's algorithm. Handles cycles gracefully by appending remaining
- * columns at the end.
- */
 function topologicalSortFormulas(
   formulaCols: TemplateColumn[],
   allColumns: TemplateColumn[]
@@ -174,7 +170,6 @@ function topologicalSortFormulas(
     keyToFormulaCol[c.key] = c;
   });
 
-  // deps[key] = set of *formula* keys this formula directly depends on
   const deps: Record<string, Set<string>> = {};
   formulaCols.forEach((col) => {
     deps[col.key] = new Set();
@@ -192,7 +187,6 @@ function topologicalSortFormulas(
     });
   });
 
-  // reverseDeps[key] = set of formula keys that depend ON this key
   const reverseDeps: Record<string, Set<string>> = {};
   formulaCols.forEach((c) => {
     reverseDeps[c.key] = new Set();
@@ -203,7 +197,6 @@ function topologicalSortFormulas(
     });
   });
 
-  // In-degree = number of formula dependencies
   const inDegree: Record<string, number> = {};
   formulaCols.forEach((c) => {
     inDegree[c.key] = deps[c.key].size;
@@ -231,7 +224,6 @@ function topologicalSortFormulas(
     });
   }
 
-  // Handle cycles – append any remaining formula columns
   formulaCols.forEach((c) => {
     if (!visited.has(c.key)) sorted.push(c);
   });
@@ -239,10 +231,6 @@ function topologicalSortFormulas(
   return sorted;
 }
 
-/**
- * Evaluate a SINGLE pre-parsed formula using the provided key→value map.
- * No recursion — caller must ensure dependencies are already in keyToValue.
- */
 function evaluateParsedFormula(
   parsed: ReturnType<typeof parseFormula>,
   keyToValue: Record<string, number>
@@ -415,8 +403,6 @@ export default function OrderTemplateValues({
     [orderedBlockColumns]
   );
 
-  /** Set of column IDs that are the first column of a NEW block (i.e. not the first block).
-   *  Used to render a vertical separator line between blocks. */
   const blockBoundaryColumnIds = useMemo(() => {
     const ids = new Set<string>();
     orderedBlockColumns.forEach((group, idx) => {
@@ -448,7 +434,6 @@ export default function OrderTemplateValues({
       const scrollRect = scrollContainer.getBoundingClientRect();
       const tableRect = el.getBoundingClientRect();
 
-      // ── Vertical: translate thead ──
       const thead = el.querySelector('thead') as HTMLElement | null;
       if (thead) {
         const theadH = thead.getBoundingClientRect().height;
@@ -467,7 +452,6 @@ export default function OrderTemplateValues({
         }
       }
 
-      // ── Horizontal: translate row-label cells ──
       const stickyCells =
         el.querySelectorAll<HTMLElement>('[data-sticky-left]');
       if (
@@ -499,14 +483,12 @@ export default function OrderTemplateValues({
 
     scrollContainer.addEventListener('scroll', onScroll, { passive: true });
 
-    // React to zoom changes
     const observer = new MutationObserver(() => requestAnimationFrame(update));
     observer.observe(scrollContainer, {
       attributes: true,
       attributeFilter: ['data-canvas-zoom']
     });
 
-    // Initial positioning
     requestAnimationFrame(update);
 
     return () => {
@@ -533,15 +515,157 @@ export default function OrderTemplateValues({
     [rows]
   );
 
+  // ══════════════════════════════════════════════════════════════════════
+  // ROW VISIBILITY — show only rows that have values, with dropdown toggle
+  // ══════════════════════════════════════════════════════════════════════
+
+  /** Selectable rows (non-TOTAL) that appear in the dropdown */
+  const selectableRows = useMemo(
+    () => rows.filter((r) => r.rowType !== 'TOTAL'),
+    [rows]
+  );
+
+  /** TOTAL rows — always shown when there are visible non-total rows */
+  const totalRows = useMemo(
+    () => rows.filter((r) => r.rowType === 'TOTAL'),
+    [rows]
+  );
+
+  /** Set of row IDs that have at least one non-empty, non-formula value */
+  const rowsWithValues = useMemo(() => {
+    const set = new Set<string>();
+    selectableRows.forEach((row) => {
+      const rowVals = values[row.id] || {};
+      const hasValue = columns.some((col) => {
+        if (col.dataType === 'FORMULA') return false;
+        const v = rowVals[col.id];
+        return v !== undefined && v !== null && v.trim() !== '';
+      });
+      if (hasValue) set.add(row.id);
+    });
+    return set;
+  }, [selectableRows, values, columns]);
+
+  /**
+   * Tracks row IDs manually shown by the user via the dropdown.
+   * Only affects rows that DON'T have values (empty rows).
+   */
+  const [manuallyShownRows, setManuallyShownRows] = useState<Set<string>>(
+    new Set()
+  );
+
+  /** Combined visible row IDs = rows with values ∪ manually shown rows */
+  const visibleRowIds = useMemo(() => {
+    const set = new Set(rowsWithValues);
+    manuallyShownRows.forEach((id) => {
+      if (selectableRows.some((r) => r.id === id)) set.add(id);
+    });
+    return set;
+  }, [rowsWithValues, manuallyShownRows, selectableRows]);
+
+  /**
+   * Rows to display in the table:
+   * visible non-TOTAL rows + TOTAL rows (if any non-TOTAL rows are visible)
+   */
+  const displayRows = useMemo(() => {
+    const visibleNonTotal = selectableRows.filter((r) =>
+      visibleRowIds.has(r.id)
+    );
+    if (visibleNonTotal.length > 0 && totalRows.length > 0) {
+      return [...visibleNonTotal, ...totalRows];
+    }
+    return visibleNonTotal;
+  }, [selectableRows, totalRows, visibleRowIds]);
+
+  /** Toggle visibility of an empty row */
+  const toggleRowVisibility = useCallback(
+    (rowId: string) => {
+      // Rows with values cannot be unchecked
+      if (rowsWithValues.has(rowId)) return;
+      setManuallyShownRows((prev) => {
+        const next = new Set(prev);
+        if (next.has(rowId)) {
+          next.delete(rowId);
+        } else {
+          next.add(rowId);
+        }
+        return next;
+      });
+    },
+    [rowsWithValues]
+  );
+
+  /** Show all rows */
+  const showAllRows = useCallback(() => {
+    const allIds = new Set<string>();
+    selectableRows.forEach((r) => {
+      if (!rowsWithValues.has(r.id)) allIds.add(r.id);
+    });
+    setManuallyShownRows(allIds);
+  }, [selectableRows, rowsWithValues]);
+
+  /** Show only rows with values (reset manual selections) */
+  const showOnlyWithValues = useCallback(() => {
+    setManuallyShownRows(new Set());
+  }, []);
+
+  const hiddenRowCount = selectableRows.length - visibleRowIds.size;
+  const allRowsVisible = hiddenRowCount === 0;
+
+  // ══════════════════════════════════════════════════════════════════════
+  // COLUMN VISIBILITY — hide columns that have no values across any row
+  // Only applies in readOnly mode; in edit mode all columns stay visible.
+  // ══════════════════════════════════════════════════════════════════════
+
+  /** Set of column IDs that have at least one value across all rows */
+  const columnsWithValues = useMemo(() => {
+    // In edit mode, show all columns so the user can enter data
+    if (!readOnly) return new Set(columns.map((c) => c.id));
+
+    const set = new Set<string>();
+    columns.forEach((col) => {
+      const hasValue = rows.some((row) => {
+        const v = values[row.id]?.[col.id];
+        return v !== undefined && v !== null && v !== '' && v !== '—';
+      });
+      if (hasValue) set.add(col.id);
+    });
+    return set;
+  }, [readOnly, columns, rows, values]);
+
+  /** Block columns filtered to only include columns with values */
+  const visibleOrderedBlockColumns = useMemo(() => {
+    return orderedBlockColumns
+      .map((group) => ({
+        ...group,
+        columns: group.columns.filter((col) => columnsWithValues.has(col.id))
+      }))
+      .filter((group) => group.columns.length > 0);
+  }, [orderedBlockColumns, columnsWithValues]);
+
+  /** Flat list of visible columns in block order */
+  const visibleFlatOrderedColumns = useMemo(
+    () => visibleOrderedBlockColumns.flatMap((g) => g.columns),
+    [visibleOrderedBlockColumns]
+  );
+
+  /** Block boundary column IDs for visible columns */
+  const visibleBlockBoundaryColumnIds = useMemo(() => {
+    const ids = new Set<string>();
+    visibleOrderedBlockColumns.forEach((group, idx) => {
+      if (idx > 0 && group.columns.length > 0) {
+        ids.add(group.columns[0].id);
+      }
+    });
+    return ids;
+  }, [visibleOrderedBlockColumns]);
+
+  const visibleHasMultipleBlocks = visibleOrderedBlockColumns.length > 1;
+
   // ──────────────────────────────────────────────────────────────────────
   // PERFORMANCE-CRITICAL MEMOISED FORMULA DATA
-  //
-  // These memos depend ONLY on `columns` (template structure), NOT on
-  // `values`. They are recomputed only when the template itself changes,
-  // not on every keystroke.
   // ──────────────────────────────────────────────────────────────────────
 
-  /** key → TemplateColumn lookup (stable across value changes) */
   const keyToCol = useMemo(() => {
     const map: Record<string, TemplateColumn> = {};
     columns.forEach((col) => {
@@ -550,7 +674,6 @@ export default function OrderTemplateValues({
     return map;
   }, [columns]);
 
-  /** Pre-parsed formulas keyed by column key. Parsed ONCE, reused every row. */
   const parsedFormulas = useMemo(() => {
     const map: Record<string, ReturnType<typeof parseFormula>> = {};
     columns.forEach((col) => {
@@ -561,10 +684,6 @@ export default function OrderTemplateValues({
     return map;
   }, [columns]);
 
-  /**
-   * For each formula column, the list of NUMBER/TEXT column *IDs* it
-   * transitively depends on. Used to gate "show result vs show —".
-   */
   const formulaInputDeps = useMemo(() => {
     const map: Record<string, string[]> = {};
     columns.forEach((col) => {
@@ -579,22 +698,13 @@ export default function OrderTemplateValues({
     return map;
   }, [columns, keyToCol]);
 
-  /** Formula columns in topological (dependency-first) order. */
   const sortedFormulaColumns = useMemo(() => {
     const formulaCols = columns.filter((c) => c.dataType === 'FORMULA');
     return topologicalSortFormulas(formulaCols, columns);
   }, [columns]);
 
   // ──────────────────────────────────────────────────────────────────────
-  // EDIT-MODE: per-row FORMULA results — SINGLE PASS per row
-  //
-  // For each row we build keyToValue ONCE with all NUMBER/TEXT values,
-  // then evaluate every formula in topological order. Each formula's
-  // result feeds into keyToValue so later formulas can reference it.
-  //
-  // This replaces the old approach that called evaluateFormula() per cell,
-  // where each call rebuilt keyToValue from scratch and recursively
-  // evaluated ALL other formulas — O(F² × R) vs. the new O(F × R).
+  // EDIT-MODE: per-row FORMULA results
   // ──────────────────────────────────────────────────────────────────────
   const computedFormulaValues = useMemo(() => {
     if (readOnly) return {};
@@ -604,7 +714,6 @@ export default function OrderTemplateValues({
     nonTotalRows.forEach((row) => {
       const rowVals = values[row.id] || {};
 
-      // 1. Seed key→value with NUMBER / TEXT inputs
       const kv: Record<string, number> = {};
       columns.forEach((col) => {
         if (col.dataType === 'NUMBER' || col.dataType === 'TEXT') {
@@ -612,7 +721,6 @@ export default function OrderTemplateValues({
         }
       });
 
-      // 2. Evaluate formulas in dependency order
       const computed: Record<string, string> = {};
 
       sortedFormulaColumns.forEach((col) => {
@@ -659,19 +767,16 @@ export default function OrderTemplateValues({
 
   // ──────────────────────────────────────────────────────────────────────
   // EDIT-MODE: TOTAL row FORMULA results
-  //
-  // FORMULA columns are summed from per-row results above.
-  // NUMBER/TEXT columns in TOTAL rows come from the API values map.
   // ──────────────────────────────────────────────────────────────────────
   const computedTotalFormulaValues = useMemo(() => {
     if (readOnly) return {};
 
-    const totalRows = rows.filter((r) => r.rowType === 'TOTAL');
-    if (totalRows.length === 0) return {};
+    const totalRowsArr = rows.filter((r) => r.rowType === 'TOTAL');
+    if (totalRowsArr.length === 0) return {};
 
     const result: Record<string, Record<string, string>> = {};
 
-    totalRows.forEach((totalRow) => {
+    totalRowsArr.forEach((totalRow) => {
       const computed: Record<string, string> = {};
 
       columns.forEach((col) => {
@@ -704,7 +809,6 @@ export default function OrderTemplateValues({
   // CELL VALUE RESOLVERS
   // ──────────────────────────────────────────────────────────────────────
 
-  /** Edit-mode: return the live-calculated formula value for a cell. */
   const getEditModeFormulaValue = useCallback(
     (row: TemplateRow, column: TemplateColumn): string => {
       if (row.rowType === 'TOTAL') {
@@ -715,11 +819,6 @@ export default function OrderTemplateValues({
     [computedFormulaValues, computedTotalFormulaValues]
   );
 
-  /**
-   * ReadOnly: return the server's calculatedValue stored in the values map.
-   * For TOTAL rows where the API didn't return a stored value, fall back to
-   * summing the non-TOTAL calculatedValues.
-   */
   const getReadOnlyFormulaValue = useCallback(
     (row: TemplateRow, column: TemplateColumn): string => {
       const stored = values[row.id]?.[column.id];
@@ -728,10 +827,8 @@ export default function OrderTemplateValues({
         return stored && stored !== '' ? formatAmount(stored) : '—';
       }
 
-      // TOTAL row: prefer what the API returned
       if (stored && stored !== '') return formatAmount(stored);
 
-      // Fallback: sum non-TOTAL stored calculatedValues
       let sum = 0;
       let any = false;
       nonTotalRows.forEach((r) => {
@@ -809,6 +906,107 @@ export default function OrderTemplateValues({
     },
     [onDiscountChange, discountType]
   );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // RENDER: Row Visibility Dropdown
+  // ──────────────────────────────────────────────────────────────────────
+  const renderRowVisibilityDropdown = () => {
+    if (selectableRows.length === 0) return null;
+
+    return (
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant='outline'
+            size='sm'
+            className='h-7 gap-1.5 px-2.5 text-xs font-medium'
+          >
+            <Rows className='h-3 w-3' />
+            Rows
+            {hiddenRowCount > 0 && (
+              <Badge
+                variant='secondary'
+                className='ml-0.5 h-4 min-w-[1rem] px-1 text-[10px]'
+              >
+                {visibleRowIds.size}/{selectableRows.length}
+              </Badge>
+            )}
+            <ChevronDown className='h-3 w-3 opacity-50' />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className='w-[260px] p-0' align='start' side='bottom'>
+          {/* Header with bulk actions */}
+          <div className='flex items-center justify-between border-b px-3 py-2'>
+            <span className='text-xs font-semibold text-slate-700 dark:text-slate-300'>
+              Toggle Rows
+            </span>
+            <div className='flex items-center gap-1'>
+              <button
+                type='button'
+                className='text-primary rounded px-1.5 py-0.5 text-[10px] font-medium hover:bg-slate-100 dark:hover:bg-slate-800'
+                onClick={showAllRows}
+                disabled={allRowsVisible}
+              >
+                Show All
+              </button>
+              <span className='text-muted-foreground text-[10px]'>·</span>
+              <button
+                type='button'
+                className='text-primary rounded px-1.5 py-0.5 text-[10px] font-medium hover:bg-slate-100 dark:hover:bg-slate-800'
+                onClick={showOnlyWithValues}
+                disabled={manuallyShownRows.size === 0}
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+
+          {/* Row list */}
+          <div className='max-h-[280px] overflow-y-auto py-1'>
+            {selectableRows.map((row) => {
+              const hasValues = rowsWithValues.has(row.id);
+              const isVisible = visibleRowIds.has(row.id);
+              const isLocked = hasValues;
+
+              return (
+                <label
+                  key={row.id}
+                  className={cn(
+                    'flex cursor-pointer items-center gap-2.5 px-3 py-1.5 transition-colors',
+                    isLocked ? 'cursor-default opacity-80' : 'hover:bg-accent'
+                  )}
+                >
+                  <Checkbox
+                    checked={isVisible}
+                    disabled={isLocked}
+                    onCheckedChange={() => toggleRowVisibility(row.id)}
+                    className='h-3.5 w-3.5'
+                  />
+                  <span className='min-w-0 flex-1 truncate text-xs'>
+                    {row.label}
+                  </span>
+                  {hasValues && (
+                    <span className='text-muted-foreground flex items-center gap-0.5 text-[10px]'>
+                      <Check className='h-2.5 w-2.5 text-green-500' />
+                      has data
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Footer info */}
+          <div className='border-t px-3 py-1.5'>
+            <p className='text-muted-foreground text-[10px]'>
+              {visibleRowIds.size} of {selectableRows.length} rows visible. Rows
+              with data cannot be hidden.
+            </p>
+          </div>
+        </PopoverContent>
+      </Popover>
+    );
+  };
 
   // ──────────────────────────────────────────────────────────────────────
   // RENDER: Discount Controls
@@ -892,10 +1090,30 @@ export default function OrderTemplateValues({
       );
     }
 
+    // If no rows are visible (all empty & unchecked), show an empty state
+    if (displayRows.length === 0) {
+      return (
+        <div className='bg-muted/30 flex min-w-0 flex-1 items-center justify-center rounded-lg border py-12'>
+          <div className='text-center'>
+            <Rows className='text-muted-foreground mx-auto mb-2 h-8 w-8' />
+            <p className='text-muted-foreground text-sm'>
+              No rows with values. Use the Rows dropdown to show rows.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Use visible columns (filtered in readOnly mode)
+    const renderBlockColumns = visibleOrderedBlockColumns;
+    const renderFlatColumns = visibleFlatOrderedColumns;
+    const renderBoundaryIds = visibleBlockBoundaryColumnIds;
+    const renderHasMultipleBlocks = visibleHasMultipleBlocks;
+
     return (
       <div ref={tableWrapperRef} className='min-w-0 flex-1 rounded-lg border'>
         {/* Single-block selector */}
-        {!hasMultipleBlocks && hasApiBlocks && !readOnly && (
+        {!renderHasMultipleBlocks && hasApiBlocks && !readOnly && (
           <div className='flex items-center gap-3 border-b px-4 py-2.5'>
             <Layers className='text-muted-foreground h-4 w-4' />
             <span className='text-muted-foreground text-xs font-medium'>
@@ -921,7 +1139,7 @@ export default function OrderTemplateValues({
             </Select>
           </div>
         )}
-        {!hasMultipleBlocks &&
+        {!renderHasMultipleBlocks &&
           hasApiBlocks &&
           readOnly &&
           blockValues[blocks[0]?.index ?? 0] && (
@@ -942,7 +1160,7 @@ export default function OrderTemplateValues({
           <Table>
             <TableHeader>
               {/* Block group headers */}
-              {hasMultipleBlocks && hasColumns && (
+              {renderHasMultipleBlocks && renderFlatColumns.length > 0 && (
                 <TableRow className='bg-muted border-b-2'>
                   <TableHead
                     data-sticky-left
@@ -951,7 +1169,7 @@ export default function OrderTemplateValues({
                   >
                     Row / Item
                   </TableHead>
-                  {orderedBlockColumns.map((group, idx) => {
+                  {renderBlockColumns.map((group, idx) => {
                     const selectedBlockId =
                       blockValues[group.block.index] || '';
                     const selectedBlock = apiBlocks.find(
@@ -1010,7 +1228,7 @@ export default function OrderTemplateValues({
 
               {/* Column headers */}
               <TableRow className='bg-muted'>
-                {!hasMultipleBlocks && (
+                {!renderHasMultipleBlocks && (
                   <TableHead
                     data-sticky-left
                     className='bg-muted font-semibold'
@@ -1018,13 +1236,13 @@ export default function OrderTemplateValues({
                     Row / Item
                   </TableHead>
                 )}
-                {flatOrderedColumns.map((column) => (
+                {renderFlatColumns.map((column) => (
                   <TableHead
                     key={column.id}
                     className={cn(
                       'text-center',
-                      hasMultipleBlocks &&
-                        blockBoundaryColumnIds.has(column.id) &&
+                      renderHasMultipleBlocks &&
+                        renderBoundaryIds.has(column.id) &&
                         'border-l-border border-l-2'
                     )}
                   >
@@ -1054,7 +1272,8 @@ export default function OrderTemplateValues({
             </TableHeader>
 
             <TableBody>
-              {rows.map((row) => {
+              {/* === USE displayRows INSTEAD OF rows === */}
+              {displayRows.map((row) => {
                 const isTotal = row.rowType === 'TOTAL';
 
                 return (
@@ -1080,7 +1299,7 @@ export default function OrderTemplateValues({
                       </div>
                     </TableCell>
 
-                    {flatOrderedColumns.map((column) => {
+                    {renderFlatColumns.map((column) => {
                       const cellKey = getErrorKey(row.id, column.id);
                       const cellError = errors[cellKey];
 
@@ -1096,8 +1315,8 @@ export default function OrderTemplateValues({
                             className={cn(
                               'text-center',
                               isTotal && 'bg-muted',
-                              hasMultipleBlocks &&
-                                blockBoundaryColumnIds.has(column.id) &&
+                              renderHasMultipleBlocks &&
+                                renderBoundaryIds.has(column.id) &&
                                 'border-l-border border-l-2'
                             )}
                           >
@@ -1130,8 +1349,8 @@ export default function OrderTemplateValues({
                             key={column.id}
                             className={cn(
                               'bg-muted text-center',
-                              hasMultipleBlocks &&
-                                blockBoundaryColumnIds.has(column.id) &&
+                              renderHasMultipleBlocks &&
+                                renderBoundaryIds.has(column.id) &&
                                 'border-l-border border-l-2'
                             )}
                           >
@@ -1147,8 +1366,8 @@ export default function OrderTemplateValues({
                         <TableCell
                           key={column.id}
                           className={cn(
-                            hasMultipleBlocks &&
-                              blockBoundaryColumnIds.has(column.id) &&
+                            renderHasMultipleBlocks &&
+                              renderBoundaryIds.has(column.id) &&
                               'border-l-border border-l-2'
                           )}
                         >
@@ -1267,6 +1486,8 @@ export default function OrderTemplateValues({
               >
                 {template.type}
               </Badge>
+              {/* Row visibility dropdown */}
+              {renderRowVisibilityDropdown()}
             </CardTitle>
             {template.description && (
               <CardDescription className='mt-1'>
@@ -1287,7 +1508,7 @@ export default function OrderTemplateValues({
             </div>
             <div className='flex items-center gap-1'>
               <Rows className='h-3 w-3' />
-              {rows.length} rows
+              {visibleRowIds.size}/{rows.length} rows
             </div>
           </div>
         </div>

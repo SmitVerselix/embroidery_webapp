@@ -44,7 +44,8 @@ import {
   Check,
   X,
   History,
-  Trash2
+  Trash2,
+  Plus
 } from 'lucide-react';
 import {
   Tooltip,
@@ -142,6 +143,23 @@ type DiscountType = 'AMOUNT' | 'PERCENT';
 type BlockValuesMap = Record<number, string>;
 
 // =============================================================================
+// ADDITIONAL COST TYPES
+// =============================================================================
+
+type AdditionalCost = {
+  /** Local-only key for React rendering — never sent to API */
+  _key: string;
+  costName: string;
+  cost: string; // kept as string while editing, parsed on submit
+  notes: string;
+};
+
+type AdditionalCostErrors = {
+  costName?: string;
+  cost?: string;
+};
+
+// =============================================================================
 // UPDATE FINAL CALCULATION API
 // =============================================================================
 
@@ -153,6 +171,7 @@ type UpdateFinalCalculationPayload = {
   marginType: DiscountType;
   addonDiscount: number;
   addonType: DiscountType;
+  additionalCosts: { notes: string; costName: string; cost: number }[];
 };
 
 const updateFinalCalculation = async (
@@ -188,6 +207,13 @@ type FinalCalcTemplateRow = {
 };
 
 // =============================================================================
+// HELPERS — generate a stable local key for new rows
+// =============================================================================
+
+let _costKeyCounter = 0;
+const nextCostKey = () => `cost_${++_costKeyCounter}_${Date.now()}`;
+
+// =============================================================================
 // FINAL CALCULATION TABLE COMPONENT
 // =============================================================================
 
@@ -205,6 +231,8 @@ interface FinalCalculationTableProps {
   hasAnyChildren: boolean;
   companyId: string;
   orderId: string;
+  /** Existing additional costs from the API response */
+  additionalCosts?: { notes: string; costName: string; cost: number }[];
   onSaved: () => Promise<void>;
 }
 
@@ -222,6 +250,7 @@ function FinalCalculationTable({
   hasAnyChildren,
   companyId,
   orderId,
+  additionalCosts = [],
   onSaved
 }: FinalCalculationTableProps) {
   const [isEditing, setIsEditing] = useState(false);
@@ -239,20 +268,44 @@ function FinalCalculationTable({
   const [formAddonType, setFormAddonType] = useState<DiscountType>(
     (orderAddonType as DiscountType) || 'AMOUNT'
   );
+
   const [formNotes, setFormNotes] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
     )
   );
 
+  // ── Additional costs state ────────────────────────────────────────
+  const toFormCosts = (
+    src: { notes: string; costName: string; cost: number }[]
+  ): AdditionalCost[] =>
+    src.map((c) => ({
+      _key: nextCostKey(),
+      costName: c.costName,
+      cost: String(c.cost),
+      notes: c.notes
+    }));
+
+  const [formCosts, setFormCosts] = useState<AdditionalCost[]>(() =>
+    toFormCosts(additionalCosts)
+  );
+  const [costErrors, setCostErrors] = useState<
+    Record<string, AdditionalCostErrors>
+  >({});
+
+  // ── Sync props → form when not editing ────────────────────────────
   useEffect(() => {
     if (!isEditing) {
       setFormDiscount(discount);
       setFormMarginDiscount(marginDiscount);
       setFormAddonDiscount(addonDiscount);
+      setFormCosts(toFormCosts(additionalCosts));
+      setCostErrors({});
     }
-  }, [discount, marginDiscount, addonDiscount, isEditing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discount, marginDiscount, addonDiscount, additionalCosts, isEditing]);
 
+  // ── Edit / Cancel ─────────────────────────────────────────────────
   const handleEdit = () => {
     setFormDiscount(discount);
     setFormDiscountType((orderDiscountType as DiscountType) || 'AMOUNT');
@@ -265,12 +318,110 @@ function FinalCalculationTable({
         templateRows.map((r) => [r.orderTemplateId, r.notes ?? ''])
       )
     );
+    setFormCosts(toFormCosts(additionalCosts));
+    setCostErrors({});
     setIsEditing(true);
   };
 
-  const handleCancel = () => setIsEditing(false);
+  const handleCancel = () => {
+    setIsEditing(false);
+    setCostErrors({});
+  };
 
+  // ── Additional cost row helpers ───────────────────────────────────
+  const addCostRow = () => {
+    setFormCosts((prev) => [
+      ...prev,
+      { _key: nextCostKey(), costName: '', cost: '', notes: '' }
+    ]);
+  };
+
+  const removeCostRow = (key: string) => {
+    setFormCosts((prev) => prev.filter((c) => c._key !== key));
+    setCostErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const updateCostRow = (
+    key: string,
+    field: keyof Omit<AdditionalCost, '_key'>,
+    value: string
+  ) => {
+    setFormCosts((prev) =>
+      prev.map((c) => (c._key === key ? { ...c, [field]: value } : c))
+    );
+    // Clear the specific field error on change
+    if (field === 'costName' || field === 'cost') {
+      setCostErrors((prev) => {
+        const rowErr = { ...prev[key] };
+        delete rowErr[field];
+        return { ...prev, [key]: rowErr };
+      });
+    }
+  };
+
+  // ── Validation ────────────────────────────────────────────────────
+  const validateCosts = (): boolean => {
+    const newErrors: Record<string, AdditionalCostErrors> = {};
+    let valid = true;
+
+    for (const row of formCosts) {
+      const rowErr: AdditionalCostErrors = {};
+
+      if (!row.costName.trim()) {
+        rowErr.costName = 'Name is required';
+        valid = false;
+      }
+
+      const costNum = parseFloat(row.cost);
+      if (row.cost.trim() === '') {
+        rowErr.cost = 'Value is required';
+        valid = false;
+      } else if (isNaN(costNum)) {
+        rowErr.cost = 'Must be a valid number';
+        valid = false;
+      } else if (costNum < 0) {
+        rowErr.cost = 'Must be 0 or greater';
+        valid = false;
+      }
+
+      if (Object.keys(rowErr).length > 0) newErrors[row._key] = rowErr;
+    }
+
+    // Validate discount / margin / addon fields (they must be valid numbers)
+    const discountErrors: string[] = [];
+    if (formDiscount.trim() !== '' && isNaN(parseFloat(formDiscount))) {
+      discountErrors.push('Discount must be a valid number');
+    }
+    if (
+      formMarginDiscount.trim() !== '' &&
+      isNaN(parseFloat(formMarginDiscount))
+    ) {
+      discountErrors.push('Margin discount must be a valid number');
+    }
+    if (
+      formAddonDiscount.trim() !== '' &&
+      isNaN(parseFloat(formAddonDiscount))
+    ) {
+      discountErrors.push('Addon discount must be a valid number');
+    }
+
+    if (discountErrors.length > 0) {
+      discountErrors.forEach((msg) => toast.error(msg));
+      valid = false;
+    }
+
+    setCostErrors(newErrors);
+    return valid;
+  };
+
+  // ── Submit ────────────────────────────────────────────────────────
   const handleSubmit = async () => {
+    if (!validateCosts()) return;
+
     setIsSaving(true);
     try {
       const notes = templateRows
@@ -280,6 +431,12 @@ function FinalCalculationTable({
         }))
         .filter((n) => n.notes.trim() !== '');
 
+      const additionalCostsPayload = formCosts.map((c) => ({
+        costName: c.costName.trim(),
+        cost: parseFloat(c.cost) || 0,
+        notes: c.notes.trim()
+      }));
+
       await updateFinalCalculation(companyId, orderId, {
         notes,
         discount: parseFloat(formDiscount) || 0,
@@ -287,7 +444,8 @@ function FinalCalculationTable({
         addonDiscount: parseFloat(formAddonDiscount) || 0,
         addonType: formAddonType,
         marginDiscount: parseFloat(formMarginDiscount) || 0,
-        marginType: formMarginType
+        marginType: formMarginType,
+        additionalCosts: additionalCostsPayload
       });
 
       toast.success('Final calculation updated successfully');
@@ -307,8 +465,14 @@ function FinalCalculationTable({
     }
   };
 
+  // ── Data columns span ─────────────────────────────────────────────
+  // Table has: Label | Total | [Child Total] | Notes
+  // When hasAnyChildren the numeric cells span 2 cols (Total + Child Total)
+  const numColSpan = hasAnyChildren ? 2 : 1;
+
   return (
     <div className='w-full min-w-[520px]'>
+      {/* Header */}
       <div className='my-2 flex items-center justify-between px-4'>
         <h3 className='text-sm font-semibold'>Final Calculation</h3>
         {!isEditing ? (
@@ -363,6 +527,7 @@ function FinalCalculationTable({
             </tr>
           </thead>
           <tbody>
+            {/* ── Template rows ─────────────────────────────────── */}
             {templateRows.map((row) => (
               <tr key={row.orderTemplateId} className='border-b'>
                 <td className='px-4 py-2 font-medium'>{row.label}</td>
@@ -397,32 +562,191 @@ function FinalCalculationTable({
               </tr>
             ))}
 
+            {/* ── Additional cost rows (view mode) ──────────────── */}
+            {!isEditing &&
+              additionalCosts.map((c, idx) => (
+                <tr key={idx} className='bg-muted/20 border-b'>
+                  <td className='px-4 py-2 text-xs font-medium'>
+                    {c.costName}
+                  </td>
+                  <td
+                    className='px-4 py-2 font-mono tabular-nums'
+                    colSpan={numColSpan}
+                  >
+                    {formatAmount(String(c.cost))}
+                  </td>
+                  <td className='px-4 py-2'>
+                    {c.notes ? (
+                      <span className='text-foreground text-xs'>{c.notes}</span>
+                    ) : (
+                      <span className='text-muted-foreground text-xs'>—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+
+            {/* ── Additional cost rows (edit mode) ──────────────── */}
+            {isEditing && (
+              <>
+                {formCosts.map((row) => {
+                  const errs = costErrors[row._key] ?? {};
+                  return (
+                    <tr
+                      key={row._key}
+                      className='bg-muted/20 border-b align-top'
+                    >
+                      {/* Name */}
+                      <td className='px-4 py-2'>
+                        <div className='flex flex-col gap-0.5'>
+                          <Input
+                            className={`h-7 min-w-[130px] text-xs ${errs.costName ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                            placeholder='Name *'
+                            value={row.costName}
+                            onChange={(e) =>
+                              updateCostRow(
+                                row._key,
+                                'costName',
+                                e.target.value
+                              )
+                            }
+                            onKeyDown={handleKeyDown}
+                          />
+                          {errs.costName && (
+                            <span className='text-destructive text-[10px] leading-tight'>
+                              {errs.costName}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Value */}
+                      <td className='px-4 py-2' colSpan={numColSpan}>
+                        <div className='flex flex-col gap-0.5'>
+                          <Input
+                            className={`h-7 w-32 font-mono text-xs tabular-nums ${errs.cost ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                            type='number'
+                            min='0'
+                            step='0.01'
+                            placeholder='0.00 *'
+                            value={row.cost}
+                            onChange={(e) =>
+                              updateCostRow(row._key, 'cost', e.target.value)
+                            }
+                            onKeyDown={handleKeyDown}
+                          />
+                          {errs.cost && (
+                            <span className='text-destructive text-[10px] leading-tight'>
+                              {errs.cost}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Notes + delete */}
+                      <td className='px-4 py-2'>
+                        <div className='flex items-start gap-2'>
+                          <Input
+                            className='h-7 min-w-[130px] text-xs'
+                            placeholder='Notes (optional)'
+                            value={row.notes}
+                            onChange={(e) =>
+                              updateCostRow(row._key, 'notes', e.target.value)
+                            }
+                            onKeyDown={handleKeyDown}
+                          />
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='text-destructive hover:text-destructive hover:bg-destructive/10 mt-0 h-7 w-7 shrink-0'
+                            onClick={() => removeCostRow(row._key)}
+                            title='Remove row'
+                          >
+                            <X className='h-3.5 w-3.5' />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {/* Add row button */}
+                <tr className='border-b'>
+                  <td colSpan={hasAnyChildren ? 4 : 3} className='px-4 py-2'>
+                    <Button
+                      variant='ghost'
+                      size='sm'
+                      className='h-7 gap-1.5 text-xs'
+                      onClick={addCostRow}
+                    >
+                      <Plus className='h-3.5 w-3.5' />
+                      Add Additional Cost
+                    </Button>
+                  </td>
+                </tr>
+              </>
+            )}
+
+            {/* ── Total ─────────────────────────────────────────── */}
             <tr className='border-t-2 border-b font-semibold'>
               <td className='px-4 py-2'>Total</td>
               <td
                 className='px-4 py-2 font-mono tabular-nums'
-                colSpan={hasAnyChildren ? 2 : 1}
+                colSpan={numColSpan}
               >
                 {total}
               </td>
               <td className='px-4 py-2' />
             </tr>
 
-            {/* Margin Discount */}
+            {/* ── Margin Discount ───────────────────────────────── */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Margin Discount</td>
-              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
+              <td className='px-4 py-2' colSpan={numColSpan}>
                 {isEditing ? (
                   <div className='flex items-center gap-2'>
                     <Input
                       className='h-7 w-28 font-mono text-xs tabular-nums'
                       type='number'
-                      min='0'
                       step='0.01'
                       value={formMarginDiscount}
                       onChange={(e) => setFormMarginDiscount(e.target.value)}
                       onKeyDown={handleKeyDown}
                     />
+                    {/* +/- sign toggle — mutates the value directly */}
+                    <div className='flex h-7 overflow-hidden rounded-md border'>
+                      <button
+                        type='button'
+                        onClick={() =>
+                          setFormMarginDiscount((prev) =>
+                            String(Math.abs(parseFloat(prev) || 0))
+                          )
+                        }
+                        className={`flex w-8 items-center justify-center text-xs font-semibold transition-colors ${
+                          !(parseFloat(formMarginDiscount) < 0)
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-background text-muted-foreground hover:bg-muted'
+                        }`}
+                      >
+                        +
+                      </button>
+                      <div className='bg-border w-px' />
+                      <button
+                        type='button'
+                        onClick={() =>
+                          setFormMarginDiscount((prev) => {
+                            const n = Math.abs(parseFloat(prev) || 0);
+                            return n === 0 ? '0' : String(-n);
+                          })
+                        }
+                        className={`flex w-8 items-center justify-center text-xs font-semibold transition-colors ${
+                          parseFloat(formMarginDiscount) < 0
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-background text-muted-foreground hover:bg-muted'
+                        }`}
+                      >
+                        −
+                      </button>
+                    </div>
                     <Select
                       value={formMarginType}
                       onValueChange={(v) =>
@@ -451,28 +775,62 @@ function FinalCalculationTable({
               <td className='px-4 py-2 font-medium'>Margin Total</td>
               <td
                 className='px-4 py-2 font-mono tabular-nums'
-                colSpan={hasAnyChildren ? 2 : 1}
+                colSpan={numColSpan}
               >
                 {marginTotal}
               </td>
               <td className='px-4 py-2' />
             </tr>
 
-            {/* Discount */}
+            {/* ── Discount ──────────────────────────────────────── */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Discount</td>
-              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
+              <td className='px-4 py-2' colSpan={numColSpan}>
                 {isEditing ? (
                   <div className='flex items-center gap-2'>
                     <Input
                       className='h-7 w-28 font-mono text-xs tabular-nums'
                       type='number'
-                      min='0'
                       step='0.01'
                       value={formDiscount}
                       onChange={(e) => setFormDiscount(e.target.value)}
                       onKeyDown={handleKeyDown}
                     />
+                    {/* +/- sign toggle — mutates the value directly */}
+                    <div className='flex h-7 overflow-hidden rounded-md border'>
+                      <button
+                        type='button'
+                        onClick={() =>
+                          setFormDiscount((prev) =>
+                            String(Math.abs(parseFloat(prev) || 0))
+                          )
+                        }
+                        className={`flex w-8 items-center justify-center text-xs font-semibold transition-colors ${
+                          !(parseFloat(formDiscount) < 0)
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-background text-muted-foreground hover:bg-muted'
+                        }`}
+                      >
+                        +
+                      </button>
+                      <div className='bg-border w-px' />
+                      <button
+                        type='button'
+                        onClick={() =>
+                          setFormDiscount((prev) => {
+                            const n = Math.abs(parseFloat(prev) || 0);
+                            return n === 0 ? '0' : String(-n);
+                          })
+                        }
+                        className={`flex w-8 items-center justify-center text-xs font-semibold transition-colors ${
+                          parseFloat(formDiscount) < 0
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-background text-muted-foreground hover:bg-muted'
+                        }`}
+                      >
+                        −
+                      </button>
+                    </div>
                     <Select
                       value={formDiscountType}
                       onValueChange={(v) =>
@@ -497,10 +855,10 @@ function FinalCalculationTable({
               <td className='px-4 py-2' />
             </tr>
 
-            {/* Addon Discount */}
+            {/* ── Addon Discount ────────────────────────────────── */}
             <tr className='border-b'>
               <td className='px-4 py-2 font-medium'>Addon Discount</td>
-              <td className='px-4 py-2' colSpan={hasAnyChildren ? 2 : 1}>
+              <td className='px-4 py-2' colSpan={numColSpan}>
                 {isEditing ? (
                   <div className='flex items-center gap-2'>
                     <Input
@@ -534,11 +892,12 @@ function FinalCalculationTable({
               <td className='px-4 py-2' />
             </tr>
 
+            {/* ── Final Payable Amount ──────────────────────────── */}
             <tr className='border-t-2 font-semibold'>
               <td className='px-4 py-2'>Final Payable Amount</td>
               <td
                 className='px-4 py-2 font-mono tabular-nums'
-                colSpan={hasAnyChildren ? 2 : 1}
+                colSpan={numColSpan}
               >
                 {finalPayableAmount}
               </td>
@@ -1205,13 +1564,24 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       };
     });
 
+    // Pull existing additional costs from the order response
+    const existingAdditionalCosts: {
+      notes: string;
+      costName: string;
+      cost: number;
+    }[] = ((order as any).additionalCosts || []).map((c: any) => ({
+      costName: c.costName ?? '',
+      cost: typeof c.cost === 'number' ? c.cost : parseFloat(c.cost) || 0,
+      notes: c.notes ?? ''
+    }));
+
     return {
       id: '__final_calculation__',
       label: 'Final Calculation',
       children: (
         <FinalCalculationTable
           templateRows={templateRows}
-          total={formatAmount(order.total)}
+          total={formatAmount((order as any).total)}
           discount={formatAmount(order.discount)}
           discountType={(order as any).discountType ?? null}
           addonDiscount={formatAmount((order as any).addonDiscount)}
@@ -1223,6 +1593,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           hasAnyChildren={hasAnyChildren}
           companyId={companyId}
           orderId={orderId}
+          additionalCosts={existingAdditionalCosts}
           onSaved={refreshOrder}
         />
       )
