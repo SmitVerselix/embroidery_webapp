@@ -211,7 +211,8 @@ export default function OrderEditForm({
             value: ev.value,
             orderExtraValueId: ev.id,
             orderIndex:
-              ev.orderIndex ?? extValMap[ev.templateExtraFieldId].length
+              ev.orderIndex ?? extValMap[ev.templateExtraFieldId].length,
+            meta: (ev as any).meta ?? null
           });
           evIdSet.add(ev.id);
         });
@@ -495,7 +496,10 @@ export default function OrderEditForm({
                   : {}),
                 templateExtraFieldId: extra.id,
                 value: item.value.trim(),
-                meta: null,
+                meta:
+                  item.meta && Object.keys(item.meta).length > 0
+                    ? item.meta
+                    : null,
                 orderIndex: item.orderIndex
               });
               if (item.orderExtraValueId)
@@ -640,6 +644,9 @@ export default function OrderEditForm({
                 onAdditionalCostsChange={(costs) =>
                   handleAdditionalCostsChange(parent.orderTemplateId, costs)
                 }
+                companyId={companyId}
+                productId={order?.product?.id || ''}
+                templateId={parent.template.id}
               />
             </div>
             {childEntries.map((child, idx) => (
@@ -687,6 +694,9 @@ export default function OrderEditForm({
                   onAdditionalCostsChange={(costs) =>
                     handleAdditionalCostsChange(child.orderTemplateId, costs)
                   }
+                  companyId={companyId}
+                  productId={order?.product?.id || ''}
+                  templateId={child.template.id}
                 />
               </div>
             ))}

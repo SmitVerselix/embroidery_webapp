@@ -48,7 +48,8 @@ import {
   Plus,
   Pencil,
   Trash2,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -66,6 +67,15 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog';
+import { createBlock, getBlockFindAll } from '@/lib/api/services';
+import { getError } from '@/lib/api/axios';
 
 // =============================================================================
 // TYPES
@@ -121,6 +131,10 @@ export interface OrderTemplateValuesProps {
   /** Controlled additional costs */
   additionalCosts?: AdditionalCostItem[];
   onAdditionalCostsChange?: (costs: AdditionalCostItem[]) => void;
+  /** IDs needed to create/fetch blocks inline (Order Create & Update screens) */
+  companyId?: string;
+  productId?: string;
+  templateId?: string;
 }
 
 // =============================================================================
@@ -391,7 +405,10 @@ export default function OrderTemplateValues({
   blockValues = {},
   onBlockValuesChange,
   additionalCosts = [],
-  onAdditionalCostsChange
+  onAdditionalCostsChange,
+  companyId,
+  productId,
+  templateId
 }: OrderTemplateValuesProps) {
   const columns = useMemo(
     () => [...(template.columns || [])].sort((a, b) => a.orderNo - b.orderNo),
@@ -452,6 +469,44 @@ export default function OrderTemplateValues({
   const [editingCostIdx, setEditingCostIdx] = useState<number | null>(null);
   const [costDraft, setCostDraft] = useState<CostDraft>(EMPTY_DRAFT);
   const [costDraftErrors, setCostDraftErrors] = useState<CostDraftErrors>({});
+
+  // ── Block list state (per-template, refreshed after create) ────────────
+  const [localApiBlocks, setLocalApiBlocks] =
+    useState<TemplateBlockApi[]>(apiBlocks);
+  const [newBlockDialogOpen, setNewBlockDialogOpen] = useState(false);
+  const [newBlockName, setNewBlockName] = useState('');
+  const [isCreatingBlock, setIsCreatingBlock] = useState(false);
+  const [blockCreateError, setBlockCreateError] = useState<string | null>(null);
+
+  // Sync local block list whenever parent prop changes (e.g. product switch)
+  useEffect(() => {
+    setLocalApiBlocks(apiBlocks);
+  }, [apiBlocks]);
+
+  const canCreateBlock = !!(companyId && productId && templateId && !readOnly);
+
+  const handleCreateBlock = useCallback(async () => {
+    if (!companyId || !productId || !templateId) return;
+    if (!newBlockName.trim()) {
+      setBlockCreateError('Block name is required');
+      return;
+    }
+    setIsCreatingBlock(true);
+    setBlockCreateError(null);
+    try {
+      await createBlock(companyId, productId, templateId, {
+        name: newBlockName.trim()
+      });
+      const updated = await getBlockFindAll(companyId, productId, templateId);
+      setLocalApiBlocks(updated);
+      setNewBlockDialogOpen(false);
+      setNewBlockName('');
+    } catch (err) {
+      setBlockCreateError(getError(err));
+    } finally {
+      setIsCreatingBlock(false);
+    }
+  }, [companyId, productId, templateId, newBlockName]);
 
   const openAddCost = useCallback(() => {
     setCostDraft(EMPTY_DRAFT);
@@ -619,7 +674,7 @@ export default function OrderTemplateValues({
   const hasFooterExtras = footerExtras.length > 0;
   const hasMediaExtras = mediaExtras.length > 0;
   const hasAnyExtras = hasHeaderExtras || hasFooterExtras || hasMediaExtras;
-  const hasApiBlocks = apiBlocks.length > 0;
+  const hasApiBlocks = localApiBlocks.length > 0;
   const hasSummary =
     summary && typeof summary === 'object' && Object.keys(summary).length > 0;
 
@@ -1369,29 +1424,46 @@ export default function OrderTemplateValues({
       <div ref={tableWrapperRef} className='min-w-0 flex-1 rounded-lg border'>
         {/* Single-block selector */}
         {!renderHasMultipleBlocks && hasApiBlocks && !readOnly && (
-          <div className='flex items-center gap-3 border-b px-4 py-2.5'>
-            <Layers className='text-muted-foreground h-4 w-4' />
-            <span className='text-muted-foreground text-xs font-medium'>
-              Block:
-            </span>
-            <Select
-              value={blockValues[blocks[0]?.index ?? 0] || ''}
-              onValueChange={(val) =>
-                handleBlockValueChange(blocks[0]?.index ?? 0, val)
-              }
-              disabled={disabled}
-            >
-              <SelectTrigger className='h-8 w-[220px] text-xs'>
-                <SelectValue placeholder='Select block...' />
-              </SelectTrigger>
-              <SelectContent>
-                {apiBlocks.map((b) => (
-                  <SelectItem key={b.id} value={b.id}>
-                    {b.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className='space-y-2 border-b px-4 py-2.5'>
+            {canCreateBlock && (
+              <div className='flex justify-end'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  className='h-7 gap-1 px-2 text-xs'
+                  onClick={() => setNewBlockDialogOpen(true)}
+                  disabled={disabled}
+                >
+                  <Plus className='h-3 w-3' />
+                  New
+                </Button>
+              </div>
+            )}
+            <div className='flex items-center gap-3'>
+              <Layers className='text-muted-foreground h-4 w-4' />
+              <span className='text-muted-foreground text-xs font-medium'>
+                Block:
+              </span>
+              <Select
+                value={blockValues[blocks[0]?.index ?? 0] || ''}
+                onValueChange={(val) =>
+                  handleBlockValueChange(blocks[0]?.index ?? 0, val)
+                }
+                disabled={disabled}
+              >
+                <SelectTrigger className='h-8 w-[220px] text-xs'>
+                  <SelectValue placeholder='Select block...' />
+                </SelectTrigger>
+                <SelectContent>
+                  {localApiBlocks.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         )}
         {!renderHasMultipleBlocks &&
@@ -1404,7 +1476,7 @@ export default function OrderTemplateValues({
                 Block:
               </span>
               <Badge variant='outline' className='text-xs'>
-                {apiBlocks.find(
+                {localApiBlocks.find(
                   (b) => b.id === blockValues[blocks[0]?.index ?? 0]
                 )?.name || '—'}
               </Badge>
@@ -1427,7 +1499,7 @@ export default function OrderTemplateValues({
                   {renderBlockColumns.map((group, idx) => {
                     const selectedBlockId =
                       blockValues[group.block.index] || '';
-                    const selectedBlock = apiBlocks.find(
+                    const selectedBlock = localApiBlocks.find(
                       (b) => b.id === selectedBlockId
                     );
                     return (
@@ -1455,24 +1527,42 @@ export default function OrderTemplateValues({
                                 </Badge>
                               ) : null
                             ) : (
-                              <Select
-                                value={selectedBlockId}
-                                onValueChange={(val) =>
-                                  handleBlockValueChange(group.block.index, val)
-                                }
-                                disabled={disabled}
-                              >
-                                <SelectTrigger className='h-7 w-full max-w-[200px] border-current/20 bg-white/50 text-xs dark:bg-black/20'>
-                                  <SelectValue placeholder='Select block...' />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {apiBlocks.map((b) => (
-                                    <SelectItem key={b.id} value={b.id}>
-                                      {b.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              <>
+                                {canCreateBlock && (
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    className='h-6 gap-1 border-current/30 bg-white/50 px-2 text-[10px] dark:bg-black/20'
+                                    onClick={() => setNewBlockDialogOpen(true)}
+                                    disabled={disabled}
+                                  >
+                                    <Plus className='h-2.5 w-2.5' />
+                                    New
+                                  </Button>
+                                )}
+                                <Select
+                                  value={selectedBlockId}
+                                  onValueChange={(val) =>
+                                    handleBlockValueChange(
+                                      group.block.index,
+                                      val
+                                    )
+                                  }
+                                  disabled={disabled}
+                                >
+                                  <SelectTrigger className='h-7 w-full max-w-[200px] border-current/20 bg-white/50 text-xs dark:bg-black/20'>
+                                    <SelectValue placeholder='Select block...' />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {localApiBlocks.map((b) => (
+                                      <SelectItem key={b.id} value={b.id}>
+                                        {b.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </>
                             ))}
                         </div>
                       </TableHead>
@@ -1893,6 +1983,76 @@ export default function OrderTemplateValues({
           </div>
         )}
       </CardContent>
+
+      {/* New Block Dialog */}
+      <Dialog
+        open={newBlockDialogOpen}
+        onOpenChange={(open) => {
+          setNewBlockDialogOpen(open);
+          if (!open) {
+            setNewBlockName('');
+            setBlockCreateError(null);
+          }
+        }}
+      >
+        <DialogContent className='sm:max-w-[400px]'>
+          <DialogHeader>
+            <DialogTitle>Create New Block</DialogTitle>
+          </DialogHeader>
+          <div className='space-y-3 py-2'>
+            <div className='space-y-1.5'>
+              <Label htmlFor='new-block-name' className='text-sm font-medium'>
+                Block Name <span className='text-destructive'>*</span>
+              </Label>
+              <Input
+                id='new-block-name'
+                placeholder='e.g., 1.7 MM LIGHT GOLD (A)'
+                value={newBlockName}
+                onChange={(e) => {
+                  setNewBlockName(e.target.value);
+                  setBlockCreateError(null);
+                }}
+                disabled={isCreatingBlock}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleCreateBlock();
+                }}
+                autoFocus
+              />
+              {blockCreateError && (
+                <p className='text-destructive text-sm'>{blockCreateError}</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() => {
+                setNewBlockDialogOpen(false);
+                setNewBlockName('');
+                setBlockCreateError(null);
+              }}
+              disabled={isCreatingBlock}
+            >
+              Cancel
+            </Button>
+            <Button
+              type='button'
+              onClick={handleCreateBlock}
+              disabled={isCreatingBlock}
+            >
+              {isCreatingBlock ? (
+                <>
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  Creating...
+                </>
+              ) : (
+                'Create Block'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

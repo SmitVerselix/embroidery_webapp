@@ -1025,7 +1025,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         extValMap[ev.templateExtraFieldId].push({
           value: ev.value,
           orderExtraValueId: ev.id,
-          orderIndex: ev.orderIndex ?? extValMap[ev.templateExtraFieldId].length
+          orderIndex:
+            ev.orderIndex ?? extValMap[ev.templateExtraFieldId].length,
+          meta: (ev as any).meta ?? null
         });
       });
       Object.values(extValMap).forEach((arr) =>

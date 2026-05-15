@@ -309,6 +309,7 @@ export type TemplateBlock = {
   deletedBy?: string | null;
   deletedAt?: string | null;
   orderNo: number;
+  cost?: string;
   createdAt?: string;
   updatedAt?: string;
 };

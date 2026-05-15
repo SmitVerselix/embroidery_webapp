@@ -38,6 +38,8 @@ export type ExtraValueItem = {
   value: string;
   orderExtraValueId?: string;
   orderIndex: number;
+  /** Arbitrary metadata — used e.g. for image_text on IMAGE fields */
+  meta?: Record<string, any> | null;
 };
 
 /**
@@ -216,7 +218,8 @@ export default function OrderExtraValues({
       const current = getItems(extraId);
       const newItem: ExtraValueItem = {
         value: '',
-        orderIndex: nextOrderIndex(current)
+        orderIndex: nextOrderIndex(current),
+        meta: null
       };
       setItems(extraId, [...current, newItem]);
     },
@@ -229,7 +232,7 @@ export default function OrderExtraValues({
       const current = getItems(extraId);
       if (current.length <= 1) {
         // Don't remove the last one — just clear its value
-        const updated = [{ ...current[0], value: '' }];
+        const updated = [{ ...current[0], value: '', meta: null }];
         setItems(extraId, updated);
         return;
       }
@@ -246,9 +249,35 @@ export default function OrderExtraValues({
     (extraId: string, arrayIdx: number, newValue: string) => {
       const current = [...getItems(extraId)];
       if (!current[arrayIdx]) {
-        current[arrayIdx] = { value: newValue, orderIndex: arrayIdx };
+        current[arrayIdx] = {
+          value: newValue,
+          orderIndex: arrayIdx,
+          meta: null
+        };
       } else {
         current[arrayIdx] = { ...current[arrayIdx], value: newValue };
+      }
+      setItems(extraId, current);
+    },
+    [getItems, setItems]
+  );
+
+  // ── Meta value change (for image_text etc.) ────────────────────────
+  const handleMetaChange = useCallback(
+    (extraId: string, arrayIdx: number, metaKey: string, metaValue: string) => {
+      const current = [...getItems(extraId)];
+      if (!current[arrayIdx]) {
+        current[arrayIdx] = {
+          value: '',
+          orderIndex: arrayIdx,
+          meta: { [metaKey]: metaValue }
+        };
+      } else {
+        const existingMeta = current[arrayIdx].meta || {};
+        current[arrayIdx] = {
+          ...current[arrayIdx],
+          meta: { ...existingMeta, [metaKey]: metaValue }
+        };
       }
       setItems(extraId, current);
     },
@@ -272,9 +301,11 @@ export default function OrderExtraValues({
         if (!current[arrayIdx]) {
           current[arrayIdx] = {
             value: result.url,
-            orderIndex: arrayIdx
+            orderIndex: arrayIdx,
+            meta: null
           };
         } else {
+          // Preserve existing meta (e.g. image_text) when replacing image
           current[arrayIdx] = { ...current[arrayIdx], value: result.url };
         }
         setItems(extraId, current);
@@ -303,12 +334,12 @@ export default function OrderExtraValues({
     [handleFileUpload]
   );
 
-  // ── Remove file (clear value) ─────────────────────────────────────
+  // ── Remove file (clear value but keep meta) ───────────────────────
   const handleRemoveFile = useCallback(
     (extraId: string, arrayIdx: number) => {
       const current = [...getItems(extraId)];
       if (current[arrayIdx]) {
-        current[arrayIdx] = { ...current[arrayIdx], value: '' };
+        current[arrayIdx] = { ...current[arrayIdx], value: '', meta: null };
         setItems(extraId, current);
       }
       const uploadKey = `${extraId}__${arrayIdx}`;
@@ -342,12 +373,16 @@ export default function OrderExtraValues({
       errors[uploadKey] || (arrayIdx === 0 ? errors[extra.id] : undefined);
     const isFileType =
       extra.valueType === 'IMAGE' || extra.valueType === 'FILE';
+    const isImageType = extra.valueType === 'IMAGE';
     const isUploading = uploadingFields[uploadKey] || false;
     const uploadError = uploadErrors[uploadKey];
     const hasValue = !!fieldValue.trim();
 
     const canRemoveItem = allowMultiple && totalItems > 1;
     const fileRefKey = uploadKey;
+
+    // Extract image_text from meta
+    const imageText = item.meta?.image_text ?? '';
 
     return (
       <div key={uploadKey} className='space-y-2'>
@@ -520,6 +555,40 @@ export default function OrderExtraValues({
                 <span>{fieldError}</span>
               </div>
             )}
+
+            {/* ── Image Text field (only for IMAGE type) ──────── */}
+            {isImageType && (
+              <div className='space-y-1'>
+                <Label className='text-muted-foreground text-[11px]'>
+                  Image Text
+                </Label>
+                {readOnly ? (
+                  <div className='bg-muted/30 flex min-h-[2.25rem] items-center rounded-md border px-3 py-1.5 text-sm'>
+                    {imageText ? (
+                      <span>{imageText}</span>
+                    ) : (
+                      <span className='text-muted-foreground'>—</span>
+                    )}
+                  </div>
+                ) : (
+                  <Input
+                    type='text'
+                    value={imageText}
+                    onChange={(e) =>
+                      handleMetaChange(
+                        extra.id,
+                        arrayIdx,
+                        'image_text',
+                        e.target.value
+                      )
+                    }
+                    placeholder='Enter image text…'
+                    disabled={disabled}
+                    className='h-8 text-sm'
+                  />
+                )}
+              </div>
+            )}
           </div>
         ) : readOnly ? (
           <div className='bg-muted/30 flex h-9 items-center rounded-md border px-3 text-sm'>
@@ -588,7 +657,9 @@ export default function OrderExtraValues({
 
           // Ensure at least one item exists for rendering
           const renderItems: ExtraValueItem[] =
-            items.length > 0 ? items : [{ value: '', orderIndex: 0 }];
+            items.length > 0
+              ? items
+              : [{ value: '', orderIndex: 0, meta: null }];
 
           return (
             <div

@@ -339,7 +339,7 @@ export default function TemplateCanvasContainer({
 
       {/* Canvas */}
       <div
-        className='bg-muted/30 relative isolate overflow-hidden rounded-xl border'
+        className='bg-muted/30 relative isolate rounded-xl border'
         style={{ height: '70vh', minHeight: '400px', maxHeight: '80vh' }}
       >
         <div

@@ -114,7 +114,9 @@ export const ENDPOINTS = {
     ) =>
       `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/block/delete/${blockId}`,
     REORDER: (companyId: string, productId: string, templateId: string) =>
-      `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/block/reorder`
+      `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/block/reorder`,
+    FIND_ALL: (companyId: string, productId: string, templateId: string) =>
+      `${API_PREFIX}/user/${companyId}/product/${productId}/template/${templateId}/block/find-all`
   },
 
   // Template Row endpoints
@@ -343,6 +345,8 @@ export const QUERY_KEYS = {
     ['templates', companyId, productId, templateId, 'rows'] as const,
   TEMPLATE_EXTRAS: (companyId: string, productId: string, templateId: string) =>
     ['templates', companyId, productId, templateId, 'extras'] as const,
+  TEMPLATE_BLOCKS: (companyId: string, productId: string, templateId: string) =>
+    ['templates', companyId, productId, templateId, 'blocks'] as const,
   ORDER_FORM_MASTERS: (companyId: string, productId: string) =>
     ['order-form-masters', companyId, productId] as const,
   ORDER_FORM_MASTER: (companyId: string, productId: string, id: string) =>

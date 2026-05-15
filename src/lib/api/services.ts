@@ -544,6 +544,17 @@ export const reorderBlocks = async (
   );
 };
 
+export const getBlockFindAll = async (
+  companyId: string,
+  productId: string,
+  templateId: string
+): Promise<TemplateBlock[]> => {
+  const res = await api.get<ApiResponse<TemplateBlock[]>>(
+    ENDPOINTS.BLOCK.FIND_ALL(companyId, productId, templateId)
+  );
+  return res.data.payload;
+};
+
 // =============================================================================
 // TEMPLATE ROW SERVICES
 // =============================================================================

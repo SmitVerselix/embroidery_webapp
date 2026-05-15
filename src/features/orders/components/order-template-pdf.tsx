@@ -43,6 +43,7 @@ type OrderTemplateSummary = {
   discountType: string | null;
   finalPayableAmount: string;
   notes: string | null;
+  additionalTemplateCosts: { costName: string; cost: number; notes: string }[];
 };
 
 export type PDFTemplateEntry = {
@@ -129,6 +130,26 @@ const fmt = (v: string | null | undefined) => {
   return isNaN(n) ? '0.00' : n.toFixed(2);
 };
 
+/** Format discount value with its type symbol appended */
+const fmtDiscount = (
+  value: string | null | undefined,
+  type: string | null | undefined
+) => {
+  if (value == null) return '—';
+  const formatted = fmt(value);
+  if (type === 'PERCENT') return `${formatted}%`;
+  if (type === 'AMOUNT') return `${formatted} ₹`;
+  return formatted;
+};
+
+/** Format discount amount with − prefix when positive */
+const fmtDiscountAmount = (value: string | null | undefined) => {
+  const formatted = fmt(value);
+  const num = parseFloat(value || '0');
+  if (!isNaN(num) && num > 0) return `− ${formatted}`;
+  return formatted;
+};
+
 const fmtDate = (d: string) =>
   new Date(d).toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -161,6 +182,45 @@ function buildExtraRows(fields: any[], extVals: ExtraValuesMap): string[][] {
     else vals.forEach((v, i) => rows.push([i === 0 ? f.label : '', v]));
   });
   return rows;
+}
+
+// =============================================================================
+// ROW / COLUMN VISIBILITY — mirrors order-template-values.tsx (read-only mode)
+// =============================================================================
+
+function getVisibleRows(
+  rows: any[],
+  cols: any[],
+  vals: TemplateValuesMap
+): any[] {
+  const nonFormulaCols = cols.filter((c: any) => c.dataType !== 'FORMULA');
+  const nonTotalRows = rows.filter((r: any) => r.rowType !== 'TOTAL');
+  const totalRows = rows.filter((r: any) => r.rowType === 'TOTAL');
+
+  const visibleNonTotal = nonTotalRows.filter((row: any) =>
+    nonFormulaCols.some((col: any) => {
+      const v = vals[row.id]?.[col.id];
+      return v !== undefined && v !== null && v.trim() !== '';
+    })
+  );
+
+  if (visibleNonTotal.length > 0 && totalRows.length > 0) {
+    return [...visibleNonTotal, ...totalRows];
+  }
+  return visibleNonTotal;
+}
+
+function getVisibleCols(
+  cols: any[],
+  visibleRows: any[],
+  vals: TemplateValuesMap
+): any[] {
+  return cols.filter((col: any) =>
+    visibleRows.some((row: any) => {
+      const v = vals[row.id]?.[col.id];
+      return v !== undefined && v !== null && v !== '' && v !== '—';
+    })
+  );
 }
 
 // -- Image utilities --
@@ -242,19 +302,16 @@ function imgViaElement(
 }
 
 async function fetchImageAsDataURL(url: string): Promise<string | null> {
-  // 1. Proxy via API route
   try {
     const r = await fetchBlobAndConvert(
       `/api/proxy-image?url=${encodeURIComponent(url)}`
     );
     if (r) return r;
   } catch {}
-  // 2. Direct fetch
   try {
     const r = await fetchBlobAndConvert(url);
     if (r) return r;
   } catch {}
-  // 3. <img> with CORS, then without
   return (await imgViaElement(url, true)) ?? (await imgViaElement(url, false));
 }
 
@@ -294,7 +351,11 @@ function PreviewTable({
     blocks = t.blocks ?? [];
   const headerExtras = extra.filter((f) => f.sectionType === 'HEADER');
   const footerExtras = extra.filter((f) => f.sectionType === 'FOOTER');
-  const bg = deriveBlockColumns(cols),
+
+  const visibleRows = getVisibleRows(rows, cols, values);
+  const visibleCols = getVisibleCols(cols, visibleRows, values);
+
+  const bg = deriveBlockColumns(visibleCols),
     flat = bg.flatMap((b) => b.columns),
     multi = bg.length > 1;
   const bcc = [
@@ -320,6 +381,8 @@ function PreviewTable({
       </div>
     ) : null;
 
+  const additionalCosts = s?.additionalTemplateCosts ?? [];
+
   return (
     <div className='space-y-2.5 text-xs'>
       {blocks.length > 0 && (
@@ -341,7 +404,7 @@ function PreviewTable({
         </div>
       )}
       <ExtraGrid fields={headerExtras} />
-      {flat.length > 0 && rows.length > 0 && (
+      {flat.length > 0 && visibleRows.length > 0 && (
         <div className='overflow-x-auto rounded-md border'>
           <table className='w-full text-xs'>
             <thead>
@@ -378,7 +441,7 @@ function PreviewTable({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, ri) => {
+              {visibleRows.map((row, ri) => {
                 const tot = row.rowType === 'TOTAL';
                 return (
                   <tr
@@ -409,26 +472,51 @@ function PreviewTable({
         <div className='flex justify-end'>
           <div className='w-60 overflow-hidden rounded-md border text-xs'>
             <div className='bg-muted/20 flex justify-between border-b px-3 py-1.5'>
-              <span className='text-muted-foreground'>Subtotal</span>
+              <span className='text-muted-foreground'>Total</span>
               <span className='font-mono font-medium tabular-nums'>
                 {fmt(s.total)}
               </span>
             </div>
+            <div className='flex justify-between border-b px-3 py-1.5'>
+              <span className='text-muted-foreground'>Discount</span>
+              <span className='font-mono tabular-nums'>
+                {fmtDiscount(s.discount, s.discountType)}
+              </span>
+            </div>
             {s.discountAmount && parseFloat(s.discountAmount) > 0 && (
               <div className='flex justify-between border-b px-3 py-1.5'>
-                <span className='text-muted-foreground'>
-                  Discount
-                  {s.discountType
-                    ? ` (${s.discountType === 'PERCENT' ? '%' : '₹'})`
-                    : ''}
-                </span>
-                <span className='font-mono tabular-nums'>
-                  -{fmt(s.discountAmount)}
+                <span className='text-muted-foreground'>Discount Amount</span>
+                <span className='text-destructive font-mono tabular-nums'>
+                  {fmtDiscountAmount(s.discountAmount)}
                 </span>
               </div>
             )}
+            {additionalCosts.length > 0 && (
+              <>
+                {additionalCosts.map((c, idx) => (
+                  <div
+                    key={idx}
+                    className='flex items-start justify-between border-b px-3 py-1.5'
+                  >
+                    <div className='min-w-0'>
+                      <span className='text-muted-foreground'>
+                        {c.costName}
+                      </span>
+                      {c.notes && (
+                        <p className='text-muted-foreground mt-0.5 truncate text-[10px] italic'>
+                          {c.notes}
+                        </p>
+                      )}
+                    </div>
+                    <span className='shrink-0 font-mono tabular-nums'>
+                      ₹{fmt(String(c.cost))}
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
             <div className='flex justify-between bg-indigo-50 px-3 py-2 font-semibold text-indigo-700'>
-              <span>Total Payable</span>
+              <span>Final Payable Amount</span>
               <span className='font-mono tabular-nums'>
                 {fmt(s.finalPayableAmount)}
               </span>
@@ -601,7 +689,6 @@ async function generateMultiPDF(
     }
   };
 
-  // Shared autoTable styles
   const headStyle = {
     fillColor: C.primary,
     textColor: C.white,
@@ -768,7 +855,6 @@ async function generateMultiPDF(
     return y + 16;
   }
 
-  /** Render a key-value summary table (right-aligned), with optional highlight on last row */
   function drawSummaryAutoTable(
     y: number,
     rows: [string, string, boolean][],
@@ -816,7 +902,6 @@ async function generateMultiPDF(
     return (doc as any).lastAutoTable.finalY + 14;
   }
 
-  /** Render extra-fields (header or footer) as a small table */
   function drawExtraFieldsTable(
     y: number,
     fields: any[],
@@ -911,65 +996,42 @@ async function generateMultiPDF(
     });
     y = (doc as any).lastAutoTable.finalY + 20;
 
-    const ts = (t: string | null) =>
-      t ? ` (${t === 'PERCENT' ? '%' : '₹'})` : '';
     const sRows: [string, string, boolean][] = [['Total', fc.total, false]];
     if (fcOpts.includeMarginDiscount)
       sRows.push([
-        `Margin Discount${ts(fc.marginType)}`,
-        fc.marginDiscount,
+        'Margin Discount',
+        fmtDiscount(fc.marginDiscount, fc.marginType),
         false
       ]);
     if (fcOpts.includeMarginTotal)
       sRows.push(['Margin Total', fc.marginTotal, false]);
-    sRows.push([`Discount${ts(fc.discountType)}`, fc.discount, false]);
+    sRows.push(['Discount', fmtDiscount(fc.discount, fc.discountType), false]);
     if (fcOpts.includeAddonDiscount)
       sRows.push([
-        `Addon Discount${ts(fc.addonType)}`,
-        fc.addonDiscount,
+        'Addon Discount',
+        fmtDiscount(fc.addonDiscount, fc.addonType),
         false
       ]);
     sRows.push(['Final Payable Amount', fc.finalPayableAmount, true]);
     drawSummaryAutoTable(y, sRows, 260);
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // DYNAMIC SCALING
-  //
-  // Instead of letting autoTable split the table across pages, we compute
-  // how much vertical space is available, then scale fontSize + cellPadding
-  // down proportionally so the entire table fits in that space in one shot.
-  //
-  // Natural row heights (pt) with the default styles:
-  //   head row  : fontSize 8 × 1.2 lineHeight + pad 6+6  ≈ 22 pt
-  //   body row  : fontSize 8 × 1.2 lineHeight + pad 5+5  ≈ 20 pt
-  //   overhead  : table borders + rounding buffer         ≈  8 pt
-  //
-  // summary block (5 rows × ~20 pt + 18 pt overhead)      ≈ 118 pt
-  // section-title line                                     ≈  16 pt
-  // bottom page margin                                     ≈  40 pt
-  // ─────────────────────────────────────────────────────────────────────
+  // ── DYNAMIC SCALING ─────────────────────────────────────────────────
 
-  const SUMMARY_FIXED_H = 118; // height of the 5-row summary block (pt)
+  const SUMMARY_FIXED_H = 118;
 
-  /**
-   * Returns headStyles and bodyStyles with fontSize / cellPadding scaled so
-   * that `headerRowCount` header rows + `rowCount` body rows fit exactly in
-   * `availableHeight` pt.  Never upscales beyond the defaults.
-   */
   function computeScaledTableStyles(
     availableHeight: number,
     rowCount: number,
     headerRowCount: number
   ) {
-    const HEAD_ROW_H = 22; // natural head-row height
-    const BODY_ROW_H = 20; // natural body-row height
-    const OVERHEAD = 8; // borders + rounding
+    const HEAD_ROW_H = 22;
+    const BODY_ROW_H = 20;
+    const OVERHEAD = 8;
 
     const naturalH =
       headerRowCount * HEAD_ROW_H + rowCount * BODY_ROW_H + OVERHEAD;
 
-    // Already fits — use the default (larger) styles.
     if (naturalH <= availableHeight || availableHeight < 40) {
       return {
         scaledHeadStyle: headStyle,
@@ -1018,6 +1080,9 @@ async function generateMultiPDF(
     const footerExtras = extra.filter((f) => f.sectionType === 'FOOTER');
     const mediaExtras = extra.filter((f) => f.sectionType === 'MEDIA');
 
+    const visibleRows = getVisibleRows(rows, cols, vals);
+    const visibleCols = getVisibleCols(cols, visibleRows, vals);
+
     drawBanner(
       t.name ?? 'Template',
       entry.isChild,
@@ -1030,14 +1095,12 @@ async function generateMultiPDF(
 
     // Template values
     y = drawSectionTitle('TEMPLATE VALUES', y);
-    const bg = deriveBlockColumns(cols);
-    if (cols.length > 0 && rows.length > 0) {
+
+    const bg = deriveBlockColumns(visibleCols);
+    if (visibleCols.length > 0 && visibleRows.length > 0) {
       const flat = bg.flatMap((b) => b.columns),
         multi = bg.length > 1;
 
-      // ── DYNAMIC SCALING ────────────────────────────────────────────
-      // Available height = page bottom (minus margin) minus current y
-      // minus the summary block that will follow (if present).
       const summaryReserve = s ? SUMMARY_FIXED_H + 14 : 0;
       const availableForTable = PH - 40 - y - summaryReserve;
 
@@ -1045,15 +1108,13 @@ async function generateMultiPDF(
       const { scaledHeadStyle, scaledBodyStyle, scale } =
         computeScaledTableStyles(
           availableForTable,
-          rows.length,
+          visibleRows.length,
           headerRowCount
         );
-      // Block-group label fontSize scaled in proportion to headStyle
       const blockLabelFs = Math.max(
         4.5,
         parseFloat(((9 / 8) * scaledHeadStyle.fontSize).toFixed(2))
       );
-      // ──────────────────────────────────────────────────────────────
 
       const uw = PW - M * 2,
         dw = Math.min(180, uw * 0.28),
@@ -1104,12 +1165,9 @@ async function generateMultiPDF(
       autoTable(doc, {
         startY: y,
         margin: { left: M, right: M },
-        // Prevent autoTable from ever inserting a page break mid-table.
-        // Combined with the scaled styles above this guarantees the table
-        // fits entirely on the current page.
         pageBreak: 'avoid' as any,
         head,
-        body: rows.map((row) => {
+        body: visibleRows.map((row) => {
           const tot = row.rowType === 'TOTAL';
           return [
             row.label,
@@ -1141,18 +1199,27 @@ async function generateMultiPDF(
       y = (doc as any).lastAutoTable.finalY + 16;
     }
 
-    // Summary — always rendered on the same page as the table because the
-    // scaling above already reserved space for it.
+    // Summary — matches template preview layout exactly
     if (s) {
-      y = drawSummaryAutoTable(y, [
+      const summaryRows: [string, string, boolean][] = [
         ['Total', fmt(s.total), false],
-        ['Discount', s.discount ?? '—', false],
-        ['Discount Type', s.discountType ?? '—', false],
-        ['Discount Amount', fmt(s.discountAmount), false],
-        ['Final Payable Amount', fmt(s.finalPayableAmount), true]
+        ['Discount', fmtDiscount(s.discount, s.discountType), false],
+        ['Discount Amount', fmtDiscountAmount(s.discountAmount), false]
+      ];
+      // Additional template costs
+      const additionalCosts = s.additionalTemplateCosts ?? [];
+      additionalCosts.forEach((c) => {
+        const label = c.notes ? `${c.costName} (${c.notes})` : c.costName;
+        summaryRows.push([label, `₹${fmt(String(c.cost))}`, false]);
+      });
+      // Final payable (highlighted)
+      summaryRows.push([
+        'Final Payable Amount',
+        fmt(s.finalPayableAmount),
+        true
       ]);
+      y = drawSummaryAutoTable(y, summaryRows);
     }
-    // ─────────────────────────────────────────────────────────────────
 
     // Media
     if (mediaExtras.length > 0) {
@@ -1397,7 +1464,6 @@ export default function OrderTemplatePDF({
   const chkCls =
     'shrink-0 data-[state=checked]:border-indigo-600 data-[state=checked]:bg-indigo-600';
 
-  // Reusable row component for the template/final-calc list
   const SelectRow = ({
     id,
     checked,

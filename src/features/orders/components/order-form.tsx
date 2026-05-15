@@ -136,6 +136,7 @@ function buildExtraValuesMap(
     value: string;
     id?: string;
     orderIndex?: number;
+    meta?: unknown;
   }[]
 ): ExtraValuesMap {
   const map: ExtraValuesMap = {};
@@ -144,7 +145,8 @@ function buildExtraValuesMap(
     map[ev.templateExtraFieldId].push({
       value: ev.value,
       orderExtraValueId: ev.id,
-      orderIndex: ev.orderIndex ?? map[ev.templateExtraFieldId].length
+      orderIndex: ev.orderIndex ?? map[ev.templateExtraFieldId].length,
+      meta: (ev.meta as Record<string, any>) ?? null
     });
   });
   Object.values(map).forEach((arr) =>
@@ -787,7 +789,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             result.push({
               templateExtraFieldId: extra.id,
               value: item.value.trim(),
-              meta: null,
+              meta:
+                item.meta && Object.keys(item.meta).length > 0
+                  ? item.meta
+                  : null,
               orderIndex: item.orderIndex
             });
         });
@@ -858,6 +863,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 onAdditionalCostsChange={(costs) =>
                   handleAdditionalCostsChange(tmpl.id, costs)
                 }
+                companyId={companyId}
+                productId={
+                  selectedProductId || referencedOrder?.productId || ''
+                }
+                templateId={tmpl.id}
               />
             </div>
             {hasChildren &&
@@ -899,6 +909,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                       onAdditionalCostsChange={(costs) =>
                         handleChildAdditionalCostsChange(childKey, costs)
                       }
+                      companyId={companyId}
+                      productId={
+                        selectedProductId || referencedOrder?.productId || ''
+                      }
+                      templateId={tmpl.id}
                     />
                   </div>
                 );
