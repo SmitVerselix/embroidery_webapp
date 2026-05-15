@@ -125,6 +125,7 @@ type OrderTemplateSummary = {
   discountType: string | null;
   finalPayableAmount: string;
   notes: string | null;
+  additionalTemplateCosts: { costName: string; cost: number; notes: string }[];
 };
 
 type OrderTemplateEntry = {
@@ -973,6 +974,14 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       processedTemplateIds.add(tmplData.templateId);
 
       const rawSummary = (tmplData as any).summary;
+      const rawAdditionalCosts = ((tmplData as any).additionalTemplateCosts ||
+        []) as {
+        costName: string;
+        cost: string | number;
+        notes: string | null;
+        indexNo: number;
+      }[];
+
       const summary: OrderTemplateSummary | null = rawSummary
         ? {
             id: rawSummary.id,
@@ -981,7 +990,15 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
             discountAmount: rawSummary.discountAmount ?? '0.00',
             discountType: rawSummary.discountType ?? null,
             finalPayableAmount: rawSummary.finalPayableAmount ?? '0.00',
-            notes: rawSummary.notes ?? null
+            notes: rawSummary.notes ?? null,
+            additionalTemplateCosts: rawAdditionalCosts
+              .sort((a, b) => a.indexNo - b.indexNo)
+              .map((c) => ({
+                costName: c.costName,
+                cost:
+                  typeof c.cost === 'number' ? c.cost : parseFloat(c.cost) || 0,
+                notes: c.notes ?? ''
+              }))
           }
         : null;
 

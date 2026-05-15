@@ -37,7 +37,8 @@ import {
 import Link from 'next/link';
 import OrderTemplateValues, {
   type TemplateValuesMap,
-  type BlockValuesMap
+  type BlockValuesMap,
+  type AdditionalCostItem
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
 import type { TemplateLayoutItem } from './template-layout-canvas';
@@ -124,6 +125,10 @@ export default function OrderEditForm({
   const [templateBlockValues, setTemplateBlockValues] = useState<
     Record<string, BlockValuesMap>
   >({});
+  // ── Additional costs per orderTemplateId ──────────────────────────
+  const [templateAdditionalCosts, setTemplateAdditionalCosts] = useState<
+    Record<string, AdditionalCostItem[]>
+  >({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cellErrors, setCellErrors] = useState<
@@ -159,6 +164,7 @@ export default function OrderEditForm({
         { discountType: DiscountType; discountValue: string }
       > = {};
       const loadedBlockValues: Record<string, BlockValuesMap> = {};
+      const loadedAdditionalCosts: Record<string, AdditionalCostItem[]> = {};
       const processedTemplateIds = new Set<string>();
 
       const processTemplate = (
@@ -225,6 +231,27 @@ export default function OrderEditForm({
         });
         loadedBlockValues[orderTemplateId] = bvMap;
 
+        // ── Load additionalTemplateCosts from API response ──
+        const apiAdditionalCosts =
+          (tmplData as any).additionalTemplateCosts || [];
+        loadedAdditionalCosts[orderTemplateId] = (
+          apiAdditionalCosts as {
+            id: string;
+            costName: string;
+            cost: string;
+            notes: string | null;
+            indexNo: number;
+          }[]
+        )
+          .sort((a, b) => a.indexNo - b.indexNo)
+          .map((c, i) => ({
+            id: c.id,
+            costName: c.costName,
+            cost: c.cost,
+            notes: c.notes ?? '',
+            indexNo: i
+          }));
+
         const rawSummary = tmplData.summary;
         discountMap[orderTemplateId] = rawSummary
           ? {
@@ -263,6 +290,7 @@ export default function OrderEditForm({
             discountValue: '0'
           };
           loadedBlockValues[tempKey] = {};
+          loadedAdditionalCosts[tempKey] = [];
         }
       }
 
@@ -273,6 +301,7 @@ export default function OrderEditForm({
       setOriginalExtraValueIdSets(extraIdSets);
       setTemplateDiscounts(discountMap);
       setTemplateBlockValues(loadedBlockValues);
+      setTemplateAdditionalCosts(loadedAdditionalCosts);
     } catch (err) {
       setError(getError(err));
     } finally {
@@ -316,6 +345,16 @@ export default function OrderEditForm({
       setTemplateBlockValues((prev) => ({
         ...prev,
         [orderTemplateId]: values
+      }));
+      setSaveSuccess(false);
+    },
+    []
+  );
+  const handleAdditionalCostsChange = useCallback(
+    (orderTemplateId: string, costs: AdditionalCostItem[]) => {
+      setTemplateAdditionalCosts((prev) => ({
+        ...prev,
+        [orderTemplateId]: costs
       }));
       setSaveSuccess(false);
     },
@@ -479,9 +518,20 @@ export default function OrderEditForm({
           discountType: discount.discountType,
           discountValue: discount.discountValue || '0'
         };
+
         const blockvalues = buildBlockValuesPayload(
           templateBlockValues[entry.orderTemplateId] || {}
         );
+
+        // ── Build additionalCosts payload ──
+        const additionalCosts = (
+          templateAdditionalCosts[entry.orderTemplateId] || []
+        ).map((c, i) => ({
+          costName: c.costName,
+          cost: parseFloat(c.cost) || 0,
+          notes: c.notes || ''
+        }));
+
         const childEntries = entries.filter(
           (e) => e.parentOrderTemplateId === entry.orderTemplateId
         );
@@ -501,6 +551,8 @@ export default function OrderEditForm({
         if (deleteOrderExtraValueIds.length > 0)
           payload.deleteOrderExtraValueIds = deleteOrderExtraValueIds;
         if (extravalues.length > 0) payload.extravalues = extravalues;
+        if (additionalCosts.length > 0)
+          (payload as any).additionalCosts = additionalCosts;
         if (children.length > 0) payload.children = children;
         return payload;
       };
@@ -582,6 +634,12 @@ export default function OrderEditForm({
                 onBlockValuesChange={(vals) =>
                   handleBlockValuesChange(parent.orderTemplateId, vals)
                 }
+                additionalCosts={
+                  templateAdditionalCosts[parent.orderTemplateId] || []
+                }
+                onAdditionalCostsChange={(costs) =>
+                  handleAdditionalCostsChange(parent.orderTemplateId, costs)
+                }
               />
             </div>
             {childEntries.map((child, idx) => (
@@ -623,6 +681,12 @@ export default function OrderEditForm({
                   onBlockValuesChange={(vals) =>
                     handleBlockValuesChange(child.orderTemplateId, vals)
                   }
+                  additionalCosts={
+                    templateAdditionalCosts[child.orderTemplateId] || []
+                  }
+                  onAdditionalCostsChange={(costs) =>
+                    handleAdditionalCostsChange(child.orderTemplateId, costs)
+                  }
                 />
               </div>
             ))}
@@ -638,11 +702,13 @@ export default function OrderEditForm({
     extraFieldErrors,
     templateDiscounts,
     templateBlockValues,
+    templateAdditionalCosts,
     isSubmitting,
     handleTemplateValuesChange,
     handleExtraValuesChange,
     handleDiscountChange,
-    handleBlockValuesChange
+    handleBlockValuesChange,
+    handleAdditionalCostsChange
   ]);
 
   const backUrl = `/dashboard/${companyId}/orders/${orderId}`;

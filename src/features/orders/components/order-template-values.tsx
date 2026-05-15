@@ -44,7 +44,11 @@ import {
   IndianRupee,
   Layers,
   ChevronDown,
-  Check
+  Check,
+  Plus,
+  Pencil,
+  Trash2,
+  X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -61,6 +65,7 @@ import {
 } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 
 // =============================================================================
 // TYPES
@@ -69,10 +74,32 @@ import { Button } from '@/components/ui/button';
 export type TemplateValuesMap = Record<string, Record<string, string>>;
 export type BlockValuesMap = Record<number, string>;
 
+export type AdditionalCostItem = {
+  /** Present when loaded from API (edit mode) */
+  id?: string;
+  costName: string;
+  cost: string;
+  notes: string;
+  indexNo: number;
+};
+
 type TemplateBlock = {
   index: number;
   label: string;
 };
+
+type CostDraft = {
+  costName: string;
+  cost: string;
+  notes: string;
+};
+
+type CostDraftErrors = {
+  costName?: string;
+  cost?: string;
+};
+
+const EMPTY_DRAFT: CostDraft = { costName: '', cost: '', notes: '' };
 
 export interface OrderTemplateValuesProps {
   template: TemplateWithDetails;
@@ -91,6 +118,9 @@ export interface OrderTemplateValuesProps {
   apiBlocks?: TemplateBlockApi[];
   blockValues?: BlockValuesMap;
   onBlockValuesChange?: (values: BlockValuesMap) => void;
+  /** Controlled additional costs */
+  additionalCosts?: AdditionalCostItem[];
+  onAdditionalCostsChange?: (costs: AdditionalCostItem[]) => void;
 }
 
 // =============================================================================
@@ -359,7 +389,9 @@ export default function OrderTemplateValues({
   onDiscountChange,
   apiBlocks = [],
   blockValues = {},
-  onBlockValuesChange
+  onBlockValuesChange,
+  additionalCosts = [],
+  onAdditionalCostsChange
 }: OrderTemplateValuesProps) {
   const columns = useMemo(
     () => [...(template.columns || [])].sort((a, b) => a.orderNo - b.orderNo),
@@ -415,7 +447,88 @@ export default function OrderTemplateValues({
 
   const tableWrapperRef = useRef<HTMLDivElement>(null);
 
-  // ── JS-based sticky for canvas scroll (CSS sticky breaks through CSS zoom) ──
+  // ── Additional costs local edit state ──────────────────────────────
+  /** null = form hidden; -1 = adding new; ≥0 = editing existing index */
+  const [editingCostIdx, setEditingCostIdx] = useState<number | null>(null);
+  const [costDraft, setCostDraft] = useState<CostDraft>(EMPTY_DRAFT);
+  const [costDraftErrors, setCostDraftErrors] = useState<CostDraftErrors>({});
+
+  const openAddCost = useCallback(() => {
+    setCostDraft(EMPTY_DRAFT);
+    setEditingCostIdx(-1);
+  }, []);
+
+  const openEditCost = useCallback(
+    (idx: number) => {
+      const c = additionalCosts[idx];
+      setCostDraft({ costName: c.costName, cost: c.cost, notes: c.notes });
+      setEditingCostIdx(idx);
+    },
+    [additionalCosts]
+  );
+
+  const cancelCostEdit = useCallback(() => {
+    setEditingCostIdx(null);
+    setCostDraft(EMPTY_DRAFT);
+    setCostDraftErrors({});
+  }, []);
+
+  const saveCostDraft = useCallback(() => {
+    const errs: CostDraftErrors = {};
+    if (!costDraft.costName.trim()) {
+      errs.costName = 'Name is required';
+    }
+    if (costDraft.cost.trim() === '') {
+      errs.cost = 'Cost is required';
+    } else if (isNaN(Number(costDraft.cost))) {
+      errs.cost = 'Must be a valid number';
+    } else if (parseFloat(costDraft.cost) < 0) {
+      errs.cost = 'Must be 0 or greater';
+    }
+    if (Object.keys(errs).length > 0) {
+      setCostDraftErrors(errs);
+      return;
+    }
+    setCostDraftErrors({});
+    const updated = [...additionalCosts];
+    if (editingCostIdx === -1) {
+      updated.push({
+        costName: costDraft.costName.trim(),
+        cost: costDraft.cost,
+        notes: costDraft.notes,
+        indexNo: updated.length
+      });
+    } else if (editingCostIdx !== null && editingCostIdx >= 0) {
+      updated[editingCostIdx] = {
+        ...updated[editingCostIdx],
+        costName: costDraft.costName.trim(),
+        cost: costDraft.cost,
+        notes: costDraft.notes
+      };
+    }
+    const reindexed = updated.map((c, i) => ({ ...c, indexNo: i }));
+    onAdditionalCostsChange?.(reindexed);
+    cancelCostEdit();
+  }, [
+    costDraft,
+    editingCostIdx,
+    additionalCosts,
+    onAdditionalCostsChange,
+    cancelCostEdit
+  ]);
+
+  const deleteCost = useCallback(
+    (idx: number) => {
+      const updated = additionalCosts
+        .filter((_, i) => i !== idx)
+        .map((c, i) => ({ ...c, indexNo: i }));
+      onAdditionalCostsChange?.(updated);
+      if (editingCostIdx === idx) cancelCostEdit();
+    },
+    [additionalCosts, onAdditionalCostsChange, editingCostIdx, cancelCostEdit]
+  );
+
+  // ── JS-based sticky for canvas scroll ─────────────────────────────
   useEffect(() => {
     const el = tableWrapperRef.current;
     if (!el) return;
@@ -516,22 +629,19 @@ export default function OrderTemplateValues({
   );
 
   // ══════════════════════════════════════════════════════════════════════
-  // ROW VISIBILITY — show only rows that have values, with dropdown toggle
+  // ROW VISIBILITY
   // ══════════════════════════════════════════════════════════════════════
 
-  /** Selectable rows (non-TOTAL) that appear in the dropdown */
   const selectableRows = useMemo(
     () => rows.filter((r) => r.rowType !== 'TOTAL'),
     [rows]
   );
 
-  /** TOTAL rows — always shown when there are visible non-total rows */
   const totalRows = useMemo(
     () => rows.filter((r) => r.rowType === 'TOTAL'),
     [rows]
   );
 
-  /** Set of row IDs that have at least one non-empty, non-formula value */
   const rowsWithValues = useMemo(() => {
     const set = new Set<string>();
     selectableRows.forEach((row) => {
@@ -546,15 +656,10 @@ export default function OrderTemplateValues({
     return set;
   }, [selectableRows, values, columns]);
 
-  /**
-   * Tracks row IDs manually shown by the user via the dropdown.
-   * Only affects rows that DON'T have values (empty rows).
-   */
   const [manuallyShownRows, setManuallyShownRows] = useState<Set<string>>(
     new Set()
   );
 
-  /** Combined visible row IDs = rows with values ∪ manually shown rows */
   const visibleRowIds = useMemo(() => {
     const set = new Set(rowsWithValues);
     manuallyShownRows.forEach((id) => {
@@ -563,10 +668,6 @@ export default function OrderTemplateValues({
     return set;
   }, [rowsWithValues, manuallyShownRows, selectableRows]);
 
-  /**
-   * Rows to display in the table:
-   * visible non-TOTAL rows + TOTAL rows (if any non-TOTAL rows are visible)
-   */
   const displayRows = useMemo(() => {
     const visibleNonTotal = selectableRows.filter((r) =>
       visibleRowIds.has(r.id)
@@ -577,10 +678,8 @@ export default function OrderTemplateValues({
     return visibleNonTotal;
   }, [selectableRows, totalRows, visibleRowIds]);
 
-  /** Toggle visibility of an empty row */
   const toggleRowVisibility = useCallback(
     (rowId: string) => {
-      // Rows with values cannot be unchecked
       if (rowsWithValues.has(rowId)) return;
       setManuallyShownRows((prev) => {
         const next = new Set(prev);
@@ -595,7 +694,6 @@ export default function OrderTemplateValues({
     [rowsWithValues]
   );
 
-  /** Show all rows */
   const showAllRows = useCallback(() => {
     const allIds = new Set<string>();
     selectableRows.forEach((r) => {
@@ -604,7 +702,6 @@ export default function OrderTemplateValues({
     setManuallyShownRows(allIds);
   }, [selectableRows, rowsWithValues]);
 
-  /** Show only rows with values (reset manual selections) */
   const showOnlyWithValues = useCallback(() => {
     setManuallyShownRows(new Set());
   }, []);
@@ -613,15 +710,11 @@ export default function OrderTemplateValues({
   const allRowsVisible = hiddenRowCount === 0;
 
   // ══════════════════════════════════════════════════════════════════════
-  // COLUMN VISIBILITY — hide columns that have no values across any row
-  // Only applies in readOnly mode; in edit mode all columns stay visible.
+  // COLUMN VISIBILITY
   // ══════════════════════════════════════════════════════════════════════
 
-  /** Set of column IDs that have at least one value across all rows */
   const columnsWithValues = useMemo(() => {
-    // In edit mode, show all columns so the user can enter data
     if (!readOnly) return new Set(columns.map((c) => c.id));
-
     const set = new Set<string>();
     columns.forEach((col) => {
       const hasValue = rows.some((row) => {
@@ -633,7 +726,6 @@ export default function OrderTemplateValues({
     return set;
   }, [readOnly, columns, rows, values]);
 
-  /** Block columns filtered to only include columns with values */
   const visibleOrderedBlockColumns = useMemo(() => {
     return orderedBlockColumns
       .map((group) => ({
@@ -643,13 +735,11 @@ export default function OrderTemplateValues({
       .filter((group) => group.columns.length > 0);
   }, [orderedBlockColumns, columnsWithValues]);
 
-  /** Flat list of visible columns in block order */
   const visibleFlatOrderedColumns = useMemo(
     () => visibleOrderedBlockColumns.flatMap((g) => g.columns),
     [visibleOrderedBlockColumns]
   );
 
-  /** Block boundary column IDs for visible columns */
   const visibleBlockBoundaryColumnIds = useMemo(() => {
     const ids = new Set<string>();
     visibleOrderedBlockColumns.forEach((group, idx) => {
@@ -663,7 +753,7 @@ export default function OrderTemplateValues({
   const visibleHasMultipleBlocks = visibleOrderedBlockColumns.length > 1;
 
   // ──────────────────────────────────────────────────────────────────────
-  // PERFORMANCE-CRITICAL MEMOISED FORMULA DATA
+  // FORMULA DATA
   // ──────────────────────────────────────────────────────────────────────
 
   const keyToCol = useMemo(() => {
@@ -703,9 +793,6 @@ export default function OrderTemplateValues({
     return topologicalSortFormulas(formulaCols, columns);
   }, [columns]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // EDIT-MODE: per-row FORMULA results
-  // ──────────────────────────────────────────────────────────────────────
   const computedFormulaValues = useMemo(() => {
     if (readOnly) return {};
 
@@ -765,9 +852,6 @@ export default function OrderTemplateValues({
     parsedFormulas
   ]);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // EDIT-MODE: TOTAL row FORMULA results
-  // ──────────────────────────────────────────────────────────────────────
   const computedTotalFormulaValues = useMemo(() => {
     if (readOnly) return {};
 
@@ -935,7 +1019,6 @@ export default function OrderTemplateValues({
           </Button>
         </PopoverTrigger>
         <PopoverContent className='w-[260px] p-0' align='start' side='bottom'>
-          {/* Header with bulk actions */}
           <div className='flex items-center justify-between border-b px-3 py-2'>
             <span className='text-xs font-semibold text-slate-700 dark:text-slate-300'>
               Toggle Rows
@@ -961,7 +1044,6 @@ export default function OrderTemplateValues({
             </div>
           </div>
 
-          {/* Row list */}
           <div className='max-h-[280px] overflow-y-auto py-1'>
             {selectableRows.map((row) => {
               const hasValues = rowsWithValues.has(row.id);
@@ -996,7 +1078,6 @@ export default function OrderTemplateValues({
             })}
           </div>
 
-          {/* Footer info */}
           <div className='border-t px-3 py-1.5'>
             <p className='text-muted-foreground text-[10px]'>
               {visibleRowIds.size} of {selectableRows.length} rows visible. Rows
@@ -1018,7 +1099,7 @@ export default function OrderTemplateValues({
         <h4 className='mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300'>
           Discount Settings
         </h4>
-        <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+        <div className='flex gap-4'>
           <div className='space-y-1.5'>
             <Label className='text-muted-foreground text-xs'>
               Discount Type
@@ -1052,23 +1133,199 @@ export default function OrderTemplateValues({
               Discount Value{' '}
               {discountType === 'PERCENT' || !discountType ? '(%)' : '(₹)'}
             </Label>
-            <div className='relative'>
-              <Input
-                type='number'
-                value={discountValue || ''}
-                onChange={(e) => handleDiscountValueChange(e.target.value)}
-                placeholder='0'
-                disabled={disabled}
-                className='h-9 pr-8'
-                step='any'
-                min='0'
-              />
-              <span className='text-muted-foreground absolute top-1/2 right-3 -translate-y-1/2 text-xs'>
-                {discountType === 'AMOUNT' ? '₹' : '%'}
-              </span>
+            <div className='flex items-center gap-2'>
+              <div className='relative flex-1'>
+                <Input
+                  type='number'
+                  value={discountValue || ''}
+                  onChange={(e) => handleDiscountValueChange(e.target.value)}
+                  placeholder='0'
+                  disabled={disabled}
+                  className='h-9 pr-8'
+                  step='any'
+                />
+                <span className='text-muted-foreground absolute top-1/2 right-3 -translate-y-1/2 text-xs'>
+                  {discountType === 'AMOUNT' ? '₹' : '%'}
+                </span>
+              </div>
+              {/* +/- sign toggle — consistent with Final Calculation table */}
+              <div className='flex h-9 overflow-hidden rounded-md border'>
+                <button
+                  type='button'
+                  onClick={() =>
+                    handleDiscountValueChange(
+                      String(Math.abs(parseFloat(discountValue || '0') || 0))
+                    )
+                  }
+                  disabled={disabled}
+                  className={`flex w-9 items-center justify-center text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    !(parseFloat(discountValue || '0') < 0)
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  +
+                </button>
+                <div className='bg-border w-px' />
+                <button
+                  type='button'
+                  onClick={() => {
+                    const n = Math.abs(parseFloat(discountValue || '0') || 0);
+                    handleDiscountValueChange(n === 0 ? '0' : String(-n));
+                  }}
+                  disabled={disabled}
+                  className={`flex w-9 items-center justify-center text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    parseFloat(discountValue || '0') < 0
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  −
+                </button>
+              </div>
             </div>
           </div>
         </div>
+      </div>
+    );
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // RENDER: Additional Costs Section
+  // ──────────────────────────────────────────────────────────────────────
+  const renderAdditionalCosts = () => {
+    const canEdit = !readOnly && !!onAdditionalCostsChange;
+    const hasCosts = additionalCosts.length > 0;
+    const isFormOpen = editingCostIdx !== null;
+
+    if (!canEdit && !hasCosts) return null;
+
+    return (
+      <div className='space-y-2 border-t pt-3'>
+        {/* Section header */}
+        <div className='flex items-center justify-between'>
+          <span className='text-xs font-semibold text-slate-700 dark:text-slate-300'>
+            Additional Costs
+          </span>
+          {canEdit && !isFormOpen && (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='h-7 gap-1 px-2 text-xs'
+              onClick={openAddCost}
+              disabled={disabled}
+            >
+              <Plus className='h-3 w-3' />
+              Add Cost
+            </Button>
+          )}
+        </div>
+
+        {/* Existing cost rows */}
+        {hasCosts && (
+          <div className='space-y-1'>
+            {additionalCosts.map((cost, idx) => {
+              const isEditing = editingCostIdx === idx;
+              if (isEditing) {
+                // render inline edit form for this row
+                return (
+                  <CostEditForm
+                    key={idx}
+                    draft={costDraft}
+                    onChange={(d) => {
+                      setCostDraft(d);
+                      setCostDraftErrors({});
+                    }}
+                    onSave={saveCostDraft}
+                    onCancel={cancelCostEdit}
+                    disabled={disabled}
+                    errors={costDraftErrors}
+                  />
+                );
+              }
+              return (
+                <div
+                  key={idx}
+                  className='bg-muted/40 flex items-start justify-between gap-3 rounded-md px-3 py-2 text-sm'
+                >
+                  <div className='min-w-0 flex-1'>
+                    <div className='flex items-center gap-2'>
+                      <span className='font-medium'>{cost.costName}</span>
+                      <span className='text-muted-foreground font-mono text-xs'>
+                        ₹{formatAmount(cost.cost)}
+                      </span>
+                    </div>
+                    {cost.notes && (
+                      <p className='text-muted-foreground mt-0.5 truncate text-xs'>
+                        {cost.notes}
+                      </p>
+                    )}
+                  </div>
+                  {canEdit && !isFormOpen && (
+                    <div className='flex shrink-0 items-center gap-1'>
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon'
+                        className='h-6 w-6'
+                        onClick={() => openEditCost(idx)}
+                        disabled={disabled}
+                      >
+                        <Pencil className='h-3 w-3' />
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon'
+                        className='text-destructive hover:text-destructive h-6 w-6'
+                        onClick={() => deleteCost(idx)}
+                        disabled={disabled}
+                      >
+                        <Trash2 className='h-3 w-3' />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Inline add-new form (editingCostIdx === -1) */}
+        {editingCostIdx === -1 && (
+          <CostEditForm
+            draft={costDraft}
+            onChange={(d) => {
+              setCostDraft(d);
+              setCostDraftErrors({});
+            }}
+            onSave={saveCostDraft}
+            onCancel={cancelCostEdit}
+            disabled={disabled}
+            errors={costDraftErrors}
+          />
+        )}
+
+        {/* Total of additional costs */}
+        {hasCosts && (
+          <div className='flex items-center justify-between border-t pt-2 text-sm'>
+            <span className='text-muted-foreground text-xs'>
+              Additional Costs Total
+            </span>
+            <span className='font-mono font-medium'>
+              ₹
+              {formatAmount(
+                String(
+                  additionalCosts.reduce(
+                    (sum, c) => sum + (parseFloat(c.cost) || 0),
+                    0
+                  )
+                )
+              )}
+            </span>
+          </div>
+        )}
       </div>
     );
   };
@@ -1090,7 +1347,6 @@ export default function OrderTemplateValues({
       );
     }
 
-    // If no rows are visible (all empty & unchecked), show an empty state
     if (displayRows.length === 0) {
       return (
         <div className='bg-muted/30 flex min-w-0 flex-1 items-center justify-center rounded-lg border py-12'>
@@ -1104,7 +1360,6 @@ export default function OrderTemplateValues({
       );
     }
 
-    // Use visible columns (filtered in readOnly mode)
     const renderBlockColumns = visibleOrderedBlockColumns;
     const renderFlatColumns = visibleFlatOrderedColumns;
     const renderBoundaryIds = visibleBlockBoundaryColumnIds;
@@ -1272,7 +1527,6 @@ export default function OrderTemplateValues({
             </TableHeader>
 
             <TableBody>
-              {/* === USE displayRows INSTEAD OF rows === */}
               {displayRows.map((row) => {
                 const isTotal = row.rowType === 'TOTAL';
 
@@ -1281,7 +1535,6 @@ export default function OrderTemplateValues({
                     key={row.id}
                     className={cn(isTotal && 'bg-muted font-semibold')}
                   >
-                    {/* Row label */}
                     <TableCell
                       data-sticky-left
                       className={cn(
@@ -1303,7 +1556,6 @@ export default function OrderTemplateValues({
                       const cellKey = getErrorKey(row.id, column.id);
                       const cellError = errors[cellKey];
 
-                      // ── FORMULA column ──────────────────────────────────
                       if (column.dataType === 'FORMULA') {
                         const displayValue = readOnly
                           ? getReadOnlyFormulaValue(row, column)
@@ -1337,7 +1589,6 @@ export default function OrderTemplateValues({
                         );
                       }
 
-                      // ── TOTAL row — NUMBER / TEXT ───────────────────────
                       if (isTotal) {
                         const apiVal = values[row.id]?.[column.id];
                         const displayValue =
@@ -1361,7 +1612,6 @@ export default function OrderTemplateValues({
                         );
                       }
 
-                      // ── Regular editable / read-only cell ──────────────
                       return (
                         <TableCell
                           key={column.id}
@@ -1417,50 +1667,96 @@ export default function OrderTemplateValues({
             </TableBody>
           </Table>
 
-          {/* Summary Section */}
-          {hasSummary && (
+          {/* Summary + Additional Costs Section */}
+          {(hasSummary ||
+            additionalCosts.length > 0 ||
+            (!readOnly && onAdditionalCostsChange)) && (
             <div className='mt-4 flex justify-end border-t'>
-              <div className='space-y-2.5 rounded-lg p-4 text-sm'>
-                <div className='flex items-center justify-between gap-8'>
-                  <span className='text-muted-foreground'>Total</span>
-                  <span className='font-medium tabular-nums'>
-                    {formatAmount(summary.total)}
-                  </span>
-                </div>
-                <div className='flex items-center justify-between gap-8'>
-                  <span className='text-muted-foreground'>Discount</span>
-                  <span className='font-medium tabular-nums'>
-                    {summary.discount != null
-                      ? formatAmount(summary.discount)
-                      : '—'}
-                  </span>
-                </div>
-                <div className='flex items-center justify-between gap-8'>
-                  <span className='text-muted-foreground'>Discount Type</span>
-                  <span className='font-medium'>
-                    {summary.discountType ?? '—'}
-                  </span>
-                </div>
-                <div className='flex items-center justify-between gap-8'>
-                  <span className='text-muted-foreground'>Discount Amount</span>
-                  <span
-                    className={cn(
-                      'font-medium tabular-nums',
-                      parseFloat(summary.discountAmount || '0') > 0 &&
-                        'text-destructive'
-                    )}
-                  >
-                    {parseFloat(summary.discountAmount || '0') > 0 ? '− ' : ''}
-                    {formatAmount(summary.discountAmount)}
-                  </span>
-                </div>
-                <Separator />
-                <div className='flex items-center justify-between gap-8 pt-0.5'>
-                  <span className='font-semibold'>Final Payable Amount</span>
-                  <span className='text-base font-semibold tabular-nums'>
-                    {formatAmount(summary.finalPayableAmount)}
-                  </span>
-                </div>
+              <div className='w-full max-w-sm space-y-2.5 rounded-lg p-4 text-sm'>
+                {hasSummary && (
+                  <>
+                    <div className='flex items-center justify-between gap-8'>
+                      <span className='text-muted-foreground'>Total</span>
+                      <span className='font-medium tabular-nums'>
+                        {formatAmount(summary.total)}
+                      </span>
+                    </div>
+                    <div className='flex items-center justify-between gap-8'>
+                      <span className='text-muted-foreground'>Discount</span>
+                      <span className='font-medium tabular-nums'>
+                        {summary.discount != null
+                          ? `${formatAmount(summary.discount)}${
+                              summary.discountType === 'PERCENT'
+                                ? '%'
+                                : summary.discountType === 'AMOUNT'
+                                  ? ' ₹'
+                                  : ''
+                            }`
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className='flex items-center justify-between gap-8'>
+                      <span className='text-muted-foreground'>
+                        Discount Amount
+                      </span>
+                      <span
+                        className={cn(
+                          'font-medium tabular-nums',
+                          parseFloat(summary.discountAmount || '0') > 0 &&
+                            'text-destructive'
+                        )}
+                      >
+                        {parseFloat(summary.discountAmount || '0') > 0
+                          ? '− '
+                          : ''}
+                        {formatAmount(summary.discountAmount)}
+                      </span>
+                    </div>
+                    <Separator />
+
+                    {/* Per-template additional costs (read-only view) */}
+                    {summary.additionalTemplateCosts &&
+                      summary.additionalTemplateCosts.length > 0 && (
+                        <>
+                          {summary.additionalTemplateCosts.map(
+                            (c: any, idx: any) => (
+                              <div
+                                key={idx}
+                                className='flex items-start justify-between gap-8'
+                              >
+                                <div className='min-w-0'>
+                                  <span className='text-muted-foreground'>
+                                    {c.costName}
+                                  </span>
+                                  {c.notes && (
+                                    <p className='text-muted-foreground mt-0.5 truncate text-xs italic'>
+                                      {c.notes}
+                                    </p>
+                                  )}
+                                </div>
+                                <span className='shrink-0 font-mono font-medium tabular-nums'>
+                                  ₹{formatAmount(String(c.cost))}
+                                </span>
+                              </div>
+                            )
+                          )}
+                          <Separator />
+                        </>
+                      )}
+
+                    <div className='flex items-center justify-between gap-8 pt-0.5'>
+                      <span className='font-semibold'>
+                        Final Payable Amount
+                      </span>
+                      <span className='text-base font-semibold tabular-nums'>
+                        {formatAmount(summary.finalPayableAmount)}
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {/* Edit-mode additional costs (create/edit pages) */}
+                {renderAdditionalCosts()}
               </div>
             </div>
           )}
@@ -1475,18 +1771,17 @@ export default function OrderTemplateValues({
   return (
     <Card>
       <CardHeader className='pb-3'>
-        <div className='flex items-center justify-between'>
-          <div>
-            <CardTitle className='flex items-center gap-2 text-base'>
+        <div className='flex min-w-0 flex-wrap items-start justify-between gap-2'>
+          <div className='min-w-0 flex-1'>
+            <CardTitle className='flex flex-wrap items-center gap-2 text-base'>
               <LayoutTemplate className='h-4 w-4' />
-              {template.name}
+              <span className='truncate'>{template.name}</span>
               <Badge
                 variant={template.type === 'COSTING' ? 'default' : 'secondary'}
                 className='text-xs'
               >
                 {template.type}
               </Badge>
-              {/* Row visibility dropdown */}
               {renderRowVisibilityDropdown()}
             </CardTitle>
             {template.description && (
@@ -1495,22 +1790,28 @@ export default function OrderTemplateValues({
               </CardDescription>
             )}
           </div>
-          <div className='text-muted-foreground flex items-center gap-3 text-xs'>
-            {hasMultipleBlocks && (
-              <div className='flex items-center gap-1'>
-                <Layers className='h-3 w-3' />
-                {orderedBlockColumns.length} blocks
-              </div>
-            )}
-            <div className='flex items-center gap-1'>
-              <Columns className='h-3 w-3' />
-              {columns.length} cols
+          {hasData && (
+            <div className='text-muted-foreground flex shrink-0 items-center gap-3 text-xs'>
+              {hasMultipleBlocks && (
+                <div className='flex items-center gap-1'>
+                  <Layers className='h-3 w-3' />
+                  {orderedBlockColumns.length} blocks
+                </div>
+              )}
+              {columns.length > 0 && (
+                <div className='flex items-center gap-1'>
+                  <Columns className='h-3 w-3' />
+                  {columns.length} cols
+                </div>
+              )}
+              {rows.length > 0 && (
+                <div className='flex items-center gap-1'>
+                  <Rows className='h-3 w-3' />
+                  {visibleRowIds.size}/{rows.length} rows
+                </div>
+              )}
             </div>
-            <div className='flex items-center gap-1'>
-              <Rows className='h-3 w-3' />
-              {visibleRowIds.size}/{rows.length} rows
-            </div>
-          </div>
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -1593,5 +1894,109 @@ export default function OrderTemplateValues({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// =============================================================================
+// COST EDIT FORM — small isolated sub-component
+// =============================================================================
+
+interface CostEditFormProps {
+  draft: CostDraft;
+  onChange: (d: CostDraft) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  disabled?: boolean;
+  errors?: CostDraftErrors;
+}
+
+function CostEditForm({
+  draft,
+  onChange,
+  onSave,
+  onCancel,
+  disabled,
+  errors = {}
+}: CostEditFormProps) {
+  return (
+    <div className='rounded-md border bg-slate-50/70 p-3 dark:bg-slate-900/40'>
+      <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
+        <div className='space-y-1'>
+          <Label className='text-muted-foreground text-xs'>
+            Name <span className='text-destructive'>*</span>
+          </Label>
+          <Input
+            value={draft.costName}
+            onChange={(e) => onChange({ ...draft, costName: e.target.value })}
+            placeholder='e.g. Transport'
+            className={cn(
+              'h-8 text-sm',
+              errors.costName && 'border-destructive'
+            )}
+            disabled={disabled}
+            autoFocus
+          />
+          {errors.costName && (
+            <p className='text-destructive text-[10px] leading-tight'>
+              {errors.costName}
+            </p>
+          )}
+        </div>
+        <div className='space-y-1'>
+          <Label className='text-muted-foreground text-xs'>
+            Amount (₹) <span className='text-destructive'>*</span>
+          </Label>
+          <Input
+            type='number'
+            value={draft.cost}
+            onChange={(e) => onChange({ ...draft, cost: e.target.value })}
+            placeholder='0'
+            className={cn('h-8 text-sm', errors.cost && 'border-destructive')}
+            disabled={disabled}
+            step='any'
+            min='0'
+          />
+          {errors.cost && (
+            <p className='text-destructive text-[10px] leading-tight'>
+              {errors.cost}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className='mt-2 space-y-1'>
+        <Label className='text-muted-foreground text-xs'>Notes</Label>
+        <Textarea
+          value={draft.notes}
+          onChange={(e) => onChange({ ...draft, notes: e.target.value })}
+          placeholder='Optional notes…'
+          className='min-h-[56px] resize-none text-sm'
+          disabled={disabled}
+          rows={2}
+        />
+      </div>
+      <div className='mt-3 flex items-center justify-end gap-2'>
+        <Button
+          type='button'
+          variant='ghost'
+          size='sm'
+          className='h-7 px-2 text-xs'
+          onClick={onCancel}
+          disabled={disabled}
+        >
+          <X className='mr-1 h-3 w-3' />
+          Cancel
+        </Button>
+        <Button
+          type='button'
+          size='sm'
+          className='h-7 px-3 text-xs'
+          onClick={onSave}
+          disabled={disabled}
+        >
+          <Check className='mr-1 h-3 w-3' />
+          Save
+        </Button>
+      </div>
+    </div>
   );
 }

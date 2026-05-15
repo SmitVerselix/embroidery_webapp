@@ -65,7 +65,8 @@ import {
 import Link from 'next/link';
 import OrderTemplateValues, {
   type TemplateValuesMap,
-  type BlockValuesMap
+  type BlockValuesMap,
+  type AdditionalCostItem
 } from './order-template-values';
 import type { ExtraValuesMap } from './order-extra-values';
 import type { TemplateLayoutItem } from './template-layout-canvas';
@@ -192,6 +193,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const [templates, setTemplates] = useState<TemplateWithDetails[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
+
+  // ── Template values & helpers ─────────────────────────────────────
   const [templateValues, setTemplateValues] = useState<
     Record<string, TemplateValuesMap>
   >({});
@@ -204,12 +207,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const [templateBlockValues, setTemplateBlockValues] = useState<
     Record<string, BlockValuesMap>
   >({});
-  const [cellErrors, setCellErrors] = useState<
-    Record<string, Record<string, string>>
+  const [templateAdditionalCosts, setTemplateAdditionalCosts] = useState<
+    Record<string, AdditionalCostItem[]>
   >({});
-  const [extraFieldErrors, setExtraFieldErrors] = useState<
-    Record<string, Record<string, string>>
-  >({});
+
+  // ── Child template state ──────────────────────────────────────────
   const [childTemplateValues, setChildTemplateValues] = useState<
     Record<string, TemplateValuesMap>
   >({});
@@ -221,6 +223,17 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   >({});
   const [childBlockValues, setChildBlockValues] = useState<
     Record<string, BlockValuesMap>
+  >({});
+  const [childAdditionalCosts, setChildAdditionalCosts] = useState<
+    Record<string, AdditionalCostItem[]>
+  >({});
+
+  // ── Errors / submission ───────────────────────────────────────────
+  const [cellErrors, setCellErrors] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [extraFieldErrors, setExtraFieldErrors] = useState<
+    Record<string, Record<string, string>>
   >({});
   const [childCellErrors, setChildCellErrors] = useState<
     Record<string, Record<string, string>>
@@ -255,6 +268,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const referenceNoValue = watch('referenceNo');
   const isReferenceMode = !!referencedOrder;
 
+  // ── Fetch customers ───────────────────────────────────────────────
   useEffect(() => {
     const f = async () => {
       setIsLoadingCustomers(true);
@@ -275,6 +289,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     };
     if (companyId) f();
   }, [companyId]);
+
+  // ── Fetch products ────────────────────────────────────────────────
   useEffect(() => {
     const f = async () => {
       setIsLoadingProducts(true);
@@ -295,6 +311,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     };
     if (companyId) f();
   }, [companyId]);
+
+  // ── Fetch orders for reference picker ────────────────────────────
   useEffect(() => {
     const f = async () => {
       setIsLoadingOrders(true);
@@ -316,6 +334,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     if (companyId) f();
   }, [companyId, debouncedOrdersSearch]);
 
+  // ── Fetch templates when product changes (non-reference mode) ─────
   useEffect(() => {
     if (isReferenceModeRef.current) return;
     const fetchTemplatesForProduct = async () => {
@@ -325,6 +344,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         setExtraValues({});
         setTemplateDiscounts({});
         setTemplateBlockValues({});
+        setTemplateAdditionalCosts({});
         setCellErrors({});
         setExtraFieldErrors({});
         clearChildState();
@@ -337,6 +357,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       setExtraValues({});
       setTemplateDiscounts({});
       setTemplateBlockValues({});
+      setTemplateAdditionalCosts({});
       setCellErrors({});
       setExtraFieldErrors({});
       clearChildState();
@@ -357,16 +378,19 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           { discountType: DiscountType; discountValue: string }
         > = {};
         const ib: Record<string, BlockValuesMap> = {};
+        const iac: Record<string, AdditionalCostItem[]> = {};
         fullTemplates.forEach((t) => {
           iv[t.id] = {};
           ie[t.id] = {};
           id[t.id] = { discountType: 'PERCENT', discountValue: '0' };
           ib[t.id] = {};
+          iac[t.id] = [];
         });
         setTemplateValues(iv);
         setExtraValues(ie);
         setTemplateDiscounts(id);
         setTemplateBlockValues(ib);
+        setTemplateAdditionalCosts(iac);
       } catch (err) {
         setTemplateError(getError(err));
       } finally {
@@ -386,10 +410,12 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     setChildExtraValues({});
     setChildDiscounts({});
     setChildBlockValues({});
+    setChildAdditionalCosts({});
     setChildCellErrors({});
     setChildExtraFieldErrors({});
   }, []);
 
+  // ── Select reference order ────────────────────────────────────────
   const handleSelectReferenceOrder = useCallback(
     async (order: Order) => {
       setIsOrdersPopoverOpen(false);
@@ -422,6 +448,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           { discountType: DiscountType; discountValue: string }
         > = {};
         const loadedBlockValues: Record<string, BlockValuesMap> = {};
+        const loadedAdditionalCosts: Record<string, AdditionalCostItem[]> = {};
         const loadedChildMeta: Record<string, { templateId: string }[]> = {};
         const loadedChildValues: Record<string, TemplateValuesMap> = {};
         const loadedChildExtras: Record<string, ExtraValuesMap> = {};
@@ -430,6 +457,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           { discountType: DiscountType; discountValue: string }
         > = {};
         const loadedChildBlockValues: Record<string, BlockValuesMap> = {};
+        const loadedChildAdditionalCosts: Record<string, AdditionalCostItem[]> =
+          {};
+
         Object.values(templateCache).forEach((t) => {
           loadedValues[t.id] = {};
           loadedExtraValues[t.id] = {};
@@ -438,7 +468,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             discountValue: '0'
           };
           loadedBlockValues[t.id] = {};
+          loadedAdditionalCosts[t.id] = [];
         });
+
         (orderData.templates || []).forEach((tmplData: OrderTemplateData) => {
           const tid = tmplData.templateId;
           const valuesMap: TemplateValuesMap = {};
@@ -458,6 +490,27 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               discountValue: rawSummary.discount ?? '0'
             };
           }
+
+          // Pre-fill additional costs from reference
+          const apiAdditionalCosts =
+            (tmplData as any).additionalTemplateCosts || [];
+          loadedAdditionalCosts[tid] = (
+            apiAdditionalCosts as {
+              costName: string;
+              cost: string;
+              notes: string | null;
+              indexNo: number;
+            }[]
+          )
+            .sort((a, b) => a.indexNo - b.indexNo)
+            .map((c, i) => ({
+              // no `id` here — these will be new records on the new order
+              costName: c.costName,
+              cost: c.cost,
+              notes: c.notes ?? '',
+              indexNo: i
+            }));
+
           if (tmplData.children && tmplData.children.length > 0) {
             loadedChildMeta[tid] = [];
             tmplData.children.forEach((child, idx) => {
@@ -480,18 +533,39 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 discountValue: childSummary?.discount ?? '0'
               };
               loadedChildBlockValues[childKey] = {};
+              // Pre-fill child additional costs from reference
+              const childApiCosts =
+                (child as any).additionalTemplateCosts || [];
+              loadedChildAdditionalCosts[childKey] = (
+                childApiCosts as {
+                  costName: string;
+                  cost: string;
+                  notes: string | null;
+                  indexNo: number;
+                }[]
+              )
+                .sort((a, b) => a.indexNo - b.indexNo)
+                .map((c, i) => ({
+                  costName: c.costName,
+                  cost: c.cost,
+                  notes: c.notes ?? '',
+                  indexNo: i
+                }));
             });
           }
         });
+
         setTemplateValues(loadedValues);
         setExtraValues(loadedExtraValues);
         setTemplateDiscounts(loadedDiscounts);
         setTemplateBlockValues(loadedBlockValues);
+        setTemplateAdditionalCosts(loadedAdditionalCosts);
         setRefChildrenMeta(loadedChildMeta);
         setChildTemplateValues(loadedChildValues);
         setChildExtraValues(loadedChildExtras);
         setChildDiscounts(loadedChildDiscounts);
         setChildBlockValues(loadedChildBlockValues);
+        setChildAdditionalCosts(loadedChildAdditionalCosts);
         setCellErrors({});
         setExtraFieldErrors({});
         setChildCellErrors({});
@@ -521,11 +595,13 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     setExtraValues({});
     setTemplateDiscounts({});
     setTemplateBlockValues({});
+    setTemplateAdditionalCosts({});
     setCellErrors({});
     setExtraFieldErrors({});
     clearChildState();
   }, [setValue, clearChildState]);
 
+  // ── Change handlers ───────────────────────────────────────────────
   const handleTemplateValuesChange = useCallback(
     (templateId: string, values: TemplateValuesMap) => {
       setTemplateValues((p) => ({ ...p, [templateId]: values }));
@@ -555,6 +631,14 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     },
     []
   );
+  const handleAdditionalCostsChange = useCallback(
+    (templateId: string, costs: AdditionalCostItem[]) => {
+      setTemplateAdditionalCosts((p) => ({ ...p, [templateId]: costs }));
+    },
+    []
+  );
+
+  // ── Child handlers ────────────────────────────────────────────────
   const handleChildValuesChange = useCallback(
     (childKey: string, values: TemplateValuesMap) => {
       setChildTemplateValues((p) => ({ ...p, [childKey]: values }));
@@ -584,7 +668,14 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     },
     []
   );
+  const handleChildAdditionalCostsChange = useCallback(
+    (childKey: string, costs: AdditionalCostItem[]) => {
+      setChildAdditionalCosts((p) => ({ ...p, [childKey]: costs }));
+    },
+    []
+  );
 
+  // ── Validation ────────────────────────────────────────────────────
   const validateTemplateValues = useCallback((): boolean => {
     let isValid = true;
     const validateValues = (
@@ -631,6 +722,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       });
       return { cErrors, eErrors };
     };
+
     const newCE: Record<string, Record<string, string>> = {};
     const newEE: Record<string, Record<string, string>> = {};
     templates.forEach((t) => {
@@ -644,6 +736,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     });
     setCellErrors(newCE);
     setExtraFieldErrors(newEE);
+
     const newCCE: Record<string, Record<string, string>> = {};
     const newCEE: Record<string, Record<string, string>> = {};
     Object.entries(refChildrenMeta).forEach(([parentTmplId, children]) => {
@@ -704,6 +797,17 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     []
   );
 
+  const buildAdditionalCostsPayload = useCallback(
+    (costs: AdditionalCostItem[]) =>
+      costs.map((c, i) => ({
+        costName: c.costName,
+        cost: parseFloat(c.cost) || 0,
+        notes: c.notes || ''
+      })),
+    []
+  );
+
+  // ── Template layout items ─────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
     return templates.map((tmpl) => {
       const childMeta = refChildrenMeta[tmpl.id];
@@ -750,6 +854,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 onBlockValuesChange={(vals) =>
                   handleBlockValuesChange(tmpl.id, vals)
                 }
+                additionalCosts={templateAdditionalCosts[tmpl.id] || []}
+                onAdditionalCostsChange={(costs) =>
+                  handleAdditionalCostsChange(tmpl.id, costs)
+                }
               />
             </div>
             {hasChildren &&
@@ -787,6 +895,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                       onBlockValuesChange={(vals) =>
                         handleChildBlockValuesChange(childKey, vals)
                       }
+                      additionalCosts={childAdditionalCosts[childKey] || []}
+                      onAdditionalCostsChange={(costs) =>
+                        handleChildAdditionalCostsChange(childKey, costs)
+                      }
                     />
                   </div>
                 );
@@ -804,23 +916,28 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     extraFieldErrors,
     templateDiscounts,
     templateBlockValues,
+    templateAdditionalCosts,
     childTemplateValues,
     childExtraValues,
     childCellErrors,
     childExtraFieldErrors,
     childDiscounts,
     childBlockValues,
+    childAdditionalCosts,
     isSubmitting,
     handleTemplateValuesChange,
     handleExtraValuesChange,
     handleDiscountChange,
     handleBlockValuesChange,
+    handleAdditionalCostsChange,
     handleChildValuesChange,
     handleChildExtraValuesChange,
     handleChildDiscountChange,
-    handleChildBlockValuesChange
+    handleChildBlockValuesChange,
+    handleChildAdditionalCostsChange
   ]);
 
+  // ── Submit ────────────────────────────────────────────────────────
   const onSubmit = async (data: OrderFormData) => {
     setSubmitError(null);
     if (!validateTemplateValues()) {
@@ -864,6 +981,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         const blockvalues = buildBlockValuesPayload(
           templateBlockValues[tmpl.id] || {}
         );
+        const additionalCosts = buildAdditionalCostsPayload(
+          templateAdditionalCosts[tmpl.id] || []
+        );
+
         const payload: OrderTemplatePayload = {
           templateId: tmpl.id,
           values,
@@ -871,6 +992,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
           ...(blockvalues.length > 0 ? { blockvalues } : {})
         };
         if (extravalues.length > 0) payload.extravalues = extravalues;
+        if (additionalCosts.length > 0)
+          (payload as any).additionalCosts = additionalCosts;
+
         const childMeta = refChildrenMeta[tmpl.id];
         if (childMeta && childMeta.length > 0) {
           payload.children = childMeta.map((meta, idx) => {
@@ -906,6 +1030,10 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             const cBlockvalues = buildBlockValuesPayload(
               childBlockValues[childKey] || {}
             );
+            const cAdditionalCosts = buildAdditionalCostsPayload(
+              childAdditionalCosts[childKey] || []
+            );
+
             const childPayload: OrderTemplatePayload = {
               templateId: meta.templateId,
               values: cValues,
@@ -913,11 +1041,14 @@ export default function OrderForm({ companyId }: OrderFormProps) {
               ...(cBlockvalues.length > 0 ? { blockvalues: cBlockvalues } : {})
             };
             if (cExtras.length > 0) childPayload.extravalues = cExtras;
+            if (cAdditionalCosts.length > 0)
+              (childPayload as any).additionalCosts = cAdditionalCosts;
             return childPayload;
           });
         }
         return payload;
       });
+
       const productId = data.productId || referencedOrder?.productId || '';
       const createData: CreateOrderData = {
         orderNo: data.orderNo,
@@ -955,6 +1086,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     });
     return count;
   }, [cellErrors, extraFieldErrors, childCellErrors, childExtraFieldErrors]);
+
   const hasTemplates = templates.length > 0;
   const showTemplateSection = isReferenceMode ? true : !!selectedProductId;
 
