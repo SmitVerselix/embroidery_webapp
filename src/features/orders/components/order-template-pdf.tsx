@@ -76,6 +76,7 @@ export type FinalCalcData = {
   marginTotal: string;
   finalPayableAmount: string;
   hasAnyChildren: boolean;
+  additionalCosts?: { costName: string; cost: number; notes: string }[];
 };
 
 type BlockValuesMap = Record<number, string>;
@@ -103,8 +104,15 @@ interface OrderTemplatePDFProps {
 const getAllExtraValues = (ev: ExtraValuesMap, fid: string) =>
   (ev[fid] ?? []).map((i) => i.value).filter((v) => v?.trim());
 
+/**
+ * Returns all ExtraValueItems for a field whose value is an image URL.
+ * Keeps the full item so callers can access item.meta.image_text.
+ */
+const getMediaImageItems = (ev: ExtraValuesMap, fid: string) =>
+  (ev[fid] ?? []).filter((i) => i.value?.trim().startsWith('http'));
+
 const getAllMediaUrls = (ev: ExtraValuesMap, fid: string) =>
-  getAllExtraValues(ev, fid).filter((v) => v.startsWith('http'));
+  getMediaImageItems(ev, fid).map((i) => i.value);
 
 const joinExtra = (ev: ExtraValuesMap, fid: string) =>
   getAllExtraValues(ev, fid).join(', ') || '—';
@@ -130,7 +138,11 @@ const fmt = (v: string | null | undefined) => {
   return isNaN(n) ? '0.00' : n.toFixed(2);
 };
 
-/** Format discount value with its type symbol appended */
+/**
+ * Format discount value with its type symbol appended.
+ * Uses plain ASCII "%" or "Rs." — never the ₹ glyph which is
+ * unsupported by jsPDF WinAnsi built-in fonts.
+ */
 const fmtDiscount = (
   value: string | null | undefined,
   type: string | null | undefined
@@ -138,7 +150,7 @@ const fmtDiscount = (
   if (value == null) return '—';
   const formatted = fmt(value);
   if (type === 'PERCENT') return `${formatted}%`;
-  if (type === 'AMOUNT') return `${formatted} ₹`;
+  if (type === 'AMOUNT') return `${formatted} Rs.`;
   return formatted;
 };
 
@@ -382,6 +394,7 @@ function PreviewTable({
     ) : null;
 
   const additionalCosts = s?.additionalTemplateCosts ?? [];
+  const mediaExtrasPreview = extra.filter((f) => f.sectionType === 'MEDIA');
 
   return (
     <div className='space-y-2.5 text-xs'>
@@ -509,7 +522,7 @@ function PreviewTable({
                       )}
                     </div>
                     <span className='shrink-0 font-mono tabular-nums'>
-                      ₹{fmt(String(c.cost))}
+                      Rs.{fmt(String(c.cost))}
                     </span>
                   </div>
                 ))}
@@ -530,6 +543,50 @@ function PreviewTable({
         </div>
       )}
       <ExtraGrid fields={footerExtras} />
+      {mediaExtrasPreview.length > 0 && (
+        <div className='space-y-3'>
+          {mediaExtrasPreview.map((mf) => {
+            if (mf.valueType === 'IMAGE') {
+              const items = getMediaImageItems(extras, mf.id);
+              return (
+                <div key={mf.id} className='space-y-2'>
+                  <p className='text-muted-foreground font-medium'>
+                    {mf.label}
+                  </p>
+                  {items.length === 0 ? (
+                    <span className='text-muted-foreground'>—</span>
+                  ) : (
+                    items.map((item, idx) => (
+                      <div key={idx} className='space-y-1'>
+                        <img
+                          src={item.value}
+                          alt={item.meta?.image_text ?? mf.label}
+                          className='max-h-48 rounded border object-contain'
+                        />
+                        {item.meta?.image_text && (
+                          <p className='text-foreground text-xs whitespace-pre-wrap'>
+                            {item.meta.image_text}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              );
+            }
+            // Non-image media fields
+            const vals = getAllExtraValues(extras, mf.id);
+            return (
+              <div key={mf.id} className='flex gap-1'>
+                <span className='text-muted-foreground font-medium'>
+                  {mf.label}:
+                </span>
+                <span>{vals.join(', ') || '—'}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -544,7 +601,7 @@ function FinalCalcPreview({
   options: FinalCalcPDFOptions;
 }) {
   const typeSuffix = (t: string | null) =>
-    t ? ` (${t === 'PERCENT' ? '%' : '₹'})` : '';
+    t ? ` (${t === 'PERCENT' ? '%' : 'Rs.'})` : '';
   return (
     <div className='space-y-2.5 text-xs'>
       <div className='overflow-x-auto rounded-md border'>
@@ -552,10 +609,12 @@ function FinalCalcPreview({
           <thead>
             <tr className='bg-muted/60 border-b'>
               <th className='px-3 py-2 text-left font-semibold'>Template</th>
-              <th className='px-3 py-2 text-right font-semibold'>Total (₹)</th>
+              <th className='px-3 py-2 text-right font-semibold'>
+                Total (Rs.)
+              </th>
               {d.hasAnyChildren && (
                 <th className='px-3 py-2 text-right font-semibold'>
-                  Child Total (₹)
+                  Child Total (Rs.)
                 </th>
               )}
               <th className='px-3 py-2 text-left font-semibold'>Notes</th>
@@ -620,6 +679,28 @@ function FinalCalcPreview({
               </span>
               <span className='font-mono tabular-nums'>{d.addonDiscount}</span>
             </div>
+          )}
+          {(d.additionalCosts ?? []).length > 0 && (
+            <>
+              {(d.additionalCosts ?? []).map((c, idx) => (
+                <div
+                  key={idx}
+                  className='flex items-start justify-between border-b px-3 py-1.5'
+                >
+                  <div className='min-w-0'>
+                    <span className='text-muted-foreground'>{c.costName}</span>
+                    {c.notes && (
+                      <p className='text-muted-foreground mt-0.5 truncate text-[10px] italic'>
+                        {c.notes}
+                      </p>
+                    )}
+                  </div>
+                  <span className='shrink-0 font-mono tabular-nums'>
+                    Rs.{fmt(String(c.cost))}
+                  </span>
+                </div>
+              ))}
+            </>
           )}
           <div className='flex justify-between bg-indigo-50 px-3 py-2 font-semibold text-indigo-700'>
             <span>Final Payable Amount</span>
@@ -717,23 +798,29 @@ async function generateMultiPDF(
   });
 
   // Pre-fetch images
-  const imgCache: Record<string, { dataUrl: string; w: number; h: number }> =
-    {};
+  const imgCache: Record<
+    string,
+    { dataUrl: string; w: number; h: number; imageText: string | null }
+  > = {};
   for (const e of selectedEntries) {
     const ev = extraValues[e.orderTemplateId] ?? {};
     for (const mf of (e.template.extra ?? []).filter(
       (f) => f.sectionType === 'MEDIA' && f.valueType === 'IMAGE'
     )) {
-      const urls = getAllMediaUrls(ev, mf.id);
-      for (let i = 0; i < urls.length; i++) {
+      const items = getMediaImageItems(ev, mf.id);
+      for (let i = 0; i < items.length; i++) {
         const k = `${e.orderTemplateId}_${mf.id}_${i}`;
+        const imageText: string | null = items[i].meta?.image_text ?? null;
         try {
-          const d = await fetchImageAsDataURL(urls[i]);
+          const d = await fetchImageAsDataURL(items[i].value);
           if (d) {
             const dims = await getImageDims(d);
-            imgCache[k] = { dataUrl: d, ...dims };
+            imgCache[k] = { dataUrl: d, ...dims, imageText };
           }
-        } catch {}
+        } catch {
+          // Still store imageText even if the image itself fails to load
+          imgCache[k] = { dataUrl: '', w: 0, h: 0, imageText };
+        }
       }
     }
   }
@@ -758,7 +845,7 @@ async function generateMultiPDF(
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6);
     doc.setTextColor(...C.white);
-    doc.text('⊞', M + 8.5, y + 11.5);
+    doc.text('o', M + 8.5, y + 11.5);
     doc.setFontSize(8);
     doc.setTextColor(...color.fg);
     doc.text(label, M + 20, y + 12);
@@ -948,8 +1035,8 @@ async function generateMultiPDF(
     const { hasAnyChildren: hc, templateRows: tr } = fc;
     const head = [
       'Template',
-      'Total (₹)',
-      ...(hc ? ['Child Total (₹)'] : []),
+      'Total (Rs.)',
+      ...(hc ? ['Child Total (Rs.)'] : []),
       'Notes'
     ];
     const uw = PW - M * 2,
@@ -996,7 +1083,9 @@ async function generateMultiPDF(
     });
     y = (doc as any).lastAutoTable.finalY + 20;
 
+    // ── Summary box (right-aligned) ──────────────────────────────────────
     const sRows: [string, string, boolean][] = [['Total', fc.total, false]];
+
     if (fcOpts.includeMarginDiscount)
       sRows.push([
         'Margin Discount',
@@ -1005,15 +1094,26 @@ async function generateMultiPDF(
       ]);
     if (fcOpts.includeMarginTotal)
       sRows.push(['Margin Total', fc.marginTotal, false]);
+
     sRows.push(['Discount', fmtDiscount(fc.discount, fc.discountType), false]);
+
     if (fcOpts.includeAddonDiscount)
       sRows.push([
         'Addon Discount',
         fmtDiscount(fc.addonDiscount, fc.addonType),
         false
       ]);
+
+    // Additional costs (order-level) — inserted before Final Payable Amount
+    const additionalCosts = fc.additionalCosts ?? [];
+    for (const ac of additionalCosts) {
+      const label = ac.notes ? `${ac.costName} (${ac.notes})` : ac.costName;
+      sRows.push([label, `Rs.${fmt(String(ac.cost))}`, false]);
+    }
+
     sRows.push(['Final Payable Amount', fc.finalPayableAmount, true]);
-    drawSummaryAutoTable(y, sRows, 260);
+
+    drawSummaryAutoTable(y, sRows, 280);
   }
 
   // ── DYNAMIC SCALING ─────────────────────────────────────────────────
@@ -1199,18 +1299,19 @@ async function generateMultiPDF(
       y = (doc as any).lastAutoTable.finalY + 16;
     }
 
-    // Summary — matches template preview layout exactly
+    // ── Summary box — fix: use plain ASCII currency, no ₹ glyph ──────
     if (s) {
       const summaryRows: [string, string, boolean][] = [
         ['Total', fmt(s.total), false],
         ['Discount', fmtDiscount(s.discount, s.discountType), false],
         ['Discount Amount', fmtDiscountAmount(s.discountAmount), false]
       ];
-      // Additional template costs
+      // Additional template costs (template-level)
       const additionalCosts = s.additionalTemplateCosts ?? [];
       additionalCosts.forEach((c) => {
         const label = c.notes ? `${c.costName} (${c.notes})` : c.costName;
-        summaryRows.push([label, `₹${fmt(String(c.cost))}`, false]);
+        // Use "Rs." prefix — never ₹ which jsPDF can't encode in WinAnsi fonts
+        summaryRows.push([label, `Rs.${fmt(String(c.cost))}`, false]);
       });
       // Final payable (highlighted)
       summaryRows.push([
@@ -1250,9 +1351,12 @@ async function generateMultiPDF(
           y += 10;
           for (let ui = 0; ui < urls.length; ui++) {
             const cached = imgCache[`${entry.orderTemplateId}_${mf.id}_${ui}`];
-            if (cached) {
+            const imageText: string | null = cached?.imageText ?? null;
+
+            if (cached && cached.dataUrl) {
               const fit = fitImage(cached.w, cached.h, 320, 240);
-              y = ensureSpace(y, fit.h + 16);
+              const textReserve = imageText ? 18 : 0;
+              y = ensureSpace(y, fit.h + 16 + textReserve);
               doc.setDrawColor(...SEC.media.badge);
               doc.setLineWidth(1);
               doc.roundedRect(M, y, fit.w + 8, fit.h + 8, 3, 3, 'D');
@@ -1278,9 +1382,10 @@ async function generateMultiPDF(
                   y + fit.h / 2 + 4
                 );
               }
-              y += fit.h + 16;
+              y += fit.h + 12;
             } else {
-              y = ensureSpace(y, 40);
+              const textReserve = imageText ? 18 : 0;
+              y = ensureSpace(y, 40 + textReserve);
               doc.setFillColor(...C.rowAlt);
               doc.setDrawColor(...C.border);
               doc.setLineWidth(0.5);
@@ -1291,7 +1396,21 @@ async function generateMultiPDF(
               doc.text('Image unavailable', M + 60, y + 18, {
                 align: 'center'
               });
-              y += 42;
+              y += 38;
+            }
+
+            // Render image_text from meta directly below each image, as stored
+            if (imageText) {
+              const maxW = PW - M * 2;
+              const lines = doc.splitTextToSize(imageText, maxW);
+              y = ensureSpace(y, lines.length * 11 + 4);
+              doc.setFont('helvetica', 'normal');
+              doc.setFontSize(8);
+              doc.setTextColor(...C.primary);
+              doc.text(lines, M, y + 8);
+              y += lines.length * 11 + 6;
+            } else {
+              y += 4;
             }
           }
         } else {

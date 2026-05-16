@@ -1443,7 +1443,12 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       marginType: (order as any).marginType ?? null,
       marginTotal: formatAmount((order as any).marginTotal),
       finalPayableAmount: formatAmount(order.finalPayableAmount),
-      hasAnyChildren
+      hasAnyChildren,
+      additionalCosts: ((order as any).additionalCosts ?? []).map((c: any) => ({
+        costName: c.costName ?? '',
+        cost: typeof c.cost === 'number' ? c.cost : parseFloat(c.cost) || 0,
+        notes: c.notes ?? ''
+      }))
     };
   }, [order, entries, groupedByTemplate]);
 
