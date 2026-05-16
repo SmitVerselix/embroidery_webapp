@@ -60,7 +60,8 @@ import {
   Search,
   FileText,
   X,
-  Link2
+  Link2,
+  LayoutTemplate
 } from 'lucide-react';
 import Link from 'next/link';
 import OrderTemplateValues, {
@@ -230,6 +231,11 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     Record<string, AdditionalCostItem[]>
   >({});
 
+  // ── Template selection for empty templates (no rows/columns) ──────
+  const [selectedNewTemplateIds, setSelectedNewTemplateIds] = useState<
+    Set<string>
+  >(new Set());
+
   // ── Errors / submission ───────────────────────────────────────────
   const [cellErrors, setCellErrors] = useState<
     Record<string, Record<string, string>>
@@ -269,6 +275,61 @@ export default function OrderForm({ companyId }: OrderFormProps) {
   const selectedCustomerId = watch('customerId');
   const referenceNoValue = watch('referenceNo');
   const isReferenceMode = !!referencedOrder;
+
+  // ── Template visibility derived state ────────────────────────────
+  // A template is considered "empty" (hidden by default) when:
+  //   • it has no rows or no columns, OR
+  //   • it has rows+columns but every non-FORMULA cell is currently blank.
+  // Only templates with at least one filled value are shown automatically.
+  const templateHasValues = useCallback(
+    (t: TemplateWithDetails): boolean => {
+      if ((t.rows?.length ?? 0) === 0 || (t.columns?.length ?? 0) === 0)
+        return false;
+      const vals = templateValues[t.id] ?? {};
+      return (t.rows ?? []).some((row) =>
+        (t.columns ?? []).some((col) => {
+          if (col.dataType === 'FORMULA') return false;
+          return (vals[row.id]?.[col.id] ?? '').trim() !== '';
+        })
+      );
+    },
+    [templateValues]
+  );
+
+  const emptyTemplates = useMemo(
+    () => templates.filter((t) => !templateHasValues(t)),
+    [templates, templateHasValues]
+  );
+  const contentTemplates = useMemo(
+    () => templates.filter((t) => templateHasValues(t)),
+    [templates, templateHasValues]
+  );
+  const unselectedEmptyTemplates = useMemo(
+    () => emptyTemplates.filter((t) => !selectedNewTemplateIds.has(t.id)),
+    [emptyTemplates, selectedNewTemplateIds]
+  );
+  const selectedEmptyTemplates = useMemo(
+    () => emptyTemplates.filter((t) => selectedNewTemplateIds.has(t.id)),
+    [emptyTemplates, selectedNewTemplateIds]
+  );
+  /** The final list of templates rendered in the canvas */
+  const visibleTemplates = useMemo(
+    () => [...contentTemplates, ...selectedEmptyTemplates],
+    [contentTemplates, selectedEmptyTemplates]
+  );
+  const hasEmptyTemplates = emptyTemplates.length > 0;
+
+  const handleSelectNewTemplate = useCallback((templateId: string) => {
+    setSelectedNewTemplateIds((prev) => new Set(prev).add(templateId));
+  }, []);
+
+  const handleRemoveNewTemplate = useCallback((templateId: string) => {
+    setSelectedNewTemplateIds((prev) => {
+      const next = new Set(prev);
+      next.delete(templateId);
+      return next;
+    });
+  }, []);
 
   // ── Fetch customers ───────────────────────────────────────────────
   useEffect(() => {
@@ -349,6 +410,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
         setTemplateAdditionalCosts({});
         setCellErrors({});
         setExtraFieldErrors({});
+        setSelectedNewTemplateIds(new Set());
         clearChildState();
         return;
       }
@@ -362,6 +424,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       setTemplateAdditionalCosts({});
       setCellErrors({});
       setExtraFieldErrors({});
+      setSelectedNewTemplateIds(new Set());
       clearChildState();
       try {
         const product = await getProduct(companyId, selectedProductId);
@@ -426,6 +489,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       setValue('referenceNo', order.orderNo);
       setReferencedOrderId(order.id);
       setIsLoadingReference(true);
+      setSelectedNewTemplateIds(new Set());
       try {
         const orderData = await getOrder(companyId, order.id);
         setReferencedOrder(orderData);
@@ -600,6 +664,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     setTemplateAdditionalCosts({});
     setCellErrors({});
     setExtraFieldErrors({});
+    setSelectedNewTemplateIds(new Set());
     clearChildState();
   }, [setValue, clearChildState]);
 
@@ -727,7 +792,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
     const newCE: Record<string, Record<string, string>> = {};
     const newEE: Record<string, Record<string, string>> = {};
-    templates.forEach((t) => {
+    // Only validate visible templates
+    visibleTemplates.forEach((t) => {
       const { cErrors, eErrors } = validateValues(
         t,
         templateValues[t.id] || {},
@@ -742,7 +808,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     const newCCE: Record<string, Record<string, string>> = {};
     const newCEE: Record<string, Record<string, string>> = {};
     Object.entries(refChildrenMeta).forEach(([parentTmplId, children]) => {
-      const parentTmpl = templates.find((t) => t.id === parentTmplId);
+      const parentTmpl = visibleTemplates.find((t) => t.id === parentTmplId);
       if (!parentTmpl) return;
       children.forEach((_, idx) => {
         const childKey = getChildKey(parentTmplId, idx);
@@ -759,7 +825,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     setChildExtraFieldErrors(newCEE);
     return isValid;
   }, [
-    templates,
+    visibleTemplates,
     templateValues,
     extraValues,
     refChildrenMeta,
@@ -814,9 +880,13 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   // ── Template layout items ─────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
-    return templates.map((tmpl) => {
+    return visibleTemplates.map((tmpl) => {
       const childMeta = refChildrenMeta[tmpl.id];
       const hasChildren = childMeta && childMeta.length > 0;
+
+      // Show a remove button for user-selected empty templates
+      const isUserSelected = selectedNewTemplateIds.has(tmpl.id);
+
       return {
         id: tmpl.id,
         label: tmpl.name || tmpl.id,
@@ -825,15 +895,28 @@ export default function OrderForm({ companyId }: OrderFormProps) {
             <div
               className={hasChildren ? 'min-w-0 flex-1 space-y-2' : 'space-y-2'}
             >
-              <div className='flex items-center gap-2'>
-                {hasChildren && (
-                  <Badge variant='outline' className='text-xs'>
-                    Parent Template
-                    <span className='text-muted-foreground ml-1.5'>
-                      — {childMeta.length} child
-                      {childMeta.length !== 1 ? 'ren' : ''} from reference
-                    </span>
-                  </Badge>
+              <div className='flex items-center justify-between gap-2'>
+                <div className='flex items-center gap-2'>
+                  {hasChildren && (
+                    <Badge variant='outline' className='text-xs'>
+                      Parent Template
+                      <span className='text-muted-foreground ml-1.5'>
+                        — {childMeta.length} child
+                        {childMeta.length !== 1 ? 'ren' : ''} from reference
+                      </span>
+                    </Badge>
+                  )}
+                </div>
+                {isUserSelected && (
+                  <button
+                    type='button'
+                    onClick={() => handleRemoveNewTemplate(tmpl.id)}
+                    className='text-muted-foreground hover:text-destructive hover:bg-destructive/10 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors'
+                    title={`Remove ${tmpl.name || 'template'}`}
+                  >
+                    <X className='h-3.5 w-3.5' />
+                    Remove
+                  </button>
                 )}
               </div>
               <OrderTemplateValues
@@ -923,8 +1006,9 @@ export default function OrderForm({ companyId }: OrderFormProps) {
       };
     });
   }, [
-    templates,
+    visibleTemplates,
     refChildrenMeta,
+    selectedNewTemplateIds,
     templateValues,
     extraValues,
     cellErrors,
@@ -949,7 +1033,8 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     handleChildExtraValuesChange,
     handleChildDiscountChange,
     handleChildBlockValuesChange,
-    handleChildAdditionalCostsChange
+    handleChildAdditionalCostsChange,
+    handleRemoveNewTemplate
   ]);
 
   // ── Submit ────────────────────────────────────────────────────────
@@ -963,106 +1048,112 @@ export default function OrderForm({ companyId }: OrderFormProps) {
     }
     setIsSubmitting(true);
     try {
-      const templatesPayload: OrderTemplatePayload[] = templates.map((tmpl) => {
-        const tmplValues = templateValues[tmpl.id] || {};
-        const columns = tmpl.columns || [];
-        const rows = tmpl.rows || [];
-        const tmplExtras = tmpl.extra || [];
-        const values: { value: string; rowId: string; columnId: string }[] = [];
-        rows.forEach((row) => {
-          columns.forEach((col) => {
-            if (col.dataType === 'FORMULA') return;
-            const value = tmplValues[row.id]?.[col.id] || '';
-            if (value.trim())
-              values.push({
-                value: value.trim(),
-                rowId: row.id,
-                columnId: col.id
-              });
-          });
-        });
-        const extravalues = flattenExtraValues(
-          tmplExtras,
-          extraValues[tmpl.id] || {}
-        );
-        const discount = templateDiscounts[tmpl.id] || {
-          discountType: 'PERCENT' as DiscountType,
-          discountValue: '0'
-        };
-        const summary: TemplateSummaryPayload = {
-          discountType: discount.discountType,
-          discountValue: discount.discountValue || '0'
-        };
-        const blockvalues = buildBlockValuesPayload(
-          templateBlockValues[tmpl.id] || {}
-        );
-        const additionalCosts = buildAdditionalCostsPayload(
-          templateAdditionalCosts[tmpl.id] || []
-        );
-
-        const payload: OrderTemplatePayload = {
-          templateId: tmpl.id,
-          values,
-          summary,
-          ...(blockvalues.length > 0 ? { blockvalues } : {})
-        };
-        if (extravalues.length > 0) payload.extravalues = extravalues;
-        if (additionalCosts.length > 0)
-          (payload as any).additionalCosts = additionalCosts;
-
-        const childMeta = refChildrenMeta[tmpl.id];
-        if (childMeta && childMeta.length > 0) {
-          payload.children = childMeta.map((meta, idx) => {
-            const childKey = getChildKey(tmpl.id, idx);
-            const childVals = childTemplateValues[childKey] || {};
-            const childExVals = childExtraValues[childKey] || {};
-            const childDisc = childDiscounts[childKey] || {
-              discountType: 'PERCENT' as DiscountType,
-              discountValue: '0'
-            };
-            const cValues: {
-              value: string;
-              rowId: string;
-              columnId: string;
-            }[] = [];
-            rows.forEach((row) => {
-              columns.forEach((col) => {
-                if (col.dataType === 'FORMULA') return;
-                const v = childVals[row.id]?.[col.id] || '';
-                if (v.trim())
-                  cValues.push({
-                    value: v.trim(),
-                    rowId: row.id,
-                    columnId: col.id
-                  });
-              });
+      // Only submit visible templates
+      const templatesPayload: OrderTemplatePayload[] = visibleTemplates.map(
+        (tmpl) => {
+          const tmplValues = templateValues[tmpl.id] || {};
+          const columns = tmpl.columns || [];
+          const rows = tmpl.rows || [];
+          const tmplExtras = tmpl.extra || [];
+          const values: { value: string; rowId: string; columnId: string }[] =
+            [];
+          rows.forEach((row) => {
+            columns.forEach((col) => {
+              if (col.dataType === 'FORMULA') return;
+              const value = tmplValues[row.id]?.[col.id] || '';
+              if (value.trim())
+                values.push({
+                  value: value.trim(),
+                  rowId: row.id,
+                  columnId: col.id
+                });
             });
-            const cExtras = flattenExtraValues(tmplExtras, childExVals);
-            const cSummary: TemplateSummaryPayload = {
-              discountType: childDisc.discountType,
-              discountValue: childDisc.discountValue || '0'
-            };
-            const cBlockvalues = buildBlockValuesPayload(
-              childBlockValues[childKey] || {}
-            );
-            const cAdditionalCosts = buildAdditionalCostsPayload(
-              childAdditionalCosts[childKey] || []
-            );
-
-            const childPayload: OrderTemplatePayload = {
-              templateId: meta.templateId,
-              values: cValues,
-              summary: cSummary,
-              ...(cBlockvalues.length > 0 ? { blockvalues: cBlockvalues } : {})
-            };
-            if (cExtras.length > 0) childPayload.extravalues = cExtras;
-            if (cAdditionalCosts.length > 0)
-              (childPayload as any).additionalCosts = cAdditionalCosts;
-            return childPayload;
           });
+          const extravalues = flattenExtraValues(
+            tmplExtras,
+            extraValues[tmpl.id] || {}
+          );
+          const discount = templateDiscounts[tmpl.id] || {
+            discountType: 'PERCENT' as DiscountType,
+            discountValue: '0'
+          };
+          const summary: TemplateSummaryPayload = {
+            discountType: discount.discountType,
+            discountValue: discount.discountValue || '0'
+          };
+          const blockvalues = buildBlockValuesPayload(
+            templateBlockValues[tmpl.id] || {}
+          );
+          const additionalCosts = buildAdditionalCostsPayload(
+            templateAdditionalCosts[tmpl.id] || []
+          );
+
+          const payload: OrderTemplatePayload = {
+            templateId: tmpl.id,
+            values,
+            summary,
+            ...(blockvalues.length > 0 ? { blockvalues } : {})
+          };
+          if (extravalues.length > 0) payload.extravalues = extravalues;
+          if (additionalCosts.length > 0)
+            (payload as any).additionalCosts = additionalCosts;
+
+          const childMeta = refChildrenMeta[tmpl.id];
+          if (childMeta && childMeta.length > 0) {
+            payload.children = childMeta.map((meta, idx) => {
+              const childKey = getChildKey(tmpl.id, idx);
+              const childVals = childTemplateValues[childKey] || {};
+              const childExVals = childExtraValues[childKey] || {};
+              const childDisc = childDiscounts[childKey] || {
+                discountType: 'PERCENT' as DiscountType,
+                discountValue: '0'
+              };
+              const cValues: {
+                value: string;
+                rowId: string;
+                columnId: string;
+              }[] = [];
+              rows.forEach((row) => {
+                columns.forEach((col) => {
+                  if (col.dataType === 'FORMULA') return;
+                  const v = childVals[row.id]?.[col.id] || '';
+                  if (v.trim())
+                    cValues.push({
+                      value: v.trim(),
+                      rowId: row.id,
+                      columnId: col.id
+                    });
+                });
+              });
+              const cExtras = flattenExtraValues(tmplExtras, childExVals);
+              const cSummary: TemplateSummaryPayload = {
+                discountType: childDisc.discountType,
+                discountValue: childDisc.discountValue || '0'
+              };
+              const cBlockvalues = buildBlockValuesPayload(
+                childBlockValues[childKey] || {}
+              );
+              const cAdditionalCosts = buildAdditionalCostsPayload(
+                childAdditionalCosts[childKey] || []
+              );
+
+              const childPayload: OrderTemplatePayload = {
+                templateId: meta.templateId,
+                values: cValues,
+                summary: cSummary,
+                ...(cBlockvalues.length > 0
+                  ? { blockvalues: cBlockvalues }
+                  : {})
+              };
+              if (cExtras.length > 0) childPayload.extravalues = cExtras;
+              if (cAdditionalCosts.length > 0)
+                (childPayload as any).additionalCosts = cAdditionalCosts;
+              return childPayload;
+            });
+          }
+          return payload;
         }
-        return payload;
-      });
+      );
 
       const productId = data.productId || referencedOrder?.productId || '';
       const createData: CreateOrderData = {
@@ -1104,6 +1195,90 @@ export default function OrderForm({ companyId }: OrderFormProps) {
 
   const hasTemplates = templates.length > 0;
   const showTemplateSection = isReferenceMode ? true : !!selectedProductId;
+
+  // ── Template selector rendered as beforeCanvas ────────────────────
+  const templateSelectorAndErrors = useMemo(() => {
+    const showSelector = hasEmptyTemplates && !isLoadingTemplates;
+    const showErrors = totalCellErrors > 0;
+    if (!showSelector && !showErrors) return undefined;
+    return (
+      <div className='space-y-4'>
+        {showSelector && (
+          <div className='rounded-lg border bg-slate-50/50 p-4 dark:bg-slate-900/30'>
+            <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+              <div className='flex items-center gap-2'>
+                <LayoutTemplate className='text-muted-foreground h-4 w-4' />
+                <span className='text-sm font-semibold text-slate-700 dark:text-slate-300'>
+                  Select Template
+                </span>
+                <Badge variant='secondary' className='text-[10px]'>
+                  {unselectedEmptyTemplates.length} available
+                </Badge>
+              </div>
+              {unselectedEmptyTemplates.length > 0 && (
+                <Select value='' onValueChange={handleSelectNewTemplate}>
+                  <SelectTrigger className='h-9 w-full sm:w-[280px]'>
+                    <SelectValue placeholder='Select a template to add…' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {unselectedEmptyTemplates.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        <span className='flex items-center gap-2'>
+                          <LayoutTemplate className='h-3.5 w-3.5' />
+                          {t.name || t.id}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            {selectedEmptyTemplates.length > 0 && (
+              <div className='mt-3 flex flex-wrap items-center gap-2'>
+                <span className='text-muted-foreground text-xs'>Added:</span>
+                {selectedEmptyTemplates.map((t) => (
+                  <Badge
+                    key={t.id}
+                    variant='outline'
+                    className='gap-1 py-1 pr-1 text-xs'
+                  >
+                    {t.name || t.id}
+                    <button
+                      type='button'
+                      onClick={() => handleRemoveNewTemplate(t.id)}
+                      className='text-muted-foreground hover:text-destructive ml-0.5 rounded-sm p-0.5 transition-colors hover:bg-slate-200 dark:hover:bg-slate-700'
+                      title={`Remove ${t.name || 'template'}`}
+                    >
+                      <X className='h-3 w-3' />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showErrors && (
+          <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-3 text-sm'>
+            <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
+            <span>
+              {totalCellErrors} validation error
+              {totalCellErrors !== 1 ? 's' : ''} found.
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }, [
+    hasEmptyTemplates,
+    isLoadingTemplates,
+    totalCellErrors,
+    unselectedEmptyTemplates,
+    selectedEmptyTemplates,
+    handleSelectNewTemplate,
+    handleRemoveNewTemplate
+  ]);
 
   return (
     <div className='space-y-6'>
@@ -1501,17 +1676,7 @@ export default function OrderForm({ companyId }: OrderFormProps) {
                 persistKey={`create-${selectedProductId || 'new'}`}
                 title='Edit Template Values'
                 subtitle='Update values for each template. Formula columns are auto-calculated.'
-                beforeCanvas={
-                  totalCellErrors > 0 ? (
-                    <div className='bg-destructive/15 text-destructive flex items-start gap-2 rounded-md p-3 text-sm'>
-                      <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
-                      <span>
-                        {totalCellErrors} validation error
-                        {totalCellErrors !== 1 ? 's' : ''} found.
-                      </span>
-                    </div>
-                  ) : undefined
-                }
+                beforeCanvas={templateSelectorAndErrors}
               />
             )}
           </>

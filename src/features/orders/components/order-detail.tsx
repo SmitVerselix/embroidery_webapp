@@ -45,7 +45,8 @@ import {
   X,
   History,
   Trash2,
-  Plus
+  Plus,
+  LayoutTemplate
 } from 'lucide-react';
 import {
   Tooltip,
@@ -942,6 +943,11 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     useState<OrderTemplateEntry | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
+  // ── Template selector state (mirrors create/edit behavior) ──────────
+  const [selectedDetailTemplateIds, setSelectedDetailTemplateIds] = useState<
+    Set<string>
+  >(new Set());
+
   // ── PROCESS TEMPLATE DATA ───────────────────────────────────────────
   const processOrderTemplates = useCallback((orderData: OrderWithDetails) => {
     const productTemplates = (orderData.product?.templates ||
@@ -1077,6 +1083,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     setTemplateValues(loadedValues);
     setExtraValues(loadedExtraValues);
     setBlockValues(loadedBlockValues);
+    // Reset selector whenever order data is refreshed
+    setSelectedDetailTemplateIds(new Set());
   }, []);
 
   // ── FETCH ORDER ─────────────────────────────────────────────────────
@@ -1314,6 +1322,79 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
     );
   }, [groupedByTemplate, order]);
 
+  // ── GROUP VISIBILITY — mirrors create/edit templateHasValues ────────
+  // A group has values when any non-FORMULA cell in any of its entries
+  // (parent or children) is non-empty.
+  const groupHasValues = useCallback(
+    (templateEntries: OrderTemplateEntry[]): boolean => {
+      return templateEntries.some((entry) => {
+        const tmpl = entry.template;
+        if ((tmpl.rows?.length ?? 0) === 0 || (tmpl.columns?.length ?? 0) === 0)
+          return false;
+        const vals = templateValues[entry.orderTemplateId] ?? {};
+        return (tmpl.rows ?? []).some((row) =>
+          (tmpl.columns ?? []).some((col) => {
+            if (col.dataType === 'FORMULA') return false;
+            return (vals[row.id]?.[col.id] ?? '').trim() !== '';
+          })
+        );
+      });
+    },
+    [templateValues]
+  );
+
+  // Groups split into always-shown (have values) vs hidden (empty, opt-in)
+  const contentGroups = useMemo(
+    () =>
+      sortedGroupedEntries.filter(([, templateEntries]) =>
+        groupHasValues(templateEntries)
+      ),
+    [sortedGroupedEntries, groupHasValues]
+  );
+
+  const emptyGroups = useMemo(
+    () =>
+      sortedGroupedEntries.filter(
+        ([, templateEntries]) => !groupHasValues(templateEntries)
+      ),
+    [sortedGroupedEntries, groupHasValues]
+  );
+
+  const unselectedEmptyGroups = useMemo(
+    () =>
+      emptyGroups.filter(
+        ([templateId]) => !selectedDetailTemplateIds.has(templateId)
+      ),
+    [emptyGroups, selectedDetailTemplateIds]
+  );
+
+  const selectedEmptyGroups = useMemo(
+    () =>
+      emptyGroups.filter(([templateId]) =>
+        selectedDetailTemplateIds.has(templateId)
+      ),
+    [emptyGroups, selectedDetailTemplateIds]
+  );
+
+  const visibleGroups = useMemo(
+    () => [...contentGroups, ...selectedEmptyGroups],
+    [contentGroups, selectedEmptyGroups]
+  );
+
+  const hasEmptyGroups = emptyGroups.length > 0;
+
+  const handleSelectDetailTemplate = useCallback((templateId: string) => {
+    setSelectedDetailTemplateIds((prev) => new Set(prev).add(templateId));
+  }, []);
+
+  const handleRemoveDetailTemplate = useCallback((templateId: string) => {
+    setSelectedDetailTemplateIds((prev) => {
+      const next = new Set(prev);
+      next.delete(templateId);
+      return next;
+    });
+  }, []);
+
   // ── FINAL CALC DATA ─────────────────────────────────────────────────
   const finalCalcData: FinalCalcData | undefined = useMemo(() => {
     if (!order || entries.length === 0) return undefined;
@@ -1369,7 +1450,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
   // ── TEMPLATE LAYOUT ITEMS ───────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(
     () =>
-      sortedGroupedEntries.map(([templateId, templateEntries]) => {
+      visibleGroups.map(([templateId, templateEntries]) => {
         const parentEntry = templateEntries.find((e) => !e.isChild);
         const childEntries = templateEntries.filter((e) => e.isChild);
         const duplicateAllowed = canDuplicate(templateId);
@@ -1378,6 +1459,9 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
           childEntries[0]?.template?.name ||
           templateId;
         const hasChildren = childEntries.length > 0;
+
+        // Show remove button only for user-selected empty groups
+        const isUserSelected = selectedDetailTemplateIds.has(templateId);
 
         return {
           id: templateId,
@@ -1401,6 +1485,17 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
                       )}
                     </div>
                     <div className='flex items-center gap-2'>
+                      {isUserSelected && (
+                        <button
+                          type='button'
+                          onClick={() => handleRemoveDetailTemplate(templateId)}
+                          className='text-muted-foreground hover:text-destructive hover:bg-destructive/10 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors'
+                          title={`Remove ${templateName}`}
+                        >
+                          <X className='h-3.5 w-3.5' />
+                          Remove
+                        </button>
+                      )}
                       {!parentEntry.isNew && (
                         <TooltipProvider delayDuration={200}>
                           <Tooltip>
@@ -1533,7 +1628,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
         };
       }),
     [
-      groupedByTemplate,
+      visibleGroups,
+      selectedDetailTemplateIds,
       canDuplicate,
       duplicatingIds,
       deletingIds,
@@ -1541,7 +1637,8 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       extraValues,
       blockValues,
       requestDuplicate,
-      requestDelete
+      requestDelete,
+      handleRemoveDetailTemplate
     ]
   );
 
@@ -1618,6 +1715,78 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
       )
     };
   }, [order, entries, groupedByTemplate, companyId, orderId, refreshOrder]);
+
+  // ── TEMPLATE SELECTOR UI (passed as beforeCanvas) ───────────────────
+  const templateSelectorUI = useMemo(() => {
+    if (!hasEmptyGroups) return undefined;
+    return (
+      <div className='rounded-lg border bg-slate-50/50 p-4 dark:bg-slate-900/30'>
+        <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+          <div className='flex items-center gap-2'>
+            <LayoutTemplate className='text-muted-foreground h-4 w-4' />
+            <span className='text-sm font-semibold text-slate-700 dark:text-slate-300'>
+              Select Template
+            </span>
+            <Badge variant='secondary' className='text-[10px]'>
+              {unselectedEmptyGroups.length} available
+            </Badge>
+          </div>
+          {unselectedEmptyGroups.length > 0 && (
+            <Select value='' onValueChange={handleSelectDetailTemplate}>
+              <SelectTrigger className='h-9 w-full sm:w-[280px]'>
+                <SelectValue placeholder='Select a template to view…' />
+              </SelectTrigger>
+              <SelectContent>
+                {unselectedEmptyGroups.map(([templateId, templateEntries]) => {
+                  const name = templateEntries[0]?.template?.name || templateId;
+                  return (
+                    <SelectItem key={templateId} value={templateId}>
+                      <span className='flex items-center gap-2'>
+                        <LayoutTemplate className='h-3.5 w-3.5' />
+                        {name}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {selectedEmptyGroups.length > 0 && (
+          <div className='mt-3 flex flex-wrap items-center gap-2'>
+            <span className='text-muted-foreground text-xs'>Viewing:</span>
+            {selectedEmptyGroups.map(([templateId, templateEntries]) => {
+              const name = templateEntries[0]?.template?.name || templateId;
+              return (
+                <Badge
+                  key={templateId}
+                  variant='outline'
+                  className='gap-1 py-1 pr-1 text-xs'
+                >
+                  {name}
+                  <button
+                    type='button'
+                    onClick={() => handleRemoveDetailTemplate(templateId)}
+                    className='text-muted-foreground hover:text-destructive ml-0.5 rounded-sm p-0.5 transition-colors hover:bg-slate-200 dark:hover:bg-slate-700'
+                    title={`Remove ${name}`}
+                  >
+                    <X className='h-3 w-3' />
+                  </button>
+                </Badge>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }, [
+    hasEmptyGroups,
+    unselectedEmptyGroups,
+    selectedEmptyGroups,
+    handleSelectDetailTemplate,
+    handleRemoveDetailTemplate
+  ]);
 
   const layoutItems: TemplateLayoutItem[] = useMemo(() => {
     const items = [...templateLayoutItems];
@@ -1854,6 +2023,7 @@ export default function OrderDetail({ companyId, orderId }: OrderDetailProps) {
             persistKey={orderId}
             title='Template Values'
             subtitle="Values entered for this order's templates"
+            beforeCanvas={templateSelectorUI}
           />
         </>
       )}

@@ -28,11 +28,21 @@ import {
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select';
+import {
   Loader2,
   ArrowLeft,
   AlertCircle,
   CheckCircle2,
-  Save
+  Save,
+  Plus,
+  X,
+  LayoutTemplate
 } from 'lucide-react';
 import Link from 'next/link';
 import OrderTemplateValues, {
@@ -140,6 +150,11 @@ export default function OrderEditForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // ── TEMPLATE SELECTION (for new templates without values) ─────────
+  const [selectedNewTemplateIds, setSelectedNewTemplateIds] = useState<
+    Set<string>
+  >(new Set());
 
   // ── FETCH ORDER ─────────────────────────────────────────────────────
   const fetchOrder = useCallback(async () => {
@@ -363,10 +378,122 @@ export default function OrderEditForm({
   );
 
   // ── VALIDATION ──────────────────────────────────────────────────────
+
+  // ── TEMPLATE SELECTION LOGIC ────────────────────────────────────────
+
+  /**
+   * Determine whether an entry (+ its children) has any real content.
+   * "Content" means at least one non-empty cell value exists in templateValues.
+   * Templates without rows or columns are also considered empty.
+   */
+  const entryHasContent = useCallback(
+    (entry: OrderTemplateEntry): boolean => {
+      const tmpl = entry.template;
+      const hasStructure =
+        (tmpl.rows?.length ?? 0) > 0 && (tmpl.columns?.length ?? 0) > 0;
+      if (!hasStructure) return false;
+
+      // Check if this entry has any non-empty values
+      const vals = templateValues[entry.orderTemplateId] || {};
+      const hasValues = Object.values(vals).some((rowVals) =>
+        Object.values(rowVals).some(
+          (v) => v !== undefined && v !== null && v !== ''
+        )
+      );
+      return hasValues;
+    },
+    [templateValues]
+  );
+
+  /** All top-level entries */
+  const allTopLevelEntries = useMemo(
+    () => entries.filter((e) => e.parentOrderTemplateId === null),
+    [entries]
+  );
+
+  /**
+   * A top-level entry "has content" if itself or any of its children
+   * have rows, columns, AND at least one filled value.
+   */
+  const topLevelHasContent = useCallback(
+    (parent: OrderTemplateEntry): boolean => {
+      if (entryHasContent(parent)) return true;
+      // Check children too
+      const children = entries.filter(
+        (e) => e.parentOrderTemplateId === parent.orderTemplateId
+      );
+      return children.some((child) => entryHasContent(child));
+    },
+    [entries, entryHasContent]
+  );
+
+  /** Top-level entries that have content → always shown */
+  const entriesWithContent = useMemo(
+    () => allTopLevelEntries.filter((e) => topLevelHasContent(e)),
+    [allTopLevelEntries, topLevelHasContent]
+  );
+
+  /** Top-level entries that are empty (no rows/cols/values) → hidden by default */
+  const emptyEntries = useMemo(
+    () => allTopLevelEntries.filter((e) => !topLevelHasContent(e)),
+    [allTopLevelEntries, topLevelHasContent]
+  );
+
+  /** Empty entries still available in the dropdown (not yet selected) */
+  const unselectedEmptyEntries = useMemo(
+    () => emptyEntries.filter((e) => !selectedNewTemplateIds.has(e.templateId)),
+    [emptyEntries, selectedNewTemplateIds]
+  );
+
+  /** Empty entries the user has explicitly chosen to show */
+  const selectedEmptyEntries = useMemo(
+    () => emptyEntries.filter((e) => selectedNewTemplateIds.has(e.templateId)),
+    [emptyEntries, selectedNewTemplateIds]
+  );
+
+  const hasEmptyTemplates = emptyEntries.length > 0;
+
+  const handleSelectNewTemplate = useCallback((templateId: string) => {
+    setSelectedNewTemplateIds((prev) => new Set(prev).add(templateId));
+    setSaveSuccess(false);
+  }, []);
+
+  const handleRemoveNewTemplate = useCallback((templateId: string) => {
+    setSelectedNewTemplateIds((prev) => {
+      const next = new Set(prev);
+      next.delete(templateId);
+      return next;
+    });
+  }, []);
+
+  /**
+   * All top-level entries that should be visible:
+   * - entries with content (always shown)
+   * - empty entries that the user has selected via dropdown
+   */
+  const visibleTopLevelEntries = useMemo(
+    () => [...entriesWithContent, ...selectedEmptyEntries],
+    [entriesWithContent, selectedEmptyEntries]
+  );
+
+  // ── VALIDATION (continued) ────────────────────────────────────────
   const validateAll = useCallback((): boolean => {
     let isValid = true;
     const newCellErrors: Record<string, Record<string, string>> = {};
-    entries.forEach((entry) => {
+
+    // Only validate entries that are visible (existing + selected new)
+    const visibleEntryIds = new Set(
+      visibleTopLevelEntries.map((e) => e.orderTemplateId)
+    );
+    // Also include children of visible entries
+    const entriesToValidate = entries.filter(
+      (e) =>
+        visibleEntryIds.has(e.orderTemplateId) ||
+        (e.parentOrderTemplateId !== null &&
+          visibleEntryIds.has(e.parentOrderTemplateId))
+    );
+
+    entriesToValidate.forEach((entry) => {
       const tmpl = entry.template;
       const tmplErrors: Record<string, string> = {};
       const tmplValues = templateValues[entry.orderTemplateId] || {};
@@ -393,7 +520,7 @@ export default function OrderEditForm({
     setCellErrors(newCellErrors);
 
     const newExtraErrors: Record<string, Record<string, string>> = {};
-    entries.forEach((entry) => {
+    entriesToValidate.forEach((entry) => {
       const extErrors: Record<string, string> = {};
       const tmplExtraValues = extraValues[entry.orderTemplateId] || {};
       (entry.template.extra || []).forEach((extra) => {
@@ -418,7 +545,7 @@ export default function OrderEditForm({
     });
     setExtraFieldErrors(newExtraErrors);
     return isValid;
-  }, [entries, templateValues, extraValues]);
+  }, [entries, visibleTopLevelEntries, templateValues, extraValues]);
 
   const buildBlockValuesPayload = useCallback(
     (bvMap: BlockValuesMap): OrderBlockValuePayload[] => {
@@ -443,9 +570,8 @@ export default function OrderEditForm({
     setIsSubmitting(true);
 
     try {
-      const topLevelEntries = entries.filter(
-        (e) => e.parentOrderTemplateId === null
-      );
+      // Only submit entries that are visible (existing + user-selected new)
+      const topLevelEntries = visibleTopLevelEntries;
 
       const buildTemplatePayload = (
         entry: OrderTemplateEntry
@@ -576,14 +702,17 @@ export default function OrderEditForm({
 
   // ── TEMPLATE LAYOUT ITEMS ───────────────────────────────────────────
   const templateLayoutItems: TemplateLayoutItem[] = useMemo(() => {
-    const topLevelEntries = entries.filter(
-      (e) => e.parentOrderTemplateId === null
-    );
-    return topLevelEntries.map((parent) => {
+    // Only show existing entries + user-selected new entries
+    return visibleTopLevelEntries.map((parent) => {
       const childEntries = entries.filter(
         (e) => e.parentOrderTemplateId === parent.orderTemplateId
       );
       const hasChildren = childEntries.length > 0;
+
+      // Show close button only for user-selected templates that currently have no entered values
+      const isUserSelected = selectedNewTemplateIds.has(parent.templateId);
+      const hasNoValues = !topLevelHasContent(parent);
+      const showCloseButton = isUserSelected && hasNoValues;
 
       return {
         id: parent.templateId,
@@ -593,20 +722,33 @@ export default function OrderEditForm({
             <div
               className={hasChildren ? 'min-w-0 flex-1 space-y-2' : 'space-y-2'}
             >
-              <div className='flex items-center gap-2'>
-                {hasChildren && (
-                  <Badge variant='outline' className='text-xs'>
-                    Parent Template
-                    <span className='text-muted-foreground ml-1.5'>
-                      — {childEntries.length} child
-                      {childEntries.length !== 1 ? 'ren' : ''}
-                    </span>
-                  </Badge>
-                )}
-                {parent.isNew && (
-                  <Badge variant='secondary' className='text-xs'>
-                    New — no existing values
-                  </Badge>
+              <div className='flex items-center justify-between gap-2'>
+                <div className='flex items-center gap-2'>
+                  {hasChildren && (
+                    <Badge variant='outline' className='text-xs'>
+                      Parent Template
+                      <span className='text-muted-foreground ml-1.5'>
+                        — {childEntries.length} child
+                        {childEntries.length !== 1 ? 'ren' : ''}
+                      </span>
+                    </Badge>
+                  )}
+                  {!topLevelHasContent(parent) && (
+                    <Badge variant='secondary' className='text-xs'>
+                      No existing values
+                    </Badge>
+                  )}
+                </div>
+                {showCloseButton && (
+                  <button
+                    type='button'
+                    onClick={() => handleRemoveNewTemplate(parent.templateId)}
+                    className='text-muted-foreground hover:text-destructive hover:bg-destructive/10 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors'
+                    title={`Remove ${parent.template.name || 'template'}`}
+                  >
+                    <X className='h-3.5 w-3.5' />
+                    Remove
+                  </button>
                 )}
               </div>
               <OrderTemplateValues
@@ -706,6 +848,9 @@ export default function OrderEditForm({
     });
   }, [
     entries,
+    visibleTopLevelEntries,
+    selectedNewTemplateIds,
+    topLevelHasContent,
     templateValues,
     extraValues,
     cellErrors,
@@ -718,7 +863,8 @@ export default function OrderEditForm({
     handleExtraValuesChange,
     handleDiscountChange,
     handleBlockValuesChange,
-    handleAdditionalCostsChange
+    handleAdditionalCostsChange,
+    handleRemoveNewTemplate
   ]);
 
   const backUrl = `/dashboard/${companyId}/orders/${orderId}`;
@@ -819,6 +965,71 @@ export default function OrderEditForm({
     </div>
   );
 
+  const templateSelectorAndMessages = (
+    <div className='space-y-4'>
+      {/* Template selector for empty templates (no rows/columns/values) */}
+      {hasEmptyTemplates && (
+        <div className='rounded-lg border bg-slate-50/50 p-4 dark:bg-slate-900/30'>
+          <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+            <div className='flex items-center gap-2'>
+              <LayoutTemplate className='text-muted-foreground h-4 w-4' />
+              <span className='text-sm font-semibold text-slate-700 dark:text-slate-300'>
+                Select Template
+              </span>
+              <Badge variant='secondary' className='text-[10px]'>
+                {unselectedEmptyEntries.length} available
+              </Badge>
+            </div>
+            {unselectedEmptyEntries.length > 0 && (
+              <Select value='' onValueChange={handleSelectNewTemplate}>
+                <SelectTrigger className='h-9 w-full sm:w-[280px]'>
+                  <SelectValue placeholder='Select a template to add…' />
+                </SelectTrigger>
+                <SelectContent>
+                  {unselectedEmptyEntries.map((entry) => (
+                    <SelectItem key={entry.templateId} value={entry.templateId}>
+                      <span className='flex items-center gap-2'>
+                        <LayoutTemplate className='h-3.5 w-3.5' />
+                        {entry.template.name || entry.templateId}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          {/* Show chips for selected empty templates */}
+          {selectedEmptyEntries.length > 0 && (
+            <div className='mt-3 flex flex-wrap items-center gap-2'>
+              <span className='text-muted-foreground text-xs'>Added:</span>
+              {selectedEmptyEntries.map((entry) => (
+                <Badge
+                  key={entry.templateId}
+                  variant='outline'
+                  className='gap-1 py-1 pr-1 text-xs'
+                >
+                  {entry.template.name || entry.templateId}
+                  <button
+                    type='button'
+                    onClick={() => handleRemoveNewTemplate(entry.templateId)}
+                    className='text-muted-foreground hover:text-destructive ml-0.5 rounded-sm p-0.5 transition-colors hover:bg-slate-200 dark:hover:bg-slate-700'
+                    title={`Remove ${entry.template.name || 'template'}`}
+                  >
+                    <X className='h-3 w-3' />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Status messages */}
+      {statusMessages}
+    </div>
+  );
+
   return (
     <div className='space-y-6'>
       <Link
@@ -894,7 +1105,7 @@ export default function OrderEditForm({
             persistKey={`${orderId}-edit`}
             title='Edit Template Values'
             subtitle='Update values for each template. Formula columns are auto-calculated.'
-            beforeCanvas={statusMessages}
+            beforeCanvas={templateSelectorAndMessages}
           />
         </>
       ) : (
