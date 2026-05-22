@@ -614,6 +614,7 @@ export default function OrderFormMasterPreview({
         const updated = newFullList.map((f, i) => ({ ...f, orderNo: i + 1 }));
         setFields(updated);
         onFieldsChange?.(updated);
+        window.location.reload();
         toast.success('Field order updated');
       } catch (err) {
         setFields(fields);
